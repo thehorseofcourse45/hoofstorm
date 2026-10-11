@@ -56,6 +56,10 @@
 class LLPrivateMemoryPool;
 class LLVertexBuffer;
 
+// Backend-neutral buffer description (no GL enums in the public interface)
+enum class BufferKind : U8 { Vertex, Index };
+enum class IndexType : U8 { U16, U32 };
+
 class LLVertexBufferData
 {
 public:
@@ -108,6 +112,10 @@ public:
     static void drawElements(U32 mode, const LLVector4a* pos, const LLVector2* tc, U32 num_indices, const U16* indicesp);
 
     static void unbind(); //unbind any bound vertex buffer
+
+    // forget the cached vertex buffer binding so the next setBuffer() rebinds and re-sets up attributes
+    // (see https://github.com/secondlife/viewer/issues/912)
+    static void invalidateBufferBinding();
 
     //get the size of a vertex with the given typemask
     static U32 calcVertexSize(const U32& typemask);
@@ -286,7 +294,7 @@ protected:
     U32     mGLIndices = 0;     // GL IBO handle
     U32     mNumVerts = 0;      // Number of vertices allocated
     U32     mNumIndices = 0;    // Number of indices allocated
-    U32     mIndicesType = GL_UNSIGNED_SHORT; // type of indices in index buffer
+    IndexType mIndexType = IndexType::U16; // type of indices in index buffer
     U32     mIndicesStride = 2;     // size of each index in bytes
     U32     mOffsets[TYPE_MAX]; // byte offsets into mMappedData of each attribute
 
@@ -310,7 +318,7 @@ private:
     friend class LLNavShapeVBOManager;
     friend class LLNavMeshVBOManager;
 
-    void flush_vbo(GLenum target, U32 start, U32 end, void* data, U8* dst);
+    void flush_vbo(BufferKind kind, U32 start, U32 end, void* data, U8* dst);
 
     LLVertexBuffer(U32 typemask, U32 usage)
         : LLVertexBuffer(typemask)
@@ -329,7 +337,6 @@ public:
 
     static U64 getBytesAllocated();
     static const U32 sTypeSize[TYPE_MAX];
-    static const U32 sGLMode[LLRender::NUM_MODES];
     static U32 sGLRenderBuffer;
     static U32 sGLRenderIndices;
     static U32 sLastMask;
