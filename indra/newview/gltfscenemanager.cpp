@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "lltexturebackend.h"
 
 #include "gltfscenemanager.h"
 #include "llviewermenufile.h"
@@ -771,7 +772,7 @@ void GLTFSceneManager::bindTexture(Asset& asset, TextureType texture_type, Textu
 
     if (channel > -1)
     {
-        glActiveTexture(GL_TEXTURE0 + channel);
+        getTextureBackend().activateUnit(channel);
 
         if (info.mIndex != INVALID_INDEX)
         {
@@ -781,33 +782,31 @@ void GLTFSceneManager::bindTexture(Asset& asset, TextureType texture_type, Textu
             if (tex)
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_GLTF("gl bind texture");
-                glBindTexture(GL_TEXTURE_2D, tex->getTexName());
+                getTextureBackend().bind(GL_TEXTURE_2D, tex->getTexName());
 
                 if (channel != -1 && texture.mSampler != -1)
                 { // set sampler state
                     Sampler& sampler = asset.mSamplers[texture.mSampler];
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, sampler.mWrapS);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, sampler.mWrapT);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sampler.mMagFilter);
+                    getTextureBackend().setWrap(GL_TEXTURE_2D, sampler.mWrapS, sampler.mWrapT, -1);
+                    getTextureBackend().setMagFilter(GL_TEXTURE_2D, sampler.mMagFilter);
 
                     // NOTE: do not set min filter.  Always respect client preference for min filter
                 }
                 else
                 {
                     // set default sampler state
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                    getTextureBackend().setWrap(GL_TEXTURE_2D, GL_REPEAT, GL_REPEAT, -1);
+                    getTextureBackend().setMagFilter(GL_TEXTURE_2D, GL_LINEAR);
                 }
             }
             else
             {
-                glBindTexture(GL_TEXTURE_2D, fallback->getTexName());
+                getTextureBackend().bind(GL_TEXTURE_2D, fallback->getTexName());
             }
         }
         else
         {
-            glBindTexture(GL_TEXTURE_2D, fallback->getTexName());
+            getTextureBackend().bind(GL_TEXTURE_2D, fallback->getTexName());
         }
     }
 }

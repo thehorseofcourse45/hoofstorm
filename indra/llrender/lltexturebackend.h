@@ -61,6 +61,10 @@ public:
     virtual void setMaxAnisotropy(U32 target, F32 maxAnisotropy) = 0;
     // base and max mip level that sampling may use (hides the levels below the current discard level)
     virtual void setLevelRange(U32 target, S32 baseLevel, S32 maxLevel) = 0;
+    // magnification filter only (glTF samplers set it and leave the minification filter to the client's preference)
+    virtual void setMagFilter(U32 target, S32 magFilter) = 0;
+    // depth comparison for shadow samplers; 'func' is a GL comparison function and ignored when disabling
+    virtual void setCompare(U32 target, bool enabled, U32 func) = 0;
     // component mapping: 'rgba' holds four of GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA, GL_ZERO, GL_ONE
     virtual void setSwizzle(U32 target, const S32* rgba) = 0;
     // compatibility profile only: let the driver generate the mip chain whenever level 0 is uploaded
@@ -83,9 +87,18 @@ public:
     virtual void compressedImage2D(U32 target, S32 level, U32 internalFormat, S32 width, S32 height, S32 imageSize,
                                    const void* data) = 0;
     virtual void subImage2D(U32 target, S32 level, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, const void* pixels) = 0;
+    virtual void image3D(U32 target, S32 level, S32 internalFormat, S32 width, S32 height, S32 depth, U32 format, U32 type,
+                         const void* pixels) = 0;
+    virtual void subImage3D(U32 target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, U32 format, U32 type,
+                            const void* pixels) = 0;
     virtual void generateMipmaps(U32 target) = 0;
     // Copy a rectangle of the current read framebuffer into the texture (see the framebuffer layer for what that is).
     virtual void copyFromFramebuffer2D(U32 target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height) = 0;
+    // 3D / array textures: copy a rectangle of the current read framebuffer into layer 'z' (cube map arrays: 6 * cube + face)
+    virtual void copyFromFramebuffer3D(U32 target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width,
+                                       S32 height) = 0;
+    // Define the texture from a rectangle of the current read framebuffer (allocates level 'level')
+    virtual void copyImageFromFramebuffer2D(U32 target, S32 level, S32 internalFormat, S32 x, S32 y, S32 width, S32 height) = 0;
     // Replace the texture's level 0 with the contents of its level 'mip', resized to width x height ('bytes' = size of that
     // data). The GL backend does this through a scratch pixel buffer.
     virtual void replaceWithMipLevel(U32 target, S32 mip, S32 internalFormat, S32 width, S32 height, U32 format, U32 type,

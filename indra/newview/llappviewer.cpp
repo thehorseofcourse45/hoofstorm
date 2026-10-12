@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "lltexturebackend.h"
 
 #include "llappviewer.h"
 
@@ -6959,7 +6960,7 @@ void LLAppViewer::forceErrorOSSpecificException()
 void LLAppViewer::forceErrorDriverCrash()
 {
     LL_WARNS() << "Forcing a deliberate driver crash" << LL_ENDL;
-    glDeleteTextures(1, NULL);
+    getTextureBackend().destroy(1, nullptr);
 }
 
 // <FS:Ansariel> Wrongly merged back in by LL

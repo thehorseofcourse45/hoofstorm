@@ -25,6 +25,7 @@
  */
 
 #include "linden_common.h"
+#include "lltexturebackend.h"
 
 #include "llrendertarget.h"
 #include "llrender.h"
@@ -512,7 +513,7 @@ void LLRenderTarget::flush()
     {
         LL_PROFILE_GPU_ZONE("rt generate mipmaps");
         bindTexture(0, 0, LLTexUnit::TFO_TRILINEAR);
-        glGenerateMipmap(GL_TEXTURE_2D);
+        getTextureBackend().generateMipmaps(GL_TEXTURE_2D);
     }
 
     if (mPreviousRT)

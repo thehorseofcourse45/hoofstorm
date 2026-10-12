@@ -72,6 +72,24 @@ public:
         glTexParameterf(target, GL_TEXTURE_MAX_ANISOTROPY, maxAnisotropy);
     }
 
+    void setMagFilter(U32 target, S32 magFilter) override
+    {
+        glTexParameteri(target, GL_TEXTURE_MAG_FILTER, magFilter);
+    }
+
+    void setCompare(U32 target, bool enabled, U32 func) override
+    {
+        if (enabled)
+        {
+            glTexParameteri(target, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
+            glTexParameteri(target, GL_TEXTURE_COMPARE_FUNC, func);
+        }
+        else
+        {
+            glTexParameteri(target, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+        }
+    }
+
     void setLevelRange(U32 target, S32 baseLevel, S32 maxLevel) override
     {
         glTexParameteri(target, GL_TEXTURE_BASE_LEVEL, baseLevel);
@@ -123,6 +141,18 @@ public:
         glTexSubImage2D(target, level, x, y, width, height, format, type, pixels);
     }
 
+    void image3D(U32 target, S32 level, S32 internalFormat, S32 width, S32 height, S32 depth, U32 format, U32 type,
+                 const void* pixels) override
+    {
+        glTexImage3D(target, level, internalFormat, width, height, depth, 0, format, type, pixels);
+    }
+
+    void subImage3D(U32 target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, U32 format, U32 type,
+                    const void* pixels) override
+    {
+        glTexSubImage3D(target, level, x, y, z, width, height, depth, format, type, pixels);
+    }
+
     void generateMipmaps(U32 target) override
     {
         glGenerateMipmap(target);
@@ -131,6 +161,17 @@ public:
     void copyFromFramebuffer2D(U32 target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height) override
     {
         glCopyTexSubImage2D(target, level, xoffset, yoffset, x, y, width, height);
+    }
+
+    void copyFromFramebuffer3D(U32 target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width,
+                               S32 height) override
+    {
+        glCopyTexSubImage3D(target, level, xoffset, yoffset, zoffset, x, y, width, height);
+    }
+
+    void copyImageFromFramebuffer2D(U32 target, S32 level, S32 internalFormat, S32 x, S32 y, S32 width, S32 height) override
+    {
+        glCopyTexImage2D(target, level, internalFormat, x, y, width, height, 0);
     }
 
     void replaceWithMipLevel(U32 target, S32 mip, S32 internalFormat, S32 width, S32 height, U32 format, U32 type, U64 bytes) override
