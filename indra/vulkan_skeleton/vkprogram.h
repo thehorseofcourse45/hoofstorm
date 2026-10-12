@@ -9,18 +9,6 @@
 #include <string>
 #include <vector>
 
-struct VkTexture
-{
-    VkImage image = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    VkImageView view = VK_NULL_HANDLE;
-    VkSampler sampler = VK_NULL_HANDLE;
-};
-
-// RGBA8 (UNORM, no mipmaps) texture filled through a staging buffer. Blocks until the upload is finished.
-VkTexture createTexture(VkContext& ctx, uint32_t width, uint32_t height, const uint8_t* rgba, bool linearFilter);
-void destroyTexture(VkContext& ctx, VkTexture& tex);
-
 // What LLGLSLShader holds for GL, for Vulkan:
 //   set 0, binding 0: the program's uniform block (std140), a copy of 'shadow' is put in the context's ring buffer per draw
 //   set 1, binding N: one combined image sampler per sampler declared in the program
@@ -37,8 +25,9 @@ struct VkProgram
     LLShaderTranslator::BlockLayout layout;
     std::vector<uint8_t> shadow;                        // CPU copy of the uniform block (LLGLSLShader's value cache, in effect)
     std::vector<std::string> samplerNames;              // index = descriptor binding
+    std::vector<std::string> samplerTypes;              // GLSL type of each sampler ("sampler2D", "samplerCube", ...)
     std::vector<int> samplerUnit;                       // texture unit each sampler reads (the value of a GL sampler uniform)
-    std::vector<const VkTexture*> lastTextures;         // what the current sampler set was written with
+    std::vector<VkDescriptorImageInfo> lastInfos;       // what the current sampler set was written with
     VkDescriptorSet samplerSet = VK_NULL_HANDLE;
     uint64_t samplerSetFrame = 0;
 

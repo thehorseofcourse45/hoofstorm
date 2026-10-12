@@ -24,7 +24,7 @@ set(SDK "$ENV{VULKAN_SDK}")
 # Only the dependency-free backend interface headers are used from the viewer (they need nothing but stdtypes.h).
 get_filename_component(INDRA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 
-add_executable(vulkan_skeleton main.cpp vkcontext.cpp vkbackends.cpp vkprogram.cpp vkshaderbackend.cpp
+add_executable(vulkan_skeleton main.cpp vkcontext.cpp vkbackends.cpp vkprogram.cpp vkshaderbackend.cpp vktexturebackend.cpp
     translator/llshadertranslator.cpp translator/llshadercompiler.cpp)
 target_include_directories(vulkan_skeleton PRIVATE
     "${INDRA_DIR}/llrender"
