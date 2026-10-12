@@ -29,6 +29,7 @@
 #include "llrender.h"
 
 #include "llvertexbuffer.h"
+#include "llrenderstatebackend.h"
 #include "llcubemap.h"
 #include "llglslshader.h"
 #include "llimagegl.h"
@@ -99,22 +100,6 @@ static const GLint sGLAddressMode[] =
 };
 
 const U32 immediate_mask = LLVertexBuffer::MAP_VERTEX | LLVertexBuffer::MAP_COLOR | LLVertexBuffer::MAP_TEXCOORD0;
-
-static const GLenum sGLBlendFactor[] =
-{
-    GL_ONE,
-    GL_ZERO,
-    GL_DST_COLOR,
-    GL_SRC_COLOR,
-    GL_ONE_MINUS_DST_COLOR,
-    GL_ONE_MINUS_SRC_COLOR,
-    GL_DST_ALPHA,
-    GL_SRC_ALPHA,
-    GL_ONE_MINUS_DST_ALPHA,
-    GL_ONE_MINUS_SRC_ALPHA,
-
-    GL_ZERO // 'BF_UNDEF'
-};
 
 LLTexUnit::LLTexUnit(S32 index)
     : mCurrTexType(TT_NONE),
@@ -866,7 +851,7 @@ bool LLRender::init(bool needs_vertex_buffer)
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
     gGL.setAmbientLightColor(LLColor4::black);
 
-    glCullFace(GL_BACK);
+    gGL.setCullFace(GL_BACK);
 
     // necessary for reflection maps
     glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
@@ -1394,10 +1379,7 @@ void LLRender::setColorMask(bool writeColorR, bool writeColorG, bool writeColorB
         mCurrColorMask[2] = writeColorB;
         mCurrColorMask[3] = writeAlpha;
 
-        glColorMask(writeColorR ? GL_TRUE : GL_FALSE,
-                    writeColorG ? GL_TRUE : GL_FALSE,
-                    writeColorB ? GL_TRUE : GL_FALSE,
-                    writeAlpha ? GL_TRUE : GL_FALSE);
+        getRenderStateBackend().setColorMask(writeColorR, writeColorG, writeColorB, writeAlpha);
     }
 }
 
@@ -1444,7 +1426,7 @@ void LLRender::blendFunc(eBlendFactor sfactor, eBlendFactor dfactor)
         mCurrBlendColorDFactor = dfactor;
         mCurrBlendAlphaDFactor = dfactor;
         flush();
-        glBlendFunc(sGLBlendFactor[sfactor], sGLBlendFactor[dfactor]);
+        getRenderStateBackend().setBlendFunc(sfactor, dfactor, sfactor, dfactor);
     }
 }
 
@@ -1465,8 +1447,7 @@ void LLRender::blendFunc(eBlendFactor color_sfactor, eBlendFactor color_dfactor,
         mCurrBlendAlphaDFactor = alpha_dfactor;
         flush();
 
-        glBlendFuncSeparate(sGLBlendFactor[color_sfactor], sGLBlendFactor[color_dfactor],
-                           sGLBlendFactor[alpha_sfactor], sGLBlendFactor[alpha_dfactor]);
+        getRenderStateBackend().setBlendFunc(color_sfactor, color_dfactor, alpha_sfactor, alpha_dfactor);
     }
 }
 
@@ -1508,7 +1489,7 @@ void LLRender::setLineWidth(F32 line_width)
 {
     if (line_width > 1.f)
     {
-        line_width = llmin(line_width, glIsEnabled(GL_LINE_SMOOTH) ? mMaxLineWidthSmooth : mMaxLineWidthAliased);
+        line_width = llmin(line_width, getRenderStateBackend().isCapabilityEnabled(GL_LINE_SMOOTH) ? mMaxLineWidthSmooth : mMaxLineWidthAliased);
     }
     if (mLineWidth != line_width || mDirty)
     {
@@ -1517,10 +1498,64 @@ void LLRender::setLineWidth(F32 line_width)
             flush();
         }
         mLineWidth = line_width;
-        glLineWidth(line_width);
+        getRenderStateBackend().setLineWidth(line_width);
     }
 }
 // </FS>
+
+void LLRender::setViewport(S32 x, S32 y, S32 width, S32 height)
+{
+    flush();
+    getRenderStateBackend().setViewport(x, y, width, height);
+}
+
+void LLRender::setScissor(S32 x, S32 y, S32 width, S32 height)
+{
+    flush();
+    getRenderStateBackend().setScissor(x, y, width, height);
+}
+
+void LLRender::setCullFace(U32 face)
+{
+    flush();
+    getRenderStateBackend().setCullFace(face);
+}
+
+void LLRender::setPolygonMode(U32 face, U32 mode)
+{
+    flush();
+    getRenderStateBackend().setPolygonMode(face, mode);
+}
+
+void LLRender::setPolygonOffset(F32 factor, F32 units)
+{
+    flush();
+    getRenderStateBackend().setPolygonOffset(factor, units);
+}
+
+void LLRender::setPointSize(F32 size)
+{
+    flush();
+    getRenderStateBackend().setPointSize(size);
+}
+
+void LLRender::setStencilFunc(U32 func, S32 ref, U32 mask)
+{
+    flush();
+    getRenderStateBackend().setStencilFunc(func, ref, mask);
+}
+
+void LLRender::setStencilOp(U32 sfail, U32 dpfail, U32 dppass)
+{
+    flush();
+    getRenderStateBackend().setStencilOp(sfail, dpfail, dppass);
+}
+
+void LLRender::setStencilMask(U32 mask)
+{
+    flush();
+    getRenderStateBackend().setStencilMask(mask);
+}
 
 bool LLRender::verifyTexUnitActive(U32 unitToVerify)
 {

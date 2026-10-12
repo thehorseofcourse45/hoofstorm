@@ -469,6 +469,18 @@ public:
 
     void setLineWidth(F32 line_width); // <FS> Line width OGL core profile fix by Rye Mutt
 
+    // Fixed pipeline state. Like the other setters these flush the pending immediate-mode batch first.
+    // Face, mode and function values are GL constants (the viewer's state vocabulary for now).
+    void setViewport(S32 x, S32 y, S32 width, S32 height);
+    void setScissor(S32 x, S32 y, S32 width, S32 height);
+    void setCullFace(U32 face);                      // GL_FRONT, GL_BACK
+    void setPolygonMode(U32 face, U32 mode);         // GL_FRONT_AND_BACK; GL_FILL, GL_LINE, GL_POINT
+    void setPolygonOffset(F32 factor, F32 units);
+    void setPointSize(F32 size);
+    void setStencilFunc(U32 func, S32 ref, U32 mask);
+    void setStencilOp(U32 sfail, U32 dpfail, U32 dppass);
+    void setStencilMask(U32 mask);
+
     LLTexUnit* getTexUnit(U32 index);
 
     U32 getCurrentTexUnitIndex(void) const { return mCurrTextureUnitIndex; }

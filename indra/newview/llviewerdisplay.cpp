@@ -945,7 +945,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
                 glm::mat4 proj = get_current_projection();
                 glm::mat4 mod = get_current_modelview();
-                glViewport(0,0,512,512);
+                gGL.setViewport(0,0,512,512);
 
                 LLVOAvatar::updateImpostors();
 
@@ -1804,9 +1804,9 @@ static void renderChatRangeSphere(const LLVector3& center, F32 radius, const LLC
         gGL.pushMatrix();
         {
             gGL.scalef(radius, radius, radius);
-            glCullFace(GL_FRONT);
+            gGL.setCullFace(GL_FRONT);
             gSphere.render();
-            glCullFace(GL_BACK);
+            gGL.setCullFace(GL_BACK);
             gSphere.render();
         }
         gGL.popMatrix();
@@ -1905,7 +1905,7 @@ void render_ui_2d()
     // Render 2D UI elements that overlay the world (no z compare)
 
     //  Disable wireframe mode below here, as this is HUD/menus
-    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    gGL.setPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
     //  Menu overlays, HUD, etc
     gViewerWindow->setup2DRender();

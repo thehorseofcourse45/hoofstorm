@@ -444,7 +444,7 @@ void LLRenderTarget::bindTarget()
     }
     check_framebuffer_status();
 
-    glViewport(0, 0, mResX, mResY);
+    gGL.setViewport(0, 0, mResX, mResY);
     sCurResX = mResX;
     sCurResY = mResY;
 
@@ -472,7 +472,7 @@ void LLRenderTarget::clear(U32 mask_in)
     else
     {
         LLGLEnable scissor(GL_SCISSOR_TEST);
-        glScissor(0, 0, mResX, mResY);
+        gGL.setScissor(0, 0, mResX, mResY);
         stop_glerror();
         glClear(mask & mask_in);
     }
@@ -527,7 +527,7 @@ void LLRenderTarget::flush()
         sBoundTarget = nullptr;
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         sCurFBO = 0;
-        glViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
+        gGL.setViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
         sCurResX = gGLViewport[2];
         sCurResY = gGLViewport[3];
         glReadBuffer(GL_BACK);
