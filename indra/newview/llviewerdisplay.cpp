@@ -945,7 +945,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
                 glm::mat4 proj = get_current_projection();
                 glm::mat4 mod = get_current_modelview();
-                glViewport(0,0,512,512);
+                gGL.setViewport(0,0,512,512);
 
                 LLVOAvatar::updateImpostors();
 
