@@ -737,6 +737,15 @@ void LLViewerShaderMgr::setShaders()
     finalizeShaderList();
 
     reentrance = false;
+
+    // Developer aid for the shader layer work (doc/vulkan), used together with FS_SHADER_DUMP_DIR (llshadermgr.cpp).
+    // With FS_SHADER_DUMP_EXIT set, quit as soon as every shader has been loaded. The quit flag is set during startup,
+    // so the main loop never runs idle_startup(): the viewer never shows the login screen and cannot log in.
+    if (getenv("FS_SHADER_DUMP_EXIT"))
+    {
+        LL_INFOS("Shader") << "FS_SHADER_DUMP_EXIT is set: quitting now that all shaders are loaded" << LL_ENDL;
+        LLAppViewer::instance()->forceQuit();
+    }
 }
 
 void LLViewerShaderMgr::unloadShaders()

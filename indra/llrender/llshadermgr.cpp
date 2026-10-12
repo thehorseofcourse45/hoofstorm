@@ -459,6 +459,95 @@ void LLShaderMgr::dumpObjectLog(GLuint ret, bool warns, const std::string& filen
     }
  }
 
+// Developer aid for the shader layer work (doc/vulkan). Set FS_SHADER_DUMP_DIR to an existing directory to write the
+// final source of every shader object the viewer compiles (after includes, #defines and generated code), and to
+// bypass the program binary cache so that everything is compiled from source. Does nothing unless the variable is set.
+static const char* shader_dump_dir()
+{
+    static const char* dir = getenv("FS_SHADER_DUMP_DIR");
+    return (dir && *dir) ? dir : nullptr;
+}
+
+// manifest.txt in the dump directory lists "PROGRAM <name>" followed by the "OBJECT <file>" lines of the shader objects
+// that program compiled, in order, so that tools can see which objects GL linked together.
+static void append_manifest(const std::string& line)
+{
+    const char* dir = shader_dump_dir();
+    if (!dir)
+    {
+        return;
+    }
+    std::string path = std::string(dir) + "/manifest.txt";
+    if (FILE* f = fopen(path.c_str(), "ab"))
+    {
+        fputs(line.c_str(), f);
+        fputc('\n', f);
+        fclose(f);
+    }
+}
+
+void fs_dump_program_begin(const char* program_name)
+{
+    append_manifest(std::string("PROGRAM ") + (program_name ? program_name : "?"));
+}
+
+// GL shader object handle -> name of its dump file
+static std::map<GLuint, std::string> sDumpNames;
+
+void fs_dump_attach(unsigned int shader_object)
+{
+    if (!shader_dump_dir())
+    {
+        return;
+    }
+    auto it = sDumpNames.find(shader_object);
+    append_manifest("ATTACH " + (it != sDumpNames.end() ? it->second : std::string("?")));
+}
+
+static void dump_shader_source(const std::string& filename, GLenum type, GLuint shader_object, GLuint count, GLchar** text)
+{
+    const char* dir = shader_dump_dir();
+    if (!dir)
+    {
+        return;
+    }
+
+    static U32 sCounter = 0;
+    if (sCounter == 0)
+    {
+        LL_INFOS("ShaderLoading") << "FS_SHADER_DUMP_DIR is set: writing shader sources to " << dir << LL_ENDL;
+    }
+    const char* ext = type == GL_VERTEX_SHADER ? "vert" : type == GL_FRAGMENT_SHADER ? "frag" : type == GL_GEOMETRY_SHADER ? "geom" : "glsl";
+
+    std::string name = filename;
+    for (char& c : name)
+    {
+        if (c == '/' || c == '\\' || c == ':')
+        {
+            c = '_';
+        }
+    }
+    std::string path = llformat("%s/%04u_%s.%s", dir, sCounter++, name.c_str(), ext);
+
+    FILE* out = fopen(path.c_str(), "wb");
+    if (!out)
+    {
+        LL_WARNS_ONCE("ShaderLoading") << "Cannot write shader dump file " << path << LL_ENDL;
+        return;
+    }
+    for (GLuint i = 0; i < count; ++i)
+    {
+        if (text[i])
+        {
+            fputs(text[i], out);
+        }
+    }
+    fclose(out);
+
+    sDumpNames[shader_object] = llformat("%04u_%s.%s", sCounter - 1, name.c_str(), ext);
+    append_manifest("OBJECT " + sDumpNames[shader_object]);
+}
+
 GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level, GLenum type, std::map<std::string, std::string>* defines, S32 texture_index_channels)
 {
 
@@ -871,6 +960,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
     if (ret)
     {
         LL_DEBUGS("ShaderLoading") << "glCreateShader done" << LL_ENDL;
+        dump_shader_source(filename, type, ret, shader_code_count, shader_code_text);
         glShaderSource(ret, shader_code_count, (const GLchar**)shader_code_text, NULL);
 
         error = glGetError();
@@ -1011,7 +1101,9 @@ void LLShaderMgr::initShaderCache(bool enabled, const LLUUID& old_cache_version,
     LL_PROFILE_ZONE_SCOPED;
     LL_INFOS("ShaderMgr") << "Initializing shader cache" << LL_ENDL;
 
-    mShaderCacheEnabled = gGLManager.mGLVersion >= 4.09 && enabled;
+    mShaderCacheEnabled = gGLManager.mGLVersion >= 4.09 && enabled && !shader_dump_dir();
+    LL_INFOS("ShaderMgr") << "Shader cache " << (mShaderCacheEnabled ? "enabled" : "disabled")
+                          << (shader_dump_dir() ? " (FS_SHADER_DUMP_DIR is set)" : "") << LL_ENDL;
 
     if(!mShaderCacheEnabled || mShaderCacheVersion.notNull())
         return;

@@ -37,6 +37,10 @@
 #include "hbxxh.h"
 #include "llsdserialize.h"
 
+// defined in llshadermgr.cpp: records which program the following shader objects belong to (FS_SHADER_DUMP_DIR only)
+void fs_dump_program_begin(const char* program_name);
+void fs_dump_attach(unsigned int shader_object);
+
 #if LL_DARWIN
 #include "OpenGL/OpenGL.h"
 #endif
@@ -452,6 +456,7 @@ bool LLGLSLShader::createShader()
 #endif // DEBUG_SHADER_INCLUDES
 
         //compile new source
+        fs_dump_program_begin(mName.c_str()); // developer aid, see llshadermgr.cpp (FS_SHADER_DUMP_DIR)
         vector< pair<string, GLenum> >::iterator fileIter = mShaderFiles.begin();
         for (; fileIter != mShaderFiles.end(); fileIter++)
         {
@@ -581,6 +586,7 @@ bool LLGLSLShader::attachVertexObject(std::string object_path)
     {
         stop_glerror();
         glAttachShader(mProgramObject, LLShaderMgr::instance()->mVertexShaderObjects[object_path]);
+        fs_dump_attach(LLShaderMgr::instance()->mVertexShaderObjects[object_path]); // developer aid (FS_SHADER_DUMP_DIR)
 #if DEBUG_SHADER_INCLUDES
         dumpAttachObject("attachVertexObject", mProgramObject, object_path);
 #endif // DEBUG_SHADER_INCLUDES
@@ -603,6 +609,7 @@ bool LLGLSLShader::attachFragmentObject(std::string object_path)
     {
         stop_glerror();
         glAttachShader(mProgramObject, LLShaderMgr::instance()->mFragmentShaderObjects[object_path]);
+        fs_dump_attach(LLShaderMgr::instance()->mFragmentShaderObjects[object_path]); // developer aid (FS_SHADER_DUMP_DIR)
 #if DEBUG_SHADER_INCLUDES
         dumpAttachObject("attachFragmentObject", mProgramObject, object_path);
 #endif // DEBUG_SHADER_INCLUDES
@@ -625,6 +632,7 @@ void LLGLSLShader::attachObject(GLuint object)
     {
         stop_glerror();
         glAttachShader(mProgramObject, object);
+        fs_dump_attach(object); // developer aid, see llshadermgr.cpp (FS_SHADER_DUMP_DIR)
 #if DEBUG_SHADER_INCLUDES
         std::string object_path("???");
         dumpAttachObject("attachObject", mProgramObject, object_path);
