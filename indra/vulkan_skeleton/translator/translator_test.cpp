@@ -10,6 +10,7 @@
 // Exit code 0 only if every stage compiled, every module validated, every program linked and every layout matched.
 
 #include "shaderdump.h"
+#include "llstd140pack.h"
 
 #include <spirv-tools/libspirv.hpp>
 
@@ -75,6 +76,55 @@ std::string checkInterface(const LLShaderCompiler::Result& r)
     return "";
 }
 
+// glUniform* values into a std140 block: matrices, arrays, transpose, clamping
+bool packCheck()
+{
+    typedef LLShaderTranslator::UniformMember UniformMember;
+    const std::vector<UniformMember> uniforms = {
+        { "mat3", "m3", "" },       // 0   48 bytes (3 columns of 16)
+        { "float", "f", "3" },      // 48  stride 16, 3 elements
+        { "vec3", "v3", "2" },      // 96  stride 16
+        { "mat3x4", "m34", "" },    // 128 48 bytes
+        { "int", "i", "" },         // 176
+        { "vec4", "v4", "2" },      // 192
+    };
+    const LLShaderTranslator::BlockLayout layout = LLShaderTranslator::computeBlockLayout(uniforms);
+    std::vector<uint8_t> block((size_t) layout.size, 0);
+    auto f = [&](int offset) { float v; memcpy(&v, block.data() + offset, 4); return v; };
+    auto i32 = [&](int offset) { int v; memcpy(&v, block.data() + offset, 4); return v; };
+
+    const float m3[9] = { 1, 2, 3,  4, 5, 6,  7, 8, 9 };       // columns (1,2,3) (4,5,6) (7,8,9)
+    std140pack::writeMatrices(block.data(), layout.members[0], "mat3", 3, 3, 1, false, m3);
+    bool ok = f(0) == 1 && f(4) == 2 && f(8) == 3 && f(12) == 0 && f(16) == 4 && f(32) == 7 && f(40) == 9;     // columns on 16 byte boundaries
+    std140pack::writeMatrices(block.data(), layout.members[0], "mat3", 3, 3, 1, true, m3);
+    ok = ok && f(0) == 1 && f(4) == 4 && f(8) == 7 && f(16) == 2 && f(32) == 3;                                  // transposed
+
+    const float fa[4] = { 10, 11, 12, 13 };
+    std140pack::writeVectors(block.data(), layout.members[1], "float", 1, 4, fa);                               // 4th element is dropped
+    ok = ok && f(48) == 10 && f(64) == 11 && f(80) == 12;
+
+    const float va[6] = { 1, 2, 3,  4, 5, 6 };
+    std140pack::writeVectors(block.data(), layout.members[2], "vec3", 3, 2, va);
+    ok = ok && f(96) == 1 && f(104) == 3 && f(112) == 4 && f(120) == 6;
+
+    const float m34[12] = { 1, 2, 3, 4,  5, 6, 7, 8,  9, 10, 11, 12 };      // 3 columns of 4 rows
+    std140pack::writeMatrices(block.data(), layout.members[3], "mat3x4", 3, 4, 1, false, m34);
+    ok = ok && f(128) == 1 && f(140) == 4 && f(144) == 5 && f(160) == 9 && f(172) == 12;
+
+    const int iv = 42;
+    std140pack::writeVectors(block.data(), layout.members[4], "int", 1, 1, &iv);
+    ok = ok && i32(176) == 42;
+
+    const float v4[4] = { 7, 8, 9, 10 };
+    std140pack::writeVectors(block.data(), layout.members[5], "vec4", 4, 1, v4);                                // first element only
+    ok = ok && f(192) == 7 && f(204) == 10 && f(208) == 0;
+    if (!ok)
+    {
+        fprintf(stderr, "uniform packing check FAILED\n");
+    }
+    return ok;
+}
+
 // Paths the corpus does not reach: an existing uniform block, multi-declarator uniforms, initializers, shared samplers.
 bool selfCheck(const LLShaderTranslator::Options& options)
 {
@@ -135,11 +185,11 @@ int main(int argc, char** argv)
     const std::string out_dir = argc > 2 ? argv[2] : "";
     const LLShaderTranslator::Options options = LLShaderCompiler::viewerOptions();
 
-    if (!selfCheck(options))
+    if (!selfCheck(options) || !packCheck())
     {
         return 1;
     }
-    printf("self-check                        : ok\n");
+    printf("self-check                        : ok (translation, std140 packing)\n");
 
     const std::vector<shaderdump::ManifestProgram> programs = shaderdump::readManifest(dir);
     if (programs.empty())

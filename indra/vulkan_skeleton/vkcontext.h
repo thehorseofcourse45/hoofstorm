@@ -22,6 +22,8 @@
         }                                                                                   \
     } while (0)
 
+struct VkTexture;
+
 struct VkContext
 {
     // set up once
@@ -53,6 +55,10 @@ struct VkContext
     // the "current program". The GL interfaces have no such concept (it is global GL state, owned by LLGLSLShader);
     // a Vulkan pipeline and its descriptor sets need it. In the viewer LLShaderBackend::use() sets it.
     struct VkProgram* program = nullptr;
+
+    // Texture units, as the viewer's LLTexUnit::bind() would fill them. A program samples unit samplerUnit[binding].
+    static constexpr int kTextureUnits = 32;
+    const VkTexture* unitTextures[kTextureUnits] = {};
 
     // GL clip depth is -1..1, Vulkan's is 0..1. With VK_EXT_depth_clip_control the pipeline can ask for GL's range.
     bool depthClipControl = false;

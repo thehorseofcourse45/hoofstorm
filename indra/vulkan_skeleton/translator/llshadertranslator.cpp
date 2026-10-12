@@ -413,6 +413,7 @@ LLShaderTranslator::Result LLShaderTranslator::translateProgram(const std::vecto
                         body.lines.push_back("layout(location = " + std::to_string(it - options.attribNames.begin()) + ") in " +
                                              m[1].str() + " " + name + ";");
                         ++result.attributesLocated;
+                        result.attributeNames.push_back(name);
                         continue;
                     }
                 }

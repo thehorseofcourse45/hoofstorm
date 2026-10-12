@@ -17,17 +17,20 @@
 //   --dump DIR                             shader dump directory (manifest.txt + objects), enables the ui scene
 //   --program NAME                         manifest program for the ui scene (default "UI Shader")
 //   --scene triangle|ui                    which scene to draw in interactive mode
+//   --link-all                             every program of the dump through the shader backend (link, reflect, blob round trip), no drawing
 //   --no-depth-clip-control                do not use VK_EXT_depth_clip_control: shows what happens to GL's clip depth range
 //   --frames N                             frames to render per scene in --test mode (default 3)
 //   --no-validation                        do not enable the Khronos validation layer
 #include "vkbackends.h"
 #include "vkprogram.h"
+#include "vkshaderbackend.h"
 #include "shaderdump.h"
 
 #include <GL/gl.h>
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <map>
 #include <string>
 
 static bool gQuit = false;
@@ -210,12 +213,115 @@ static bool scene_triangle(VkContext& ctx, LLRenderStateBackend& st, LLVertexBuf
 }
 
 // ---- scene 2: a real viewer program, a texture, a uniform block, depth ------------------------------------------------
-static bool scene_ui(VkContext& ctx, LLRenderStateBackend& st, LLVertexBufferBackend& vb, bool test, int testFrames,
-                     const std::string& dumpDir, const std::string& programName)
-{
-    printf("scene: ui (viewer program \"%s\" from %s)\n", programName.c_str(), dumpDir.c_str());
 
-    // 1. the viewer's GLSL -> Vulkan SPIR-V
+// A program as LLGLSLShader sees it after createShader(), mapAttributes() and mapUniforms().
+struct MappedProgram
+{
+    U32 id = 0;
+    std::map<std::string, S32> location;    // uniform name (without "[0]") -> location
+    std::map<std::string, int> channel;     // sampler name -> texture channel
+    int activeUniforms = 0;
+};
+
+// The binary the program cache would keep (LLShaderMgr::saveCachedProgramBinary / loadCachedProgramBinary)
+struct CachedBinary
+{
+    std::vector<U8> data;
+    U32 format = 0;
+};
+
+static bool is_sampler_type(U32 t)
+{
+    return (t >= 0x8B5D && t <= 0x8B64) || t == 0x9108 || t == 0x900C || t == 0x8DC1;    // see LLGLSLShader::mapUniformTextureChannel
+}
+
+// The calls LLGLSLShader::createShader() makes, in the same order, against the backend interface only.
+static bool create_program(LLShaderBackend& be, const std::string& dumpDir, const shaderdump::ManifestProgram& entry,
+                           const CachedBinary* load, CachedBinary* save, MappedProgram& out)
+{
+    out = MappedProgram();
+    out.id = be.createProgram();
+
+    bool usingBinary = load && be.loadProgramBinary(out.id, load->format, load->data.data(), (S32) load->data.size());
+    if (load && !usingBinary)
+    {
+        fprintf(stderr, "  cached binary rejected\n");
+        return false;
+    }
+    if (!usingBinary)
+    {
+        // LLShaderMgr::loadShaderFile + attachObject: one shader object per source file
+        for (const LLShaderCompiler::Stage& stage : shaderdump::loadStages(dumpDir, entry))
+        {
+            const U32 glStage = stage.stage == LLShaderTranslator::Stage::Vertex ? 0x8B31
+                              : stage.stage == LLShaderTranslator::Stage::Fragment ? 0x8B30 : 0x8DD9;
+            for (const std::string& source : stage.objects)
+            {
+                const U32 object = be.createObject(glStage);
+                const char* text = source.c_str();
+                std::string log;
+                if (!object || !be.compileObject(object, 1, &text, log))
+                {
+                    fprintf(stderr, "  compile failed: %s\n", log.c_str());
+                    return false;
+                }
+                be.attachObject(out.id, object);
+            }
+        }
+        // LLGLSLShader::mapAttributes: reserved attributes keep fixed locations, then link
+        const auto& attribs = LLShaderCompiler::viewerOptions().attribNames;
+        for (U32 i = 0; i < attribs.size(); ++i)
+        {
+            be.bindAttribLocation(out.id, i, attribs[i].c_str());
+        }
+        if (!be.link(out.id))
+        {
+            fprintf(stderr, "  link failed: %s\n", be.getProgramLog(out.id).c_str());
+            return false;
+        }
+        if (save)
+        {
+            save->data.resize((size_t) be.getProgramBinaryLength(out.id));
+            if (!be.getProgramBinary(out.id, save->data, save->format))
+            {
+                fprintf(stderr, "  getProgramBinary failed\n");
+                return false;
+            }
+        }
+    }
+
+    // LLGLSLShader::mapUniforms: enumerate the active uniforms, look up locations, give samplers their texture channels
+    out.activeUniforms = be.getActiveUniformCount(out.id);
+    int channels = 0;
+    for (S32 i = 0; i < out.activeUniforms; ++i)
+    {
+        std::string name;
+        U32 type = 0;
+        S32 size = 0;
+        be.getActiveUniform(out.id, i, name, type, size);
+        const S32 loc = be.getUniformLocation(out.id, name.c_str());
+        if (name.size() > 3 && name.compare(name.size() - 3, 3, "[0]") == 0)
+        {
+            name.resize(name.size() - 3);
+        }
+        out.location[name] = loc;
+        if (loc != -1 && is_sampler_type(type))
+        {
+            out.channel[name] = channels;
+            be.uniform1i(out.id, loc, channels++);
+        }
+    }
+    return true;
+}
+
+static bool scene_ui(VkContext& ctx, LLRenderStateBackend& st, LLVertexBufferBackend& vb, VulkanShaderBackend& shaders, bool test,
+                     int testFrames, const std::string& dumpDir, const std::string& programName, const CachedBinary* load,
+                     CachedBinary* save)
+{
+    printf("scene: ui (viewer program \"%s\", %s)\n", programName.c_str(), load ? "from the SPIR-V cache" : "compiled from the dump");
+    LLShaderBackend& be = shaders;      // from here on, only the viewer's interface is used
+
+    // 1. the program, through the backend interface
     const std::vector<shaderdump::ManifestProgram> manifest = shaderdump::readManifest(dumpDir);
     const shaderdump::ManifestProgram* entry = nullptr;
     for (const auto& p : manifest)
@@ -231,41 +337,60 @@ static bool scene_ui(VkContext& ctx, LLRenderStateBackend& st, LLVertexBufferBac
         fprintf(stderr, "  program \"%s\" is not in %s/manifest.txt\n", programName.c_str(), dumpDir.c_str());
         return false;
     }
-    const LLShaderCompiler::Result compiled =
-        LLShaderCompiler::compileProgram(shaderdump::loadStages(dumpDir, *entry), LLShaderCompiler::viewerOptions(), true);
-    if (!compiled.ok() || compiled.spirv.size() != 2)
+    MappedProgram prog;
+    if (!create_program(be, dumpDir, *entry, load, save, prog))
     {
-        fprintf(stderr, "  shader compile failed: %s\n", compiled.error.c_str());
         return false;
     }
-    printf("  translated: %zu uniform block members (%d bytes), %zu samplers, %d attribute locations\n",
-           compiled.layout.members.size(), compiled.layout.size, compiled.translation.samplers.size(),
-           compiled.translation.attributesLocated);
+    if (load)
+    {
+        printf("  loaded the binary (%zu bytes) in %.2f ms\n", load->data.size(), shaders.lastLoadMs);
+    }
+    else
+    {
+        printf("  preprocess + translate + compile + link in %.1f ms%s\n", shaders.lastLinkMs,
+               save ? (", binary " + std::to_string(save->data.size()) + " bytes").c_str() : "");
+    }
 
-    VkProgram* program = VkProgram::create(ctx, compiled.spirv[0], compiled.spirv[1], compiled.layout, compiled.translation.samplers);
-    ctx.program = program;
+    // what the viewer would learn from the program: uniforms, types, attribute locations
+    bool passed = true;
+    auto expect = [&](const char* what, bool ok) {
+        printf("  [%s] %s\n", ok ? "PASS" : "FAIL", what);
+        passed &= ok;
+    };
+    U32 type = 0;
+    {
+        std::string name;
+        S32 size;
+        for (S32 i = 0; i < prog.activeUniforms; ++i)
+        {
+            U32 t;
+            be.getActiveUniform(prog.id, i, name, t, size);
+            if (name == "modelview_projection_matrix")
+            {
+                type = t;
+            }
+        }
+    }
+    expect("5 block members + 1 sampler are active uniforms", prog.activeUniforms == 6);
+    expect("modelview_projection_matrix reports GL_FLOAT_MAT4", type == 0x8B5C);
+    expect("diffuseMap is a sampler with texture channel 0", prog.channel.count("diffuseMap") && prog.channel["diffuseMap"] == 0);
+    expect("attribute locations: position 0, texcoord0 2, diffuse_color 6, normal unused",
+           be.getAttribLocation(prog.id, "position") == 0 && be.getAttribLocation(prog.id, "texcoord0") == 2 &&
+           be.getAttribLocation(prog.id, "diffuse_color") == 6 && be.getAttribLocation(prog.id, "normal") == -1);
 
-    // 2. a 2x2 texture; texel (u,v) with v = 0 the first row, like GL: red green / blue yellow
-    const uint8_t texels[16] = {255, 0, 0, 255,   0, 255, 0, 255,    0, 0, 255, 255,   255, 255, 0, 255};
+    // 2. the texture sits in texture unit 0 (what LLTexUnit::bind does); the sampler uniform set above points the program at it
+    const uint8_t texels[16] = {255, 0, 0, 255,   0, 255, 0, 255,    0, 0, 255, 255,   255, 255, 0, 255};   // red green / blue yellow
     VkTexture texture = createTexture(ctx, 2, 2, texels, false);
-    if (!program->setTexture("diffuseMap", &texture))
-    {
-        fprintf(stderr, "  the program has no sampler called diffuseMap\n");
-        return false;
-    }
+    ctx.unitTextures[prog.channel["diffuseMap"]] = &texture;
 
-    // 3. uniforms, written by name into the program's block shadow (what LLGLSLShader::uniformMatrix4fv & co. would do)
+    // 3. uniforms, by location, with the same calls LLGLSLShader::uniformMatrix4fv & co. make
     const float identity[16] = {1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1};
     const float scale2[16] = {2, 0, 0, 0,  0, 2, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1};   // texture coordinates 0..0.5 become 0..1
-    const float zero = 0.0f;
-    bool uniforms_ok = program->setUniform("modelview_projection_matrix", identity, sizeof(identity));
-    uniforms_ok &= program->setUniform("texture_matrix0", scale2, sizeof(scale2));
-    uniforms_ok &= program->setUniform("mirror_flag", &zero, sizeof(zero));
-    if (!uniforms_ok)
-    {
-        fprintf(stderr, "  the program block has no modelview_projection_matrix / texture_matrix0 / mirror_flag\n");
-        return false;
-    }
+    be.uniformMatrix4fv(prog.id, prog.location["modelview_projection_matrix"], 1, false, identity);
+    be.uniformMatrix4fv(prog.id, prog.location["texture_matrix0"], 1, false, scale2);
+    be.uniform1f(prog.id, prog.location["mirror_flag"], 0.0f);
+    be.use(prog.id);
 
     // 4. geometry: two quads, each as one array per attribute. The NEAR quad (z = -0.5) is drawn FIRST and the FAR quad
     //    (z = +0.5, GL clip space) second: with the depth test the near quad must stay on top where they overlap.
@@ -306,7 +431,7 @@ static bool scene_ui(VkContext& ctx, LLRenderStateBackend& st, LLVertexBufferBac
 
     const float clear[4] = {0.1f, 0.1f, 0.2f, 1.0f};
     const bool clipControl = ctx.depthClipControl;
-    bool passed = render_frames(ctx, test, testFrames, clear,
+    passed &= render_frames(ctx, test, testFrames, clear,
         [&] {
             set_common_state(ctx, st, true, false);
             // the attribute mask the program reads: position, texcoord0, diffuse_color (the shader's attribute table)
@@ -342,10 +467,95 @@ static bool scene_ui(VkContext& ctx, LLRenderStateBackend& st, LLVertexBufferBac
     vkDeviceWaitIdle(ctx.device);
     vb.free(BufferKind::Vertex, 224, vbo, vertexCpu);
     vb.free(BufferKind::Index, 24, ibo, indexCpu);
-    ctx.program = nullptr;
+    be.use(0);
+    ctx.unitTextures[prog.channel["diffuseMap"]] = nullptr;
     destroyTexture(ctx, texture);
-    program->destroy();
+    be.deleteProgramAndObjects(prog.id);
     return passed;
+}
+
+// Every program of the dump through the backend interface on the real device (no drawing): create, link, reflect, serialize,
+// load the blob into a second program, and compare the reflection of both.
+static bool link_all(VkContext& ctx, VulkanShaderBackend& shaders, const std::string& dumpDir)
+{
+    LLShaderBackend& be = shaders;
+    const std::vector<shaderdump::ManifestProgram> manifest = shaderdump::readManifest(dumpDir);
+    int linked = 0, skipped_geometry = 0, failed = 0, reflect_ok = 0, roundtrip_ok = 0, total_uniforms = 0, max_samplers = 0;
+    double link_ms = 0.0, load_ms = 0.0;
+    size_t blob_bytes = 0;
+
+    auto reflection = [&](U32 id) {
+        std::vector<std::string> out;
+        for (S32 i = 0, n = be.getActiveUniformCount(id); i < n; ++i)
+        {
+            std::string name;
+            U32 type;
+            S32 size;
+            be.getActiveUniform(id, i, name, type, size);
+            std::string loc = std::to_string(be.getUniformLocation(id, name.c_str()));
+            out.push_back(name + ":" + std::to_string(type) + ":" + std::to_string(size) + "@" + loc);
+        }
+        for (const std::string& a : LLShaderCompiler::viewerOptions().attribNames)
+        {
+            out.push_back("attrib " + a + "=" + std::to_string(be.getAttribLocation(id, a.c_str())));
+        }
+        return out;
+    };
+
+    for (const shaderdump::ManifestProgram& entry : manifest)
+    {
+        bool geometry = false;
+        for (const std::string& o : entry.objects)
+        {
+            geometry |= o.size() > 5 && o.compare(o.size() - 5, 5, ".geom") == 0;
+        }
+        if (geometry)
+        {
+            ++skipped_geometry;
+            continue;
+        }
+        MappedProgram prog;
+        CachedBinary blob;
+        if (!create_program(be, dumpDir, entry, nullptr, &blob, prog))
+        {
+            fprintf(stderr, "  FAIL %s\n", entry.name.c_str());
+            ++failed;
+            continue;
+        }
+        ++linked;
+        link_ms += shaders.lastLinkMs;
+        blob_bytes += blob.data.size();
+        const std::vector<std::string> first = reflection(prog.id);
+        total_uniforms += prog.activeUniforms;
+        int samplers = 0;
+        for (auto& kv : prog.channel) { (void) kv; ++samplers; }
+        max_samplers = std::max(max_samplers, samplers);
+        bool ok = !first.empty();     // every active uniform must also resolve to a location (checked below)
+        for (auto& kv : prog.location) ok &= kv.second >= 0;
+        reflect_ok += ok;
+
+        MappedProgram again;
+        if (create_program(be, dumpDir, entry, &blob, nullptr, again) && reflection(again.id) == first)
+        {
+            ++roundtrip_ok;
+        }
+        else
+        {
+            fprintf(stderr, "  blob round trip differs: %s\n", entry.name.c_str());
+        }
+        load_ms += shaders.lastLoadMs;
+        be.deleteProgramAndObjects(again.id);
+        be.deleteProgramAndObjects(prog.id);
+    }
+    (void) ctx;
+    printf("programs in the dump              : %zu (%d with a geometry stage skipped)\n", manifest.size(), skipped_geometry);
+    printf("linked through LLShaderBackend    : %d, failed %d\n", linked, failed);
+    printf("reflection consistent             : %d / %d\n", reflect_ok, linked);
+    printf("blob round trip identical         : %d / %d\n", roundtrip_ok, linked);
+    printf("link %.0f ms in total (%.1f ms per program), blob load %.1f ms in total (%.2f ms per program), blobs %.0f KB\n", link_ms,
+           linked ? link_ms / linked : 0.0, load_ms, linked ? load_ms / linked : 0.0, blob_bytes / 1024.0);
+    printf("active uniforms %d, at most %d samplers in one program\n", total_uniforms, max_samplers);
+    return failed == 0 && reflect_ok == linked && roundtrip_ok == linked && linked > 0;
 }
 
 int main(int argc, char** argv)
@@ -353,6 +563,7 @@ int main(int argc, char** argv)
     bool test = false;
     bool validation = true;
     bool clipControl = true;
+    bool linkAll = false;
     int testFrames = 3;
     std::string dumpDir, programName = "UI Shader", scene;
     for (int i = 1; i < argc; ++i)
@@ -360,10 +571,15 @@ int main(int argc, char** argv)
         if (!strcmp(argv[i], "--test")) test = true;
         else if (!strcmp(argv[i], "--no-validation")) validation = false;
         else if (!strcmp(argv[i], "--no-depth-clip-control")) clipControl = false;
+        else if (!strcmp(argv[i], "--link-all")) linkAll = true;
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) testFrames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dumpDir = argv[++i];
         else if (!strcmp(argv[i], "--program") && i + 1 < argc) programName = argv[++i];
         else if (!strcmp(argv[i], "--scene") && i + 1 < argc) scene = argv[++i];
+    }
+    if (linkAll)
+    {
+        test = true;
     }
     if (scene.empty())
     {
@@ -413,16 +629,36 @@ int main(int argc, char** argv)
     {
         VulkanRenderStateBackend stateImpl;
         VulkanVertexBufferBackend vertexImpl(&ctx, &stateImpl);
+        VulkanShaderBackend shaderImpl(&ctx);
         LLRenderStateBackend& st = stateImpl;       // from here on, only the viewer's interfaces are used
         LLVertexBufferBackend& vb = vertexImpl;
 
+        if (linkAll)
+        {
+            if (dumpDir.empty())
+            {
+                fprintf(stderr, "--link-all needs --dump\n");
+                passed = false;
+            }
+            else
+            {
+                passed &= link_all(ctx, shaderImpl, dumpDir);
+            }
+            scene = "none";
+        }
         if (scene == "triangle" || scene == "both")
         {
             passed &= scene_triangle(ctx, st, vb, test, testFrames);
         }
         if (!gQuit && (scene == "ui" || scene == "both"))
         {
-            passed &= scene_ui(ctx, st, vb, test, testFrames, dumpDir, programName);
+            CachedBinary cache;
+            passed &= scene_ui(ctx, st, vb, shaderImpl, test, testFrames, dumpDir, programName, nullptr, &cache);
+            if (test && !gQuit)
+            {
+                // the same program again, from the binary the first run produced: no GLSL, no glslang
+                passed &= scene_ui(ctx, st, vb, shaderImpl, test, testFrames, dumpDir, programName, &cache, nullptr);
+            }
         }
 
         vkDeviceWaitIdle(ctx.device);

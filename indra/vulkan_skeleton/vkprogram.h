@@ -37,10 +37,10 @@ struct VkProgram
     LLShaderTranslator::BlockLayout layout;
     std::vector<uint8_t> shadow;                        // CPU copy of the uniform block (LLGLSLShader's value cache, in effect)
     std::vector<std::string> samplerNames;              // index = descriptor binding
-    std::vector<const VkTexture*> textures;             // what each sampler currently samples
+    std::vector<int> samplerUnit;                       // texture unit each sampler reads (the value of a GL sampler uniform)
+    std::vector<const VkTexture*> lastTextures;         // what the current sampler set was written with
     VkDescriptorSet samplerSet = VK_NULL_HANDLE;
     uint64_t samplerSetFrame = 0;
-    bool texturesDirty = true;
 
     // 'vsSpirv'/'fsSpirv' are the modules from LLShaderCompiler (or any SPIR-V that follows the same set/binding convention).
     static VkProgram* create(VkContext& ctx, const std::vector<uint32_t>& vsSpirv, const std::vector<uint32_t>& fsSpirv,
@@ -48,9 +48,8 @@ struct VkProgram
                              const std::vector<LLShaderTranslator::SamplerBinding>& samplers);
     void destroy();
 
-    // false if the program has no such uniform / sampler
+    // false if the program has no such uniform
     bool setUniform(const char* name, const void* data, uint32_t bytes);
-    bool setTexture(const char* samplerName, const VkTexture* texture);
 
     // Called before every draw: snapshot the uniform block into the ring buffer and bind the descriptor sets.
     void prepareDraw();
