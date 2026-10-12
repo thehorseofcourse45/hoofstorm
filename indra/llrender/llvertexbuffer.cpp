@@ -382,19 +382,28 @@ void LLVertexBuffer::initClass(LLWindow* window)
 //static
 void LLVertexBuffer::setupClientArrays(U32 data_mask)
 {
-    sBackend->setEnabledAttributes(data_mask);
+    if (sBackend)
+    {
+        sBackend->setEnabledAttributes(data_mask);
+    }
 }
 
 //static
 void LLVertexBuffer::unbind()
 {
-    sBackend->unbind();
+    if (sBackend)
+    {
+        sBackend->unbind();
+    }
 }
 
 //static
 void LLVertexBuffer::invalidateBufferBinding()
 {
-    sBackend->invalidateBufferBinding();
+    if (sBackend)
+    {
+        sBackend->invalidateBufferBinding();
+    }
 }
 
 //static
