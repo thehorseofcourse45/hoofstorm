@@ -26,6 +26,7 @@ set(llrender_SOURCE_FILES
     llrender.cpp
     llrenderstatebackend_gl.cpp
     llshaderbackend_gl.cpp
+    lltexturebackend_gl.cpp
     llrender2dutils.cpp
     llrendernavprim.cpp
     llrendersphere.cpp
@@ -61,6 +62,7 @@ set(llrender_HEADER_FILES
     llrender.h
     llrenderstatebackend.h
     llshaderbackend.h
+    lltexturebackend.h
     llrender2dutils.h
     llrendernavprim.h
     llrendersphere.h
