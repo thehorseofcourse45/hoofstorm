@@ -240,6 +240,14 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantD
     vkGetPhysicalDeviceFeatures2(phys, &supported2);
     VkPhysicalDeviceFeatures2 enable2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     enable2.features.imageCubeArray = supported2.features.imageCubeArray;
+    enable2.features.textureCompressionBC = supported2.features.textureCompressionBC;      // S3TC / DXT textures
+    enable2.features.samplerAnisotropy = supported2.features.samplerAnisotropy;
+    samplerAnisotropy = supported2.features.samplerAnisotropy != VK_FALSE;
+    {
+        VkPhysicalDeviceProperties dp;
+        vkGetPhysicalDeviceProperties(phys, &dp);
+        maxAnisotropy = dp.limits.maxSamplerAnisotropy;
+    }
     if (!supported2.features.imageCubeArray)
     {
         fprintf(stderr, "warning: imageCubeArray is not supported; shaders with samplerCubeArray will not be valid\n");

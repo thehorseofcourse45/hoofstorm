@@ -22,7 +22,7 @@
         }                                                                                   \
     } while (0)
 
-struct VkTexture;
+class VulkanTextureBackend;
 
 struct VkContext
 {
@@ -56,9 +56,12 @@ struct VkContext
     // a Vulkan pipeline and its descriptor sets need it. In the viewer LLShaderBackend::use() sets it.
     struct VkProgram* program = nullptr;
 
-    // Texture units, as the viewer's LLTexUnit::bind() would fill them. A program samples unit samplerUnit[binding].
+    // Texture units. A program samples unit samplerUnit[binding]; the texture backend knows what is bound to each unit
+    // (LLTexUnit::bind) and turns it into an image view and a sampler when a draw needs it.
     static constexpr int kTextureUnits = 32;
-    const VkTexture* unitTextures[kTextureUnits] = {};
+    VulkanTextureBackend* textures = nullptr;
+    bool samplerAnisotropy = false;
+    float maxAnisotropy = 1.0f;
 
     // GL clip depth is -1..1, Vulkan's is 0..1. With VK_EXT_depth_clip_control the pipeline can ask for GL's range.
     bool depthClipControl = false;

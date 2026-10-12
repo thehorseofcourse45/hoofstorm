@@ -1,115 +1,9 @@
 #include "vkprogram.h"
+#include "vktexturebackend.h"
 
 #include <cstring>
 
 static uint32_t sNextProgramId = 1;
-
-VkTexture createTexture(VkContext& ctx, uint32_t width, uint32_t height, const uint8_t* rgba, bool linearFilter)
-{
-    VkTexture tex;
-    const VkDeviceSize bytes = (VkDeviceSize) width * height * 4;
-
-    VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = VK_FORMAT_R8G8B8A8_UNORM;
-    ici.extent = {width, height, 1};
-    ici.mipLevels = 1;
-    ici.arrayLayers = 1;
-    ici.samples = VK_SAMPLE_COUNT_1_BIT;
-    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    VK_CHECK(vkCreateImage(ctx.device, &ici, nullptr, &tex.image));
-    VkMemoryRequirements req;
-    vkGetImageMemoryRequirements(ctx.device, tex.image, &req);
-    VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = ctx.findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VK_CHECK(vkAllocateMemory(ctx.device, &mai, nullptr, &tex.memory));
-    VK_CHECK(vkBindImageMemory(ctx.device, tex.image, tex.memory, 0));
-
-    // staging buffer
-    VkBuffer staging;
-    VkDeviceMemory stagingMemory;
-    VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-    bci.size = bytes;
-    bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    VK_CHECK(vkCreateBuffer(ctx.device, &bci, nullptr, &staging));
-    vkGetBufferMemoryRequirements(ctx.device, staging, &req);
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = ctx.findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    VK_CHECK(vkAllocateMemory(ctx.device, &mai, nullptr, &stagingMemory));
-    VK_CHECK(vkBindBufferMemory(ctx.device, staging, stagingMemory, 0));
-    void* mapped = nullptr;
-    VK_CHECK(vkMapMemory(ctx.device, stagingMemory, 0, VK_WHOLE_SIZE, 0, &mapped));
-    memcpy(mapped, rgba, (size_t) bytes);
-    vkUnmapMemory(ctx.device, stagingMemory);
-
-    // one-time command buffer: undefined -> transfer dst, copy, -> shader read
-    VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    cai.commandPool = ctx.pool;
-    cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cai.commandBufferCount = 1;
-    VkCommandBuffer cmd;
-    VK_CHECK(vkAllocateCommandBuffers(ctx.device, &cai, &cmd));
-    VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
-
-    VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.image = tex.image;
-    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
-
-    VkBufferImageCopy region{};
-    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.imageExtent = {width, height, 1};
-    vkCmdCopyBufferToImage(cmd, staging, tex.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
-    VK_CHECK(vkEndCommandBuffer(cmd));
-
-    VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    si.commandBufferCount = 1;
-    si.pCommandBuffers = &cmd;
-    VK_CHECK(vkQueueSubmit(ctx.queue, 1, &si, VK_NULL_HANDLE));
-    VK_CHECK(vkQueueWaitIdle(ctx.queue));
-    vkFreeCommandBuffers(ctx.device, ctx.pool, 1, &cmd);
-    vkDestroyBuffer(ctx.device, staging, nullptr);
-    vkFreeMemory(ctx.device, stagingMemory, nullptr);
-
-    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    vi.image = tex.image;
-    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vi.format = ici.format;
-    vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VK_CHECK(vkCreateImageView(ctx.device, &vi, nullptr, &tex.view));
-
-    VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    sci.magFilter = sci.minFilter = linearFilter ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
-    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    VK_CHECK(vkCreateSampler(ctx.device, &sci, nullptr, &tex.sampler));
-    return tex;
-}
-
-void destroyTexture(VkContext& ctx, VkTexture& tex)
-{
-    vkDeviceWaitIdle(ctx.device);
-    vkDestroySampler(ctx.device, tex.sampler, nullptr);
-    vkDestroyImageView(ctx.device, tex.view, nullptr);
-    vkDestroyImage(ctx.device, tex.image, nullptr);
-    vkFreeMemory(ctx.device, tex.memory, nullptr);
-    tex = VkTexture();
-}
 
 VkProgram* VkProgram::create(VkContext& ctx, const std::vector<uint32_t>& vsSpirv, const std::vector<uint32_t>& fsSpirv,
                              const LLShaderTranslator::BlockLayout& layout,
@@ -123,16 +17,18 @@ VkProgram* VkProgram::create(VkContext& ctx, const std::vector<uint32_t>& vsSpir
     p->layout = layout;
     p->shadow.assign((size_t) layout.size, 0);
     p->samplerNames.resize(samplers.size());
+    p->samplerTypes.resize(samplers.size());
     for (const auto& s : samplers)
     {
         p->samplerNames[s.binding] = s.name;
+        p->samplerTypes[s.binding] = s.type;
     }
     p->samplerUnit.resize(samplers.size());
     for (size_t i = 0; i < samplers.size(); ++i)
     {
         p->samplerUnit[i] = (int) i;        // GL's default for a sampler uniform is unit 0; the viewer sets every one explicitly
     }
-    p->lastTextures.assign(samplers.size(), nullptr);
+    p->lastInfos.assign(samplers.size(), VkDescriptorImageInfo{});
 
     // set 0: the uniform block (an empty set layout if the program has no loose uniforms)
     VkDescriptorSetLayoutBinding ubo{};
@@ -222,20 +118,24 @@ void VkProgram::prepareDraw()
 
     if (!samplerNames.empty())
     {
-        std::vector<const VkTexture*> textures(samplerNames.size());
+        std::vector<VkDescriptorImageInfo> infos(samplerNames.size());
         for (size_t i = 0; i < samplerNames.size(); ++i)
         {
-            const int unit = samplerUnit[i];
-            textures[i] = unit >= 0 && unit < VkContext::kTextureUnits ? ctx->unitTextures[unit] : nullptr;
-            if (!textures[i])
+            if (!ctx->textures)
             {
-                fprintf(stderr, "FATAL: sampler '%s' reads texture unit %d, which has no texture bound\n", samplerNames[i].c_str(), unit);
+                fprintf(stderr, "FATAL: a program with samplers needs a texture backend\n");
                 abort();
             }
+            ctx->textures->unitDescriptor((uint32_t) samplerUnit[i], samplerTypes[i], infos[i]);
+        }
+        bool changed = false;
+        for (size_t i = 0; i < infos.size(); ++i)
+        {
+            changed |= infos[i].imageView != lastInfos[i].imageView || infos[i].sampler != lastInfos[i].sampler;
         }
 
         // sampler sets come from a pool that is reset every frame, so a set is only valid in the frame it was made
-        if (textures != lastTextures || samplerSetFrame != ctx->frameCounter)
+        if (changed || samplerSetFrame != ctx->frameCounter)
         {
             VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
             ai.descriptorPool = ctx->framePool;
@@ -243,11 +143,9 @@ void VkProgram::prepareDraw()
             ai.pSetLayouts = &samplerSetLayout;
             VK_CHECK(vkAllocateDescriptorSets(ctx->device, &ai, &samplerSet));
 
-            std::vector<VkDescriptorImageInfo> infos(samplerNames.size());
             std::vector<VkWriteDescriptorSet> writes(samplerNames.size());
             for (size_t i = 0; i < samplerNames.size(); ++i)
             {
-                infos[i] = {textures[i]->sampler, textures[i]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
                 writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
                 writes[i].dstSet = samplerSet;
                 writes[i].dstBinding = (uint32_t) i;
@@ -257,7 +155,7 @@ void VkProgram::prepareDraw()
             }
             vkUpdateDescriptorSets(ctx->device, (uint32_t) writes.size(), writes.data(), 0, nullptr);
             samplerSetFrame = ctx->frameCounter;
-            lastTextures = textures;
+            lastInfos = infos;
         }
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &samplerSet, 0, nullptr);
     }
