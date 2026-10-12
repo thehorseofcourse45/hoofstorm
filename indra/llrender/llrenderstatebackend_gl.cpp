@@ -28,6 +28,27 @@
 
 #include "llrenderstatebackend.h"
 #include "llglheaders.h"
+#include "llrender.h"
+
+// indexed by LLRender::eBlendFactor
+static const GLenum sGLBlendFactor[] =
+{
+    GL_ONE,
+    GL_ZERO,
+    GL_DST_COLOR,
+    GL_SRC_COLOR,
+    GL_ONE_MINUS_DST_COLOR,
+    GL_ONE_MINUS_SRC_COLOR,
+    GL_DST_ALPHA,
+    GL_SRC_ALPHA,
+    GL_ONE_MINUS_DST_ALPHA,
+    GL_ONE_MINUS_SRC_ALPHA,
+
+    GL_ZERO // 'BF_UNDEF'
+};
+
+static_assert(sizeof(sGLBlendFactor) / sizeof(sGLBlendFactor[0]) == LLRender::BF_UNDEF + 1,
+              "sGLBlendFactor must have one entry per LLRender::eBlendFactor");
 
 // Stateless: every call maps to the GL call the viewer made directly before this layer existed.
 class LLGLRenderStateBackend final : public LLRenderStateBackend
@@ -65,6 +86,35 @@ public:
         func = (U32) gl_func;
         writeEnabled = mask == GL_TRUE;
     }
+
+    void setBlendFunc(U32 colorSrc, U32 colorDst, U32 alphaSrc, U32 alphaDst) override
+    {
+        llassert(colorSrc < LLRender::BF_UNDEF);
+        llassert(colorDst < LLRender::BF_UNDEF);
+        llassert(alphaSrc < LLRender::BF_UNDEF);
+        llassert(alphaDst < LLRender::BF_UNDEF);
+
+        if (colorSrc == alphaSrc && colorDst == alphaDst)
+        {
+            // same blend state as the separate call, using the call the viewer used for this case
+            glBlendFunc(sGLBlendFactor[colorSrc], sGLBlendFactor[colorDst]);
+        }
+        else
+        {
+            glBlendFuncSeparate(sGLBlendFactor[colorSrc], sGLBlendFactor[colorDst],
+                                sGLBlendFactor[alphaSrc], sGLBlendFactor[alphaDst]);
+        }
+    }
+
+    void setColorMask(bool r, bool g, bool b, bool a) override
+    {
+        glColorMask(r ? GL_TRUE : GL_FALSE,
+                    g ? GL_TRUE : GL_FALSE,
+                    b ? GL_TRUE : GL_FALSE,
+                    a ? GL_TRUE : GL_FALSE);
+    }
+
+    void setLineWidth(F32 width) override { glLineWidth(width); }
 };
 
 LLRenderStateBackend* createGLRenderStateBackend()

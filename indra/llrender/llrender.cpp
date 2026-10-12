@@ -29,6 +29,7 @@
 #include "llrender.h"
 
 #include "llvertexbuffer.h"
+#include "llrenderstatebackend.h"
 #include "llcubemap.h"
 #include "llglslshader.h"
 #include "llimagegl.h"
@@ -99,22 +100,6 @@ static const GLint sGLAddressMode[] =
 };
 
 const U32 immediate_mask = LLVertexBuffer::MAP_VERTEX | LLVertexBuffer::MAP_COLOR | LLVertexBuffer::MAP_TEXCOORD0;
-
-static const GLenum sGLBlendFactor[] =
-{
-    GL_ONE,
-    GL_ZERO,
-    GL_DST_COLOR,
-    GL_SRC_COLOR,
-    GL_ONE_MINUS_DST_COLOR,
-    GL_ONE_MINUS_SRC_COLOR,
-    GL_DST_ALPHA,
-    GL_SRC_ALPHA,
-    GL_ONE_MINUS_DST_ALPHA,
-    GL_ONE_MINUS_SRC_ALPHA,
-
-    GL_ZERO // 'BF_UNDEF'
-};
 
 LLTexUnit::LLTexUnit(S32 index)
     : mCurrTexType(TT_NONE),
@@ -1394,10 +1379,7 @@ void LLRender::setColorMask(bool writeColorR, bool writeColorG, bool writeColorB
         mCurrColorMask[2] = writeColorB;
         mCurrColorMask[3] = writeAlpha;
 
-        glColorMask(writeColorR ? GL_TRUE : GL_FALSE,
-                    writeColorG ? GL_TRUE : GL_FALSE,
-                    writeColorB ? GL_TRUE : GL_FALSE,
-                    writeAlpha ? GL_TRUE : GL_FALSE);
+        getRenderStateBackend().setColorMask(writeColorR, writeColorG, writeColorB, writeAlpha);
     }
 }
 
@@ -1444,7 +1426,7 @@ void LLRender::blendFunc(eBlendFactor sfactor, eBlendFactor dfactor)
         mCurrBlendColorDFactor = dfactor;
         mCurrBlendAlphaDFactor = dfactor;
         flush();
-        glBlendFunc(sGLBlendFactor[sfactor], sGLBlendFactor[dfactor]);
+        getRenderStateBackend().setBlendFunc(sfactor, dfactor, sfactor, dfactor);
     }
 }
 
@@ -1465,8 +1447,7 @@ void LLRender::blendFunc(eBlendFactor color_sfactor, eBlendFactor color_dfactor,
         mCurrBlendAlphaDFactor = alpha_dfactor;
         flush();
 
-        glBlendFuncSeparate(sGLBlendFactor[color_sfactor], sGLBlendFactor[color_dfactor],
-                           sGLBlendFactor[alpha_sfactor], sGLBlendFactor[alpha_dfactor]);
+        getRenderStateBackend().setBlendFunc(color_sfactor, color_dfactor, alpha_sfactor, alpha_dfactor);
     }
 }
 
@@ -1508,7 +1489,7 @@ void LLRender::setLineWidth(F32 line_width)
 {
     if (line_width > 1.f)
     {
-        line_width = llmin(line_width, glIsEnabled(GL_LINE_SMOOTH) ? mMaxLineWidthSmooth : mMaxLineWidthAliased);
+        line_width = llmin(line_width, getRenderStateBackend().isCapabilityEnabled(GL_LINE_SMOOTH) ? mMaxLineWidthSmooth : mMaxLineWidthAliased);
     }
     if (mLineWidth != line_width || mDirty)
     {
@@ -1517,7 +1498,7 @@ void LLRender::setLineWidth(F32 line_width)
             flush();
         }
         mLineWidth = line_width;
-        glLineWidth(line_width);
+        getRenderStateBackend().setLineWidth(line_width);
     }
 }
 // </FS>

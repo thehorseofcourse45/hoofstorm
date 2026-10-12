@@ -56,6 +56,12 @@ public:
     virtual void setDepthMask(bool writeEnabled) = 0;
     // what the API reports for the depth state; used only by debug state validation
     virtual void queryDepthState(bool& testEnabled, U32& func, bool& writeEnabled) const = 0;
+
+    // Blend factors are LLRender::eBlendFactor values (not GL enums); the backend translates them.
+    // Set color and alpha factors together.
+    virtual void setBlendFunc(U32 colorSrc, U32 colorDst, U32 alphaSrc, U32 alphaDst) = 0;
+    virtual void setColorMask(bool r, bool g, bool b, bool a) = 0;
+    virtual void setLineWidth(F32 width) = 0;
 };
 
 // OpenGL implementation, in llrenderstatebackend_gl.cpp
