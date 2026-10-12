@@ -1503,6 +1503,60 @@ void LLRender::setLineWidth(F32 line_width)
 }
 // </FS>
 
+void LLRender::setViewport(S32 x, S32 y, S32 width, S32 height)
+{
+    flush();
+    getRenderStateBackend().setViewport(x, y, width, height);
+}
+
+void LLRender::setScissor(S32 x, S32 y, S32 width, S32 height)
+{
+    flush();
+    getRenderStateBackend().setScissor(x, y, width, height);
+}
+
+void LLRender::setCullFace(U32 face)
+{
+    flush();
+    getRenderStateBackend().setCullFace(face);
+}
+
+void LLRender::setPolygonMode(U32 face, U32 mode)
+{
+    flush();
+    getRenderStateBackend().setPolygonMode(face, mode);
+}
+
+void LLRender::setPolygonOffset(F32 factor, F32 units)
+{
+    flush();
+    getRenderStateBackend().setPolygonOffset(factor, units);
+}
+
+void LLRender::setPointSize(F32 size)
+{
+    flush();
+    getRenderStateBackend().setPointSize(size);
+}
+
+void LLRender::setStencilFunc(U32 func, S32 ref, U32 mask)
+{
+    flush();
+    getRenderStateBackend().setStencilFunc(func, ref, mask);
+}
+
+void LLRender::setStencilOp(U32 sfail, U32 dpfail, U32 dppass)
+{
+    flush();
+    getRenderStateBackend().setStencilOp(sfail, dpfail, dppass);
+}
+
+void LLRender::setStencilMask(U32 mask)
+{
+    flush();
+    getRenderStateBackend().setStencilMask(mask);
+}
+
 bool LLRender::verifyTexUnitActive(U32 unitToVerify)
 {
     if (mCurrTextureUnitIndex == unitToVerify)

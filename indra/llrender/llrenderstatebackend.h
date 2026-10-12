@@ -62,6 +62,17 @@ public:
     virtual void setBlendFunc(U32 colorSrc, U32 colorDst, U32 alphaSrc, U32 alphaDst) = 0;
     virtual void setColorMask(bool r, bool g, bool b, bool a) = 0;
     virtual void setLineWidth(F32 width) = 0;
+
+    // Face, mode and function values below are GL constants (the viewer's state vocabulary for now).
+    virtual void setViewport(S32 x, S32 y, S32 width, S32 height) = 0;
+    virtual void setScissor(S32 x, S32 y, S32 width, S32 height) = 0;
+    virtual void setCullFace(U32 face) = 0;                          // GL_FRONT, GL_BACK
+    virtual void setPolygonMode(U32 face, U32 mode) = 0;             // GL_FRONT_AND_BACK; GL_FILL, GL_LINE, GL_POINT
+    virtual void setPolygonOffset(F32 factor, F32 units) = 0;
+    virtual void setPointSize(F32 size) = 0;                         // a Vulkan backend sets gl_PointSize from a uniform
+    virtual void setStencilFunc(U32 func, S32 ref, U32 mask) = 0;
+    virtual void setStencilOp(U32 sfail, U32 dpfail, U32 dppass) = 0;
+    virtual void setStencilMask(U32 mask) = 0;
 };
 
 // OpenGL implementation, in llrenderstatebackend_gl.cpp

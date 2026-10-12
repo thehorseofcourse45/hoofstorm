@@ -115,6 +115,24 @@ public:
     }
 
     void setLineWidth(F32 width) override { glLineWidth(width); }
+
+    void setViewport(S32 x, S32 y, S32 width, S32 height) override { glViewport(x, y, width, height); }
+
+    void setScissor(S32 x, S32 y, S32 width, S32 height) override { glScissor(x, y, width, height); }
+
+    void setCullFace(U32 face) override { glCullFace(face); }
+
+    void setPolygonMode(U32 face, U32 mode) override { glPolygonMode(face, mode); }
+
+    void setPolygonOffset(F32 factor, F32 units) override { glPolygonOffset(factor, units); }
+
+    void setPointSize(F32 size) override { glPointSize(size); }
+
+    void setStencilFunc(U32 func, S32 ref, U32 mask) override { glStencilFunc(func, ref, mask); }
+
+    void setStencilOp(U32 sfail, U32 dpfail, U32 dppass) override { glStencilOp(sfail, dpfail, dppass); }
+
+    void setStencilMask(U32 mask) override { glStencilMask(mask); }
 };
 
 LLRenderStateBackend* createGLRenderStateBackend()
