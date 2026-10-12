@@ -30,6 +30,7 @@
 #include "linden_common.h"
 
 #include "llvertexbufferbackend.h"
+#include "llvertexbuffer.h"
 #include "llfasttimer.h"
 #include "llsys.h"
 #include "llglheaders.h"

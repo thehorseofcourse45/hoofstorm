@@ -27,7 +27,7 @@
 #ifndef LL_LLVERTEXBUFFERBACKEND_H
 #define LL_LLVERTEXBUFFERBACKEND_H
 
-#include "llvertexbuffer.h"
+#include "llvertexbuffertypes.h"
 
 // Everything LLVertexBuffer needs from the graphics API. LLVertexBuffer keeps the CPU-side shadow copy of
 // the data and the dirty-region bookkeeping; the backend owns GPU storage, pooling, binding state,

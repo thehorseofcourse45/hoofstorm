@@ -28,6 +28,7 @@
 #define LL_LLVERTEXBUFFER_H
 
 #include "llgl.h"
+#include "llvertexbuffertypes.h"
 #include "v2math.h"
 #include "v3math.h"
 #include "v4math.h"
@@ -55,20 +56,6 @@
 // base class
 class LLPrivateMemoryPool;
 class LLVertexBuffer;
-
-// Backend-neutral buffer description (no GL enums in the public interface)
-enum class BufferKind : U8 { Vertex, Index };
-enum class IndexType : U8 { U16, U32 };
-
-// Opaque GPU buffer handle. 0 means "no buffer". The backend decides what the value means
-// (a GL buffer name today).
-struct BufferHandle
-{
-    U64 id = 0;
-    explicit operator bool() const { return id != 0; }
-    bool operator==(const BufferHandle& rhs) const { return id == rhs.id; }
-    bool operator!=(const BufferHandle& rhs) const { return id != rhs.id; }
-};
 
 class LLVertexBufferData
 {

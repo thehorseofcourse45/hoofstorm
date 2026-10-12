@@ -68,6 +68,7 @@ set(llrender_HEADER_FILES
     lluiimage.h
     lluiimage.inl
     llvertexbuffer.h
+    llvertexbuffertypes.h
     llvertexbufferbackend.h
     llglcommonfunc.h
     )
