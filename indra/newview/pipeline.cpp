@@ -5325,7 +5325,7 @@ void LLPipeline::renderDebug()
 
         gGL.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep, true);
 
-        glPointSize(8.f);
+        gGL.setPointSize(8.f);
         LLGLDepthTest depth(GL_TRUE, GL_TRUE, GL_ALWAYS);
 
         gGL.begin(LLRender::POINTS);
@@ -5350,7 +5350,7 @@ void LLPipeline::renderDebug()
         }
         gGL.end();
         gGL.flush();
-        glPointSize(1.f);
+        gGL.setPointSize(1.f);
     }
 
     // Debug stuff.
@@ -5554,7 +5554,7 @@ void LLPipeline::renderDebug()
                 {
                     //render visible point cloud
                     gGL.flush();
-                    glPointSize(8.f);
+                    gGL.setPointSize(8.f);
                     gGL.begin(LLRender::POINTS);
 
                     F32* c = col+i*4;
@@ -5568,7 +5568,7 @@ void LLPipeline::renderDebug()
                     gGL.end();
 
                     gGL.flush();
-                    glPointSize(1.f);
+                    gGL.setPointSize(1.f);
 
                     LLVector3* ext = mShadowExtents[i];
                     LLVector3 pos = (ext[0]+ext[1])*0.5f;

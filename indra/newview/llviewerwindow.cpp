@@ -5274,9 +5274,9 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
                         gSphere.render();
 
                         // Render Inside
-                        glCullFace(GL_FRONT);
+                        gGL.setCullFace(GL_FRONT);
                         gSphere.render();
-                        glCullFace(GL_BACK);
+                        gGL.setCullFace(GL_BACK);
 
                         gGL.popMatrix();
                     }
