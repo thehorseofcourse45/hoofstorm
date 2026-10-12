@@ -78,6 +78,13 @@ public:
     virtual void drawIndexed(U32 mode, U32 start, U32 end, U32 count, IndexType type, U32 indexByteOffset) = 0;
     virtual void drawArrays(U32 mode, U32 first, U32 count) = 0;
 
+    // Create the per-context vertex input state the API needs before anything can be drawn (a dummy vertex
+    // array object in core-profile GL). Call once per graphics context, after the context is current.
+    virtual void initContextState() = 0;
+    // Draw 'count' vertices starting at 'first' with no vertex buffers: the vertex shader generates the
+    // positions (for example a fullscreen triangle from gl_VertexID). 'mode' is an LLRender::eGeomModes value.
+    virtual void drawArraysNoInput(U32 mode, U32 first, U32 count) = 0;
+
     // Debug label for graphics debuggers (RenderDoc); may be a no-op.
     virtual void setLabel(BufferHandle handle, const char* label) = 0;
 };

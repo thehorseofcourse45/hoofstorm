@@ -123,6 +123,16 @@ public:
 
     static void unbind(); //unbind any bound vertex buffer
 
+    // true if writes only go to the CPU copy and the GPU buffer is created when the buffer is unmapped
+    static bool usesDeferredUpload();
+
+    // create the per-context vertex input state; call once per graphics context after it is current
+    // (requires initClass() to have run)
+    static void initContextVertexState();
+
+    // draw with no vertex buffers; the vertex shader generates the positions (e.g. a fullscreen triangle)
+    static void drawArraysNoInput(U32 mode, U32 first, U32 count);
+
     // forget the cached vertex buffer binding so the next setBuffer() rebinds and re-sets up attributes
     // (see https://github.com/secondlife/viewer/issues/912)
     static void invalidateBufferBinding();

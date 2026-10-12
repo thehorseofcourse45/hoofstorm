@@ -878,11 +878,8 @@ bool LLRender::init(bool needs_vertex_buffer)
     }
 #endif
 
-    { //bind a dummy vertex array object so we're core profile compliant
-        U32 ret;
-        glGenVertexArrays(1, &ret);
-        glBindVertexArray(ret);
-    }
+    // dummy vertex array object so we're core profile compliant (created per graphics context)
+    LLVertexBuffer::initContextVertexState();
 
     if (needs_vertex_buffer)
     {
@@ -1760,13 +1757,13 @@ LLVertexBuffer* LLRender::genBuffer(U32 attribute_mask, S32 count)
     LLVertexBuffer * vb = new LLVertexBuffer(attribute_mask);
     vb->allocateBuffer(count, 0);
 
-    // Non-Apple path uses glBufferSubData inside setXxxData, so the VBO
+    // Non-deferred-upload path uploads inside setXxxData, so the VBO
     // must already be bound. On Apple, the VBO is lazily created in
     // _unmapBuffer (LLAppleVBOPool); calling setBuffer() here would bind
-    // mGLBuffer == 0 and then setupVertexBuffer would issue
+    // an empty buffer handle and then the vertex attribute setup would issue
     // glVertexAttribIPointer with a non-null offset against no bound
     // GL_ARRAY_BUFFER -> GL_INVALID_OPERATION in core profile.
-    if (!gGLManager.mIsApple)
+    if (!LLVertexBuffer::usesDeferredUpload())
     {
         vb->setBuffer();
     }

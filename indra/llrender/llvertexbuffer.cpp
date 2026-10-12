@@ -398,6 +398,27 @@ void LLVertexBuffer::unbind()
 }
 
 //static
+bool LLVertexBuffer::usesDeferredUpload()
+{
+    return sBackend && sBackend->usesDeferredUpload();
+}
+
+//static
+void LLVertexBuffer::initContextVertexState()
+{
+    // fail loudly: without this state a core-profile context cannot draw anything
+    llassert_always(sBackend);
+    sBackend->initContextState();
+}
+
+//static
+void LLVertexBuffer::drawArraysNoInput(U32 mode, U32 first, U32 count)
+{
+    llassert(sBackend);
+    sBackend->drawArraysNoInput(mode, first, count);
+}
+
+//static
 void LLVertexBuffer::invalidateBufferBinding()
 {
     if (sBackend)

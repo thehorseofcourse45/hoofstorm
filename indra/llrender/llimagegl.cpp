@@ -39,6 +39,7 @@
 #include "llgl.h"
 #include "llglslshader.h"
 #include "llrender.h"
+#include "llvertexbuffer.h"
 #include "llwindow.h"
 #include "llframetimer.h"
 #include <unordered_set>
@@ -2495,7 +2496,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
         // draw a full screen triangle
         if (gGL.getTexUnit(0)->bind(this, true, true))
         {
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+            LLVertexBuffer::drawArraysNoInput(LLRender::TRIANGLES, 0, 3);
 
 #if LL_DARWIN
             // On mac OS, flush before freeing, otherwise the texture may be
