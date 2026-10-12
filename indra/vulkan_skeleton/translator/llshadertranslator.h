@@ -38,7 +38,8 @@
 //   - samplers get layout(set = samplerSet, binding = N), N in order of first appearance in the program
 //   - existing uniform blocks get layout(set = blockSet, binding = <table>)
 //   - vertex shader inputs named in attribNames get layout(location = index of the name)
-// Varying (stage interface) locations are NOT assigned here: the caller links the stages and lets the compiler match them by name.
+//   - stage interface variables (vertex outputs, geometry inputs/outputs, fragment inputs) get layout(location = N), the same N for
+//     the same name in every stage of the program. Fragment outputs are left to the compiler.
 //
 // Every object passed in must already be preprocessed (no #if/#define/#include left; glslang's preprocessor output is fine).
 
@@ -98,10 +99,39 @@ public:
         int legacyExtensionsRemoved = 0;
         int uniformInitializersRemoved = 0;
         int attributesLocated = 0;
+        int varyingsLocated = 0;
         bool ok() const { return errors.empty(); }
     };
 
     static Result translateProgram(const std::vector<StageInput>& stages, const Options& options);
+
+    // Where each member of the program uniform block lives, under std140 rules (the layout of the block that
+    // translateProgram() declares). A CPU-side copy of the block is written at these offsets.
+    struct BlockMember
+    {
+        std::string name;
+        int offset = 0;         // bytes from the start of the block
+        int size = 0;           // bytes the member occupies (for an array: all elements, including padding between them)
+        int arrayStride = 0;    // 0 if not an array
+    };
+    struct BlockLayout
+    {
+        std::vector<BlockMember> members;
+        int size = 0;           // total bytes, rounded up to 16
+        std::string error;      // non-empty = a member has a type or array size the calculator does not know
+        const BlockMember* find(const std::string& name) const
+        {
+            for (const BlockMember& m : members)
+            {
+                if (m.name == name)
+                {
+                    return &m;
+                }
+            }
+            return nullptr;
+        }
+    };
+    static BlockLayout computeBlockLayout(const std::vector<UniformMember>& uniforms);
 
     // The name of the uniform block that holds the program's loose uniforms.
     static const char* programBlockName() { return "LLProgramUniforms"; }

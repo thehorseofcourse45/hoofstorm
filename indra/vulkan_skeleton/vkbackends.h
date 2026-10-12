@@ -121,6 +121,5 @@ private:
     U32 mAttribMask = 0;
     U32 mOffsets[14] = {};
 
-    VkPipelineLayout mLayout = VK_NULL_HANDLE;
     std::map<std::string, VkPipeline> mPipelines;
 };
