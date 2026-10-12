@@ -24,6 +24,7 @@ set(llrender_SOURCE_FILES
     llimagegl.cpp
     llpostprocess.cpp
     llrender.cpp
+    llrenderstatebackend_gl.cpp
     llrender2dutils.cpp
     llrendernavprim.cpp
     llrendersphere.cpp
@@ -57,6 +58,7 @@ set(llrender_HEADER_FILES
     llimagegl.h
     llpostprocess.h
     llrender.h
+    llrenderstatebackend.h
     llrender2dutils.h
     llrendernavprim.h
     llrendersphere.h

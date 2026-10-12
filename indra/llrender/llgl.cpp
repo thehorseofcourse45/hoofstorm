@@ -49,6 +49,7 @@
 
 #include "llglheaders.h"
 #include "llglslshader.h"
+#include "llrenderstatebackend.h"
 
 #include "glm/glm.hpp"
 #include <glm/gtc/matrix_access.hpp>
@@ -2472,7 +2473,7 @@ void LLGLState::initClass()
 
     //make sure multisample defaults to disabled
     sStateMap[GL_MULTISAMPLE] = GL_FALSE;
-    glDisable(GL_MULTISAMPLE);
+    getRenderStateBackend().setCapability(GL_MULTISAMPLE, false);
 }
 
 //static
@@ -2538,7 +2539,7 @@ void LLGLState::checkStates(GLboolean writeAlpha)
     {
         LLGLenum state = iter->first;
         LLGLboolean cur_state = iter->second;
-        LLGLboolean gl_state = glIsEnabled(state);
+        LLGLboolean gl_state = getRenderStateBackend().isCapabilityEnabled(state) ? GL_TRUE : GL_FALSE;
         if(cur_state != gl_state)
         {
             dumpStates();
@@ -2574,13 +2575,13 @@ void LLGLState::setEnabled(S32 enabled)
     else if (enabled == ENABLED_STATE && sStateMap[mState] != GL_TRUE)
     {
         gGL.flush();
-        glEnable(mState);
+        getRenderStateBackend().setCapability(mState, true);
         sStateMap[mState] = GL_TRUE;
     }
     else if (enabled == DISABLED_STATE && sStateMap[mState] != GL_FALSE)
     {
         gGL.flush();
-        glDisable(mState);
+        getRenderStateBackend().setCapability(mState, false);
         sStateMap[mState] = GL_FALSE;
     }
     mIsEnabled = enabled;
@@ -2595,11 +2596,11 @@ LLGLState::~LLGLState()
         {
             if (!gDebugSession)
             {
-                llassert_always(sStateMap[mState] == glIsEnabled(mState));
+                llassert_always(sStateMap[mState] == (getRenderStateBackend().isCapabilityEnabled(mState) ? GL_TRUE : GL_FALSE));
             }
             else
             {
-                if (sStateMap[mState] != glIsEnabled(mState))
+                if (sStateMap[mState] != (getRenderStateBackend().isCapabilityEnabled(mState) ? GL_TRUE : GL_FALSE))
                 {
                     ll_fail("GL enabled state does not match expected");
                 }
@@ -2611,12 +2612,12 @@ LLGLState::~LLGLState()
             gGL.flush();
             if (mWasEnabled)
             {
-                glEnable(mState);
+                getRenderStateBackend().setCapability(mState, true);
                 sStateMap[mState] = GL_TRUE;
             }
             else
             {
-                glDisable(mState);
+                getRenderStateBackend().setCapability(mState, false);
                 sStateMap[mState] = GL_FALSE;
             }
         }
@@ -2836,20 +2837,19 @@ LLGLDepthTest::LLGLDepthTest(GLboolean depth_enabled, GLboolean write_enabled, G
     if (depth_enabled != sDepthEnabled)
     {
         gGL.flush();
-        if (depth_enabled) glEnable(GL_DEPTH_TEST);
-        else glDisable(GL_DEPTH_TEST);
+        getRenderStateBackend().setDepthTest(depth_enabled == GL_TRUE);
         sDepthEnabled = depth_enabled;
     }
     if (depth_func != sDepthFunc)
     {
         gGL.flush();
-        glDepthFunc(depth_func);
+        getRenderStateBackend().setDepthFunc(depth_func);
         sDepthFunc = depth_func;
     }
     if (write_enabled != sWriteEnabled)
     {
         gGL.flush();
-        glDepthMask(write_enabled);
+        getRenderStateBackend().setDepthMask(write_enabled == GL_TRUE);
         sWriteEnabled = write_enabled;
     }
 }
@@ -2861,20 +2861,19 @@ LLGLDepthTest::~LLGLDepthTest()
     if (sDepthEnabled != mPrevDepthEnabled )
     {
         gGL.flush();
-        if (mPrevDepthEnabled) glEnable(GL_DEPTH_TEST);
-        else glDisable(GL_DEPTH_TEST);
+        getRenderStateBackend().setDepthTest(mPrevDepthEnabled == GL_TRUE);
         sDepthEnabled = mPrevDepthEnabled;
     }
     if (sDepthFunc != mPrevDepthFunc)
     {
         gGL.flush();
-        glDepthFunc(mPrevDepthFunc);
+        getRenderStateBackend().setDepthFunc(mPrevDepthFunc);
         sDepthFunc = mPrevDepthFunc;
     }
     if (sWriteEnabled != mPrevWriteEnabled )
     {
         gGL.flush();
-        glDepthMask(mPrevWriteEnabled);
+        getRenderStateBackend().setDepthMask(mPrevWriteEnabled == GL_TRUE);
         sWriteEnabled = mPrevWriteEnabled;
     }
 }
@@ -2883,14 +2882,14 @@ void LLGLDepthTest::checkState()
 {
     if (gDebugGL)
     {
-        GLint func = 0;
-        GLboolean mask = GL_FALSE;
+        bool test_enabled = false;
+        bool write_enabled = false;
+        U32 func = 0;
 
-        glGetIntegerv(GL_DEPTH_FUNC, &func);
-        glGetBooleanv(GL_DEPTH_WRITEMASK, &mask);
+        getRenderStateBackend().queryDepthState(test_enabled, func, write_enabled);
 
-        if (glIsEnabled(GL_DEPTH_TEST) != sDepthEnabled ||
-            sWriteEnabled != mask ||
+        if ((test_enabled ? GL_TRUE : GL_FALSE) != sDepthEnabled ||
+            sWriteEnabled != (write_enabled ? GL_TRUE : GL_FALSE) ||
             sDepthFunc != func)
         {
             if (gDebugSession)
