@@ -60,6 +60,16 @@ class LLVertexBuffer;
 enum class BufferKind : U8 { Vertex, Index };
 enum class IndexType : U8 { U16, U32 };
 
+// Opaque GPU buffer handle. 0 means "no buffer". The backend decides what the value means
+// (a GL buffer name today).
+struct BufferHandle
+{
+    U64 id = 0;
+    explicit operator bool() const { return id != 0; }
+    bool operator==(const BufferHandle& rhs) const { return id == rhs.id; }
+    bool operator!=(const BufferHandle& rhs) const { return id != rhs.id; }
+};
+
 class LLVertexBufferData
 {
 public:
@@ -132,7 +142,7 @@ public:
     // 1 - update LLVertexBuffer::sTypeSize
     // 2 - update LLVertexBuffer::vb_type_name
     // 3 - add a strider accessor
-    // 4 - modify LLVertexBuffer::setupVertexBuffer
+    // 4 - modify setup_vertex_attributes in llvertexbuffer_gl.cpp (and any other backend)
     // 6 - modify LLViewerShaderMgr::mReservedAttribs
 
     // clang-format off
@@ -177,8 +187,6 @@ protected:
     friend class LLRender;
 
     ~LLVertexBuffer(); // use unref()
-
-    void setupVertexBuffer();
 
     void    genBuffer(U32 size);
     void    genIndices(U32 size);
@@ -290,8 +298,8 @@ public:
     void clone(LLVertexBuffer& target) const;
 
 protected:
-    U32     mGLBuffer = 0;      // GL VBO handle
-    U32     mGLIndices = 0;     // GL IBO handle
+    BufferHandle mBuffer;       // GPU vertex buffer
+    BufferHandle mIndices;      // GPU index buffer
     U32     mNumVerts = 0;      // Number of vertices allocated
     U32     mNumIndices = 0;    // Number of indices allocated
     IndexType mIndexType = IndexType::U16; // type of indices in index buffer
@@ -337,9 +345,6 @@ public:
 
     static U64 getBytesAllocated();
     static const U32 sTypeSize[TYPE_MAX];
-    static U32 sGLRenderBuffer;
-    static U32 sGLRenderIndices;
-    static U32 sLastMask;
     static U32 sVertexCount;
 };
 
