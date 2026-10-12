@@ -127,7 +127,12 @@ VkProgram* VkProgram::create(VkContext& ctx, const std::vector<uint32_t>& vsSpir
     {
         p->samplerNames[s.binding] = s.name;
     }
-    p->textures.assign(samplers.size(), nullptr);
+    p->samplerUnit.resize(samplers.size());
+    for (size_t i = 0; i < samplers.size(); ++i)
+    {
+        p->samplerUnit[i] = (int) i;        // GL's default for a sampler uniform is unit 0; the viewer sets every one explicitly
+    }
+    p->lastTextures.assign(samplers.size(), nullptr);
 
     // set 0: the uniform block (an empty set layout if the program has no loose uniforms)
     VkDescriptorSetLayoutBinding ubo{};
@@ -182,6 +187,10 @@ VkProgram* VkProgram::create(VkContext& ctx, const std::vector<uint32_t>& vsSpir
 void VkProgram::destroy()
 {
     vkDeviceWaitIdle(ctx->device);
+    if (uniformSet)
+    {
+        vkFreeDescriptorSets(ctx->device, ctx->staticPool, 1, &uniformSet);
+    }
     vkDestroyPipelineLayout(ctx->device, pipelineLayout, nullptr);
     vkDestroyDescriptorSetLayout(ctx->device, samplerSetLayout, nullptr);
     vkDestroyDescriptorSetLayout(ctx->device, uniformSetLayout, nullptr);
@@ -201,23 +210,6 @@ bool VkProgram::setUniform(const char* name, const void* data, uint32_t bytes)
     return true;
 }
 
-bool VkProgram::setTexture(const char* samplerName, const VkTexture* texture)
-{
-    for (size_t i = 0; i < samplerNames.size(); ++i)
-    {
-        if (samplerNames[i] == samplerName)
-        {
-            if (textures[i] != texture)
-            {
-                textures[i] = texture;
-                texturesDirty = true;
-            }
-            return true;
-        }
-    }
-    return false;
-}
-
 void VkProgram::prepareDraw()
 {
     VkCommandBuffer cmd = ctx->cmd;
@@ -230,8 +222,20 @@ void VkProgram::prepareDraw()
 
     if (!samplerNames.empty())
     {
+        std::vector<const VkTexture*> textures(samplerNames.size());
+        for (size_t i = 0; i < samplerNames.size(); ++i)
+        {
+            const int unit = samplerUnit[i];
+            textures[i] = unit >= 0 && unit < VkContext::kTextureUnits ? ctx->unitTextures[unit] : nullptr;
+            if (!textures[i])
+            {
+                fprintf(stderr, "FATAL: sampler '%s' reads texture unit %d, which has no texture bound\n", samplerNames[i].c_str(), unit);
+                abort();
+            }
+        }
+
         // sampler sets come from a pool that is reset every frame, so a set is only valid in the frame it was made
-        if (texturesDirty || samplerSetFrame != ctx->frameCounter)
+        if (textures != lastTextures || samplerSetFrame != ctx->frameCounter)
         {
             VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
             ai.descriptorPool = ctx->framePool;
@@ -243,11 +247,6 @@ void VkProgram::prepareDraw()
             std::vector<VkWriteDescriptorSet> writes(samplerNames.size());
             for (size_t i = 0; i < samplerNames.size(); ++i)
             {
-                if (!textures[i])
-                {
-                    fprintf(stderr, "FATAL: sampler '%s' has no texture bound\n", samplerNames[i].c_str());
-                    abort();
-                }
                 infos[i] = {textures[i]->sampler, textures[i]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
                 writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
                 writes[i].dstSet = samplerSet;
@@ -258,7 +257,7 @@ void VkProgram::prepareDraw()
             }
             vkUpdateDescriptorSets(ctx->device, (uint32_t) writes.size(), writes.data(), 0, nullptr);
             samplerSetFrame = ctx->frameCounter;
-            texturesDirty = false;
+            lastTextures = textures;
         }
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &samplerSet, 0, nullptr);
     }

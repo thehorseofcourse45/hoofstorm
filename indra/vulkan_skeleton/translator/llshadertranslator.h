@@ -99,6 +99,7 @@ public:
         int legacyExtensionsRemoved = 0;
         int uniformInitializersRemoved = 0;
         int attributesLocated = 0;
+        std::vector<std::string> attributeNames;    // vertex inputs that got a fixed location (location = index in Options::attribNames)
         int varyingsLocated = 0;
         bool ok() const { return errors.empty(); }
     };

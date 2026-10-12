@@ -158,7 +158,7 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantD
         VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
         f2.pNext = &f13;
         vkGetPhysicalDeviceFeatures2(d, &f2);
-        if (!f13.dynamicRendering)
+        if (!f13.dynamicRendering || !f13.shaderDemoteToHelperInvocation)
         {
             continue;
         }
@@ -201,6 +201,7 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantD
 
     VkPhysicalDeviceVulkan13Features enable13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     enable13.dynamicRendering = VK_TRUE;
+    enable13.shaderDemoteToHelperInvocation = VK_TRUE;      // glslang turns GLSL discard into OpDemoteToHelperInvocation
 
     // VK_EXT_depth_clip_control: ask whether the device can use GL's -1..1 clip depth range
     {
@@ -234,8 +235,19 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantD
     {
         deviceExt.push_back(VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME);
     }
+    // core features the viewer's shaders use: samplerCubeArray (reflection probes) needs imageCubeArray
+    VkPhysicalDeviceFeatures2 supported2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    vkGetPhysicalDeviceFeatures2(phys, &supported2);
+    VkPhysicalDeviceFeatures2 enable2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    enable2.features.imageCubeArray = supported2.features.imageCubeArray;
+    if (!supported2.features.imageCubeArray)
+    {
+        fprintf(stderr, "warning: imageCubeArray is not supported; shaders with samplerCubeArray will not be valid\n");
+    }
+    enable2.pNext = &enable13;
+
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-    dci.pNext = &enable13;
+    dci.pNext = &enable2;
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
     dci.enabledExtensionCount = (uint32_t) deviceExt.size();
@@ -379,14 +391,16 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantD
         VK_CHECK(vkBindBufferMemory(device, ringBuffer, ringMemory, 0));
         VK_CHECK(vkMapMemory(device, ringMemory, 0, VK_WHOLE_SIZE, 0, (void**) &ringMapped));
 
-        VkDescriptorPoolSize staticSizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 64}};
+        VkDescriptorPoolSize staticSizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 4096}};
         VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        dpi.maxSets = 64;
+        dpi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;      // a program frees its set when it is deleted
+        dpi.maxSets = 4096;
         dpi.poolSizeCount = 1;
         dpi.pPoolSizes = staticSizes;
         VK_CHECK(vkCreateDescriptorPool(device, &dpi, nullptr, &staticPool));
 
         VkDescriptorPoolSize frameSizes[] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096}};
+        dpi.flags = 0;
         dpi.maxSets = 1024;
         dpi.pPoolSizes = frameSizes;
         VK_CHECK(vkCreateDescriptorPool(device, &dpi, nullptr, &framePool));
