@@ -4566,7 +4566,7 @@ void renderMeshBaseHullPhysics(LLVOVolume* volume, U32 data_mask, LLColor4& colo
 {
             LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-            glPolygonOffset(offset_factor, offset_units);
+            gGL.setPolygonOffset(offset_factor, offset_units);
             gGL.diffuseColor4fv(color.mV);
             renderMeshBaseHullWithOutline(volume, data_mask, color, line_color);
 }
@@ -4576,7 +4576,7 @@ void renderHullPhysics(LLModel::PhysicsMesh& mesh, const LLColor4& color, const 
 {
     LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-    glPolygonOffset(offset_factor, offset_units);
+    gGL.setPolygonOffset(offset_factor, offset_units);
     render_hull_with_outline(mesh, color, line_color);
 }
 
@@ -4605,7 +4605,7 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
         {
             {
                 LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
-                glPolygonOffset(offset_factor, offset_units);
+                gGL.setPolygonOffset(offset_factor, offset_units);
                 gGL.diffuseColor4fv(color.mV);
                 //decomp has physics mesh, render that mesh
                 glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
@@ -4614,7 +4614,7 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
             {
                 LLGLEnable offset(GL_POLYGON_OFFSET_LINE);
                 glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-                glPolygonOffset(offset_factor, offset_units);
+                gGL.setPolygonOffset(offset_factor, offset_units);
                 gGL.diffuseColor4fv(line_color.mV);
                 LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
             }
@@ -4642,7 +4642,7 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
             gGL.diffuseColor4fv(color.mV);
             LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-            glPolygonOffset(offset_factor, offset_units);
+            gGL.setPolygonOffset(offset_factor, offset_units);
             gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
             LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
         }
@@ -4650,7 +4650,7 @@ void renderMeshPhysicsTriangles(const LLColor4& color, const LLColor4& line_colo
             gGL.diffuseColor4fv(line_color.mV);
             LLGLEnable offset(GL_POLYGON_OFFSET_LINE);
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-            glPolygonOffset(offset_factor, offset_units);
+            gGL.setPolygonOffset(offset_factor, offset_units);
             gGL.setLineWidth(3.f); // <FS> Line width OGL core profile fix by Rye Mutt
             LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mPhysicsShapeMesh.mPositions);
         }
@@ -4982,7 +4982,7 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
     {
         LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-        glPolygonOffset(offset_factor, offset_units);
+        gGL.setPolygonOffset(offset_factor, offset_units);
         LLVector3 center = physics_spec.getCenter();
         LLVector3 scale = physics_spec.getScale();
         LLVector3 vscale = vovolume->getScale()*2.f;
@@ -4995,7 +4995,7 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
     {
         LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-        glPolygonOffset(offset_factor, offset_units);
+        gGL.setPolygonOffset(offset_factor, offset_units);
 
         LLVolumeParams volume_params;
         volume_params.setType(LL_PCODE_PROFILE_CIRCLE_HALF, LL_PCODE_PATH_CIRCLE);
@@ -5013,7 +5013,7 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
     {
         LLGLEnable offset(GL_POLYGON_OFFSET_FILL);
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-        glPolygonOffset(offset_factor, offset_units);
+        gGL.setPolygonOffset(offset_factor, offset_units);
 
         LLVolumeParams volume_params;
         volume_params.setType(LL_PCODE_PROFILE_CIRCLE, LL_PCODE_PATH_LINE);
@@ -5036,7 +5036,7 @@ void renderOnePhysicsShape(LLViewerObject* objectp)
         LLVolume* phys_volume = LLPrimitive::sVolumeManager->refVolume(volume_params, detail);
 
         // TODO: (BEQ) We ought to be able to use a common draw call here too?
-        glPolygonOffset(offset_factor, offset_units);
+        gGL.setPolygonOffset(offset_factor, offset_units);
 
         {
             LLGLEnable offset(GL_POLYGON_OFFSET_LINE);
