@@ -25,6 +25,7 @@
  */
 
 #include "linden_common.h"
+#include "lltexturebackend.h"
 
 #include "lltexlayer.h"
 
@@ -1479,9 +1480,9 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                         if (!textureW || !textureH)
                         {
                             LLGLint glTemp{};
-                            glGetTexLevelParameteriv(LLTexUnit::TT_TEXTURE, 0, GL_TEXTURE_WIDTH, (GLint*)&glTemp);
+                            glTemp = getTextureBackend().getLevelParameter(LLTexUnit::TT_TEXTURE, 0, GL_TEXTURE_WIDTH);
                             textureW = glTemp;
-                            glGetTexLevelParameteriv(LLTexUnit::TT_TEXTURE, 0, GL_TEXTURE_HEIGHT, (GLint*)&glTemp);
+                            glTemp = getTextureBackend().getLevelParameter(LLTexUnit::TT_TEXTURE, 0, GL_TEXTURE_HEIGHT);
                             textureH = glTemp;
                         }
                         // </FS>ND>
@@ -1507,7 +1508,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                         return;
                     }
 
-                    glGetTexImage(LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGBA, GL_UNSIGNED_BYTE, temp);
+                    getTextureBackend().readImage(LLTexUnit::getInternalType(LLTexUnit::TT_TEXTURE), 0, GL_RGBA, GL_UNSIGNED_BYTE, temp);
                     GLenum error = glGetError();
                     if (error != GL_NO_ERROR)
                     {

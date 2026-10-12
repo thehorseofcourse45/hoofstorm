@@ -27,6 +27,7 @@
 #include "llterrainpaintmap.h"
 
 #include "llviewerprecompiledheaders.h"
+#include "lltexturebackend.h"
 
 // library includes
 #include "llglslshader.h"
@@ -275,7 +276,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     {
         LL_WARNS() << "Failed to copy framebuffer to paintmap" << LL_ENDL;
     }
-    glGenerateMipmap(GL_TEXTURE_2D);
+    getTextureBackend().generateMipmaps(GL_TEXTURE_2D);
     stop_glerror();
 
     scratch_target.flush();

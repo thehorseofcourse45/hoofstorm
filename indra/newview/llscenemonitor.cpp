@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "lltexturebackend.h"
 #include "llrendertarget.h"
 #include "llscenemonitor.h"
 #include "llviewerwindow.h"
@@ -316,7 +317,7 @@ void LLSceneMonitor::capture()
         gGL.getTexUnit(0)->bind(&cur_target);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, 0); //point to the main frame buffer.
 
-        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, cur_target.getWidth(), cur_target.getHeight()); //copy the content
+        getTextureBackend().copyFromFramebuffer2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, cur_target.getWidth(), cur_target.getHeight()); //copy the content
 
         glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);

@@ -24,6 +24,7 @@
  * $/LicenseInfo$
  */
 #include "linden_common.h"
+#include "lltexturebackend.h"
 
 #include "llworkerthread.h"
 
@@ -221,7 +222,7 @@ void LLCubeMap::initEnvironmentMap(const std::vector<LLPointer<LLImageRaw> >& ra
     bind();
     mImages[0]->setFilteringOption(LLTexUnit::TFO_ANISOTROPIC);
     glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
-    glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+    getTextureBackend().generateMipmaps(GL_TEXTURE_CUBE_MAP);
     gGL.getTexUnit(0)->disable();
     disable();
 }
@@ -237,7 +238,7 @@ void LLCubeMap::generateMipMaps()
     mImages[0]->setFilteringOption(LLTexUnit::TFO_BILINEAR);
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("cmgmm - glGenerateMipmap");
-        glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+        getTextureBackend().generateMipmaps(GL_TEXTURE_CUBE_MAP);
     }
     gGL.getTexUnit(0)->disable();
     disable();
