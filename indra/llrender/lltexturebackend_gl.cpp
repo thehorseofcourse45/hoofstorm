@@ -71,6 +71,130 @@ public:
     {
         glTexParameterf(target, GL_TEXTURE_MAX_ANISOTROPY, maxAnisotropy);
     }
+
+    void setLevelRange(U32 target, S32 baseLevel, S32 maxLevel) override
+    {
+        glTexParameteri(target, GL_TEXTURE_BASE_LEVEL, baseLevel);
+        glTexParameteri(target, GL_TEXTURE_MAX_LEVEL, maxLevel);
+    }
+
+    void setSwizzle(U32 target, const S32* rgba) override
+    {
+        glTexParameteriv(target, GL_TEXTURE_SWIZZLE_RGBA, rgba);
+    }
+
+    void setLegacyMipmapGeneration(U32 target, bool enabled) override
+    {
+        glTexParameteri(target, GL_GENERATE_MIPMAP, enabled ? GL_TRUE : GL_FALSE);
+    }
+
+    void generate(S32 count, U32* names) override
+    {
+        glGenTextures(count, names);
+    }
+
+    void destroy(S32 count, const U32* names) override
+    {
+        glDeleteTextures(count, names);
+    }
+
+    void setUnpackRowLength(S32 pixels) override
+    {
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, pixels);
+    }
+
+    void setUnpackSwapBytes(bool swap) override
+    {
+        glPixelStorei(GL_UNPACK_SWAP_BYTES, swap ? 1 : 0);
+    }
+
+    void image2D(U32 target, S32 level, S32 internalFormat, S32 width, S32 height, U32 format, U32 type, const void* pixels) override
+    {
+        glTexImage2D(target, level, internalFormat, width, height, 0, format, type, pixels);
+    }
+
+    void compressedImage2D(U32 target, S32 level, U32 internalFormat, S32 width, S32 height, S32 imageSize, const void* data) override
+    {
+        glCompressedTexImage2D(target, level, internalFormat, width, height, 0, imageSize, data);
+    }
+
+    void subImage2D(U32 target, S32 level, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, const void* pixels) override
+    {
+        glTexSubImage2D(target, level, x, y, width, height, format, type, pixels);
+    }
+
+    void generateMipmaps(U32 target) override
+    {
+        glGenerateMipmap(target);
+    }
+
+    void copyFromFramebuffer2D(U32 target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height) override
+    {
+        glCopyTexSubImage2D(target, level, xoffset, yoffset, x, y, width, height);
+    }
+
+    void replaceWithMipLevel(U32 target, S32 mip, S32 internalFormat, S32 width, S32 height, U32 format, U32 type, U64 bytes) override
+    {
+        if (mScratchPBO == 0)
+        {
+            glGenBuffers(1, &mScratchPBO);
+            mScratchPBOSize = 0;
+        }
+
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, mScratchPBO);
+
+        if (bytes > mScratchPBOSize)
+        {
+            glBufferData(GL_PIXEL_PACK_BUFFER, bytes, NULL, GL_STREAM_COPY);
+            mScratchPBOSize = (U32)bytes;
+        }
+
+        glGetTexImage(target, mip, format, type, nullptr);
+
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, mScratchPBO);
+        glTexImage2D(target, 0, internalFormat, width, height, 0, format, type, nullptr);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    }
+
+    S32 getLevelParameter(U32 target, S32 level, U32 pname) override
+    {
+        GLint value = 0;
+        glGetTexLevelParameteriv(target, level, pname, &value);
+        return value;
+    }
+
+    void readImage(U32 target, S32 level, U32 format, U32 type, void* out) override
+    {
+        glGetTexImage(target, level, format, type, out);
+    }
+
+    void readCompressedImage(U32 target, S32 level, void* out) override
+    {
+        glGetCompressedTexImage(target, level, out);
+    }
+
+    bool isResident(U32 texture) override
+    {
+        GLboolean resident = GL_FALSE;
+        glAreTexturesResident(1, &texture, &resident);
+        return resident != GL_FALSE;
+    }
+
+    void shutdown() override
+    {
+        if (mScratchPBO != 0)
+        {
+            glDeleteBuffers(1, &mScratchPBO);
+            mScratchPBO = 0;
+            mScratchPBOSize = 0;
+        }
+    }
+
+private:
+    U32 mScratchPBO = 0;        // pixel buffer used by replaceWithMipLevel()
+    U32 mScratchPBOSize = 0;
 };
 
 } // namespace

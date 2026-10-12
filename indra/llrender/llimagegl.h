@@ -71,7 +71,7 @@ public:
     // video memory usage based on testing in lagland against an NVIDIA GPU.
     static U64 getTextureBytesAllocated();
 
-    // These 2 functions replace glGenTextures() and glDeleteTextures()
+    // These 2 functions replace glGenTextures() and glDeleteTextures() (LLTextureBackend::generate / destroy)
     static void generateTextures(S32 numTextures, U32 *textures);
     static void deleteTextures(S32 numTextures, const U32 *textures);
 
@@ -274,7 +274,7 @@ protected:
     LLGLint  mFormatInternal; // = GL internalformat
     LLGLenum mFormatPrimary;  // = GL format (pixel data format)
     LLGLenum mFormatType;
-    bool     mFormatSwapBytes;// if true, use glPixelStorei(GL_UNPACK_SWAP_BYTES, 1)
+    bool     mFormatSwapBytes;// if true, uploads swap the byte order of the source data (LLTextureBackend::setUnpackSwapBytes)
 
     bool mExternalTexture;
 
@@ -307,8 +307,6 @@ public:
 private:
     static S32 sMaxCategories;
     static bool sSkipAnalyzeAlpha;
-    static U32 sScratchPBO;
-    static U32 sScratchPBOSize;
     static U32* sManualScratch;
 
     //the flag to allow to call readBackRaw(...).

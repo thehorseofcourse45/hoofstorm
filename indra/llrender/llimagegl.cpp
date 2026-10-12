@@ -30,6 +30,7 @@
 #include "linden_common.h"
 
 #include "llimagegl.h"
+#include "lltexturebackend.h"
 
 #include "llerror.h"
 #include "llfasttimer.h"
@@ -160,8 +161,6 @@ S32 LLImageGL::sMaxCategories = 1 ;
 
 //optimization for when we don't need to calculate mIsMask
 bool LLImageGL::sSkipAnalyzeAlpha;
-U32  LLImageGL::sScratchPBO = 0;
-U32  LLImageGL::sScratchPBOSize = 0;
 U32* LLImageGL::sManualScratch = nullptr;
 
 
@@ -204,8 +203,8 @@ void LLImageGL::checkTexSize(bool forced) const
         }
         stop_glerror() ;
         LLGLint x = 0, y = 0 ;
-        glGetTexLevelParameteriv(mTarget, 0, GL_TEXTURE_WIDTH, (GLint*)&x);
-        glGetTexLevelParameteriv(mTarget, 0, GL_TEXTURE_HEIGHT, (GLint*)&y) ;
+        x = getTextureBackend().getLevelParameter(mTarget, 0, GL_TEXTURE_WIDTH);
+        y = getTextureBackend().getLevelParameter(mTarget, 0, GL_TEXTURE_HEIGHT) ;
         stop_glerror() ;
         llcallstacks << "w: " << x << " h: " << y << llcallstacksendl ;
 
@@ -252,11 +251,6 @@ void LLImageGL::initClass(LLWindow* window, S32 num_catagories, bool skip_analyz
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     sSkipAnalyzeAlpha = skip_analyze_alpha;
 
-    if (sScratchPBO == 0)
-    {
-        glGenBuffers(1, &sScratchPBO);
-    }
-
     if (thread_texture_loads || thread_media_updates)
     {
         LLImageGLThread::createInstance(window);
@@ -286,12 +280,7 @@ void LLImageGL::cleanupClass()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     LLImageGLThread::deleteSingleton();
-    if (sScratchPBO != 0)
-    {
-        glDeleteBuffers(1, &sScratchPBO);
-        sScratchPBO = 0;
-        sScratchPBOSize = 0;
-    }
+    getTextureBackend().shutdown();
 
     delete[] sManualScratch;
 }
@@ -797,14 +786,14 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                 if (is_compressed)
                 {
                     GLsizei tex_size = (GLsizei)dataFormatBytes(mFormatPrimary, w, h);
-                    glCompressedTexImage2D(mTarget, gl_level, mFormatPrimary, w, h, 0, tex_size, (GLvoid *)data_in);
+                    getTextureBackend().compressedImage2D(mTarget, gl_level, mFormatPrimary, w, h, tex_size, (GLvoid *)data_in);
                     stop_glerror();
                 }
                 else
                 {
                     if(mFormatSwapBytes)
                     {
-                        glPixelStorei(GL_UNPACK_SWAP_BYTES, 1);
+                        getTextureBackend().setUnpackSwapBytes(true);
                         stop_glerror();
                     }
 
@@ -817,7 +806,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
 
                     if(mFormatSwapBytes)
                     {
-                        glPixelStorei(GL_UNPACK_SWAP_BYTES, 0);
+                        getTextureBackend().setUnpackSwapBytes(false);
                         stop_glerror();
                     }
 
@@ -834,7 +823,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                 {
                     if(mFormatSwapBytes)
                     {
-                        glPixelStorei(GL_UNPACK_SWAP_BYTES, 1);
+                        getTextureBackend().setUnpackSwapBytes(true);
                         stop_glerror();
                     }
 
@@ -848,7 +837,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                     //      (some rendering issues while core profile is enabled are acceptable at this point in time)
                     if (!LLRender::sGLCoreProfile)
                     {
-                        glTexParameteri(mTarget, GL_GENERATE_MIPMAP, GL_TRUE);
+                        getTextureBackend().setLegacyMipmapGeneration(mTarget, true);
                     }
 
                     LLImageGL::setManualImage(mTarget, 0, mFormatInternal,
@@ -862,14 +851,14 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
 
                     if(mFormatSwapBytes)
                     {
-                        glPixelStorei(GL_UNPACK_SWAP_BYTES, 0);
+                        getTextureBackend().setUnpackSwapBytes(false);
                         stop_glerror();
                     }
 
                     if (LLRender::sGLCoreProfile)
                     {
                         LL_PROFILE_GPU_ZONE("generate mip map");
-                        glGenerateMipmap(mTarget);
+                        getTextureBackend().generateMipmaps(mTarget);
                     }
                     stop_glerror();
                 }
@@ -951,7 +940,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
                     {
                         if(mFormatSwapBytes)
                         {
-                            glPixelStorei(GL_UNPACK_SWAP_BYTES, 1);
+                            getTextureBackend().setUnpackSwapBytes(true);
                             stop_glerror();
                         }
 
@@ -968,7 +957,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
 
                         if(mFormatSwapBytes)
                         {
-                            glPixelStorei(GL_UNPACK_SWAP_BYTES, 0);
+                            getTextureBackend().setUnpackSwapBytes(false);
                             stop_glerror();
                         }
                     }
@@ -1000,14 +989,14 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
         if (is_compressed)
         {
             GLsizei tex_size = (GLsizei)dataFormatBytes(mFormatPrimary, w, h);
-            glCompressedTexImage2D(mTarget, 0, mFormatPrimary, w, h, 0, tex_size, (GLvoid *)data_in);
+            getTextureBackend().compressedImage2D(mTarget, 0, mFormatPrimary, w, h, tex_size, (GLvoid *)data_in);
             stop_glerror();
         }
         else
         {
             if(mFormatSwapBytes)
             {
-                glPixelStorei(GL_UNPACK_SWAP_BYTES, 1);
+                getTextureBackend().setUnpackSwapBytes(true);
                 stop_glerror();
             }
 
@@ -1021,7 +1010,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
 
             if(mFormatSwapBytes)
             {
-                glPixelStorei(GL_UNPACK_SWAP_BYTES, 0);
+                getTextureBackend().setUnpackSwapBytes(false);
                 stop_glerror();
             }
 
@@ -1105,7 +1094,7 @@ void sub_image_lines(U32 target, S32 miplevel, S32 x_offset, S32 y_offset, S32 w
         {
             // If this keeps crashing, pass down data_size, looks like it is using
             // imageraw->getData(); for data, but goes way over allocated size limit
-            glTexSubImage2D(target, miplevel, x_offset, y_pos, width, batch_size, pixformat, pixtype, src);
+            getTextureBackend().subImage2D(target, miplevel, x_offset, y_pos, width, batch_size, pixformat, pixtype, src);
             src += line_width * batch_size;
         }
     }
@@ -1116,7 +1105,7 @@ void sub_image_lines(U32 target, S32 miplevel, S32 x_offset, S32 y_offset, S32 w
         {
             // If this keeps crashing, pass down data_size, looks like it is using
             // imageraw->getData(); for data, but goes way over allocated size limit
-            glTexSubImage2D(target, miplevel, x_offset, y_pos, width, 1, pixformat, pixtype, src);
+            getTextureBackend().subImage2D(target, miplevel, x_offset, y_pos, width, 1, pixformat, pixtype, src);
             src += line_width;
         }
     }
@@ -1187,12 +1176,12 @@ bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S3
         }
 
 
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, data_width);
+        getTextureBackend().setUnpackRowLength(data_width);
         stop_glerror();
 
         if(mFormatSwapBytes)
         {
-            glPixelStorei(GL_UNPACK_SWAP_BYTES, 1);
+            getTextureBackend().setUnpackSwapBytes(true);
             stop_glerror();
         }
 
@@ -1209,7 +1198,7 @@ bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S3
             // setManualImage? Maybe because it only gets called with the
             // dimensions of the full image?  Or because the image is never
             // compressed?
-            glTexSubImage2D(mTarget, 0, x_pos, y_pos, width, height, mFormatPrimary, mFormatType, sub_datap);
+            getTextureBackend().subImage2D(mTarget, 0, x_pos, y_pos, width, height, mFormatPrimary, mFormatType, sub_datap);
         }
         else
         {
@@ -1220,11 +1209,11 @@ bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S3
 
         if(mFormatSwapBytes)
         {
-            glPixelStorei(GL_UNPACK_SWAP_BYTES, 0);
+            getTextureBackend().setUnpackSwapBytes(false);
             stop_glerror();
         }
 
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        getTextureBackend().setUnpackRowLength(0);
         stop_glerror();
         mGLTextureCreated = true;
     }
@@ -1242,7 +1231,7 @@ bool LLImageGL::setSubImageFromFrameBuffer(S32 fb_x, S32 fb_y, S32 x_pos, S32 y_
 {
     if (gGL.getTexUnit(0)->bind(this, false, true))
     {
-        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, fb_x, fb_y, x_pos, y_pos, width, height);
+        getTextureBackend().copyFromFramebuffer2D(GL_TEXTURE_2D, 0, fb_x, fb_y, x_pos, y_pos, width, height);
         mGLTextureCreated = true;
         stop_glerror();
         return true;
@@ -1265,7 +1254,7 @@ void LLImageGL::generateTextures(S32 numTextures, U32 *textures)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("iglgt - reup pool");
         // pool is emtpy, refill it
-        glGenTextures(pool_size, name_pool);
+        getTextureBackend().generate(pool_size, name_pool);
         name_count = pool_size;
     }
 
@@ -1278,7 +1267,7 @@ void LLImageGL::generateTextures(S32 numTextures, U32 *textures)
     else
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("iglgt - pool miss");
-        glGenTextures(numTextures, textures);
+        getTextureBackend().generate(numTextures, textures);
     }
 }
 
@@ -1297,7 +1286,7 @@ void LLImageGL::updateClass()
     if (!sFreeList[idx].empty())
     {
         free_tex_images((GLsizei) sFreeList[idx].size(), sFreeList[idx].data());
-        glDeleteTextures((GLsizei)sFreeList[idx].size(), sFreeList[idx].data());
+        getTextureBackend().destroy((GLsizei)sFreeList[idx].size(), sFreeList[idx].data());
         sFreeList[idx].resize(0);
     }
 }
@@ -1328,7 +1317,7 @@ void LLImageGL::setManualImage(U32 target, S32 miplevel, S32 intformat, S32 widt
             if (pixformat == GL_ALPHA)
             { //GL_ALPHA is deprecated, convert to RGBA
                 const GLint mask[] = { GL_ZERO, GL_ZERO, GL_ZERO, GL_RED };
-                glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, mask);
+                getTextureBackend().setSwizzle(GL_TEXTURE_2D, mask);
                 pixformat = GL_RED;
                 intformat = GL_R8;
             }
@@ -1336,7 +1325,7 @@ void LLImageGL::setManualImage(U32 target, S32 miplevel, S32 intformat, S32 widt
             if (pixformat == GL_LUMINANCE)
             { //GL_LUMINANCE is deprecated, convert to GL_RGBA
                 const GLint mask[] = { GL_RED, GL_RED, GL_RED, GL_ONE };
-                glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, mask);
+                getTextureBackend().setSwizzle(GL_TEXTURE_2D, mask);
                 pixformat = GL_RED;
                 intformat = GL_R8;
             }
@@ -1344,7 +1333,7 @@ void LLImageGL::setManualImage(U32 target, S32 miplevel, S32 intformat, S32 widt
             if (pixformat == GL_LUMINANCE_ALPHA)
             { //GL_LUMINANCE_ALPHA is deprecated, convert to RGBA
                 const GLint mask[] = { GL_RED, GL_RED, GL_RED, GL_GREEN };
-                glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, mask);
+                getTextureBackend().setSwizzle(GL_TEXTURE_2D, mask);
                 pixformat = GL_RG;
                 intformat = GL_RG8;
             }
@@ -1472,14 +1461,14 @@ void LLImageGL::setManualImage(U32 target, S32 miplevel, S32 intformat, S32 widt
         if (!use_sub_image)
         {
             LL_PROFILE_ZONE_NAMED("glTexImage2D alloc + copy");
-            glTexImage2D(target, miplevel, intformat, width, height, 0, pixformat, pixtype, pixels);
+            getTextureBackend().image2D(target, miplevel, intformat, width, height, pixformat, pixtype, pixels);
         }
         else
         {
             // break up calls to a manageable size for the GL command buffer
             {
                 LL_PROFILE_ZONE_NAMED("glTexImage2D alloc");
-                glTexImage2D(target, miplevel, intformat, width, height, 0, pixformat, pixtype, nullptr);
+                getTextureBackend().image2D(target, miplevel, intformat, width, height, pixformat, pixtype, nullptr);
             }
 
             U8* src = (U8*)(pixels);
@@ -1682,8 +1671,7 @@ bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_
         LLImageGL::generateTextures(1, &new_texname);
         {
             gGL.getTexUnit(0)->bind(this, false, false, new_texname);
-            glTexParameteri(LLTexUnit::getInternalType(mBindTarget), GL_TEXTURE_BASE_LEVEL, 0);
-            glTexParameteri(LLTexUnit::getInternalType(mBindTarget), GL_TEXTURE_MAX_LEVEL, mMaxDiscardLevel - discard_level);
+            getTextureBackend().setLevelRange(LLTexUnit::getInternalType(mBindTarget), 0, mMaxDiscardLevel - discard_level);
         }
     }
 
@@ -1834,7 +1822,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     //checkTexSize() ;
 
     LLGLint glwidth = 0;
-    glGetTexLevelParameteriv(mTarget, gl_discard, GL_TEXTURE_WIDTH, (GLint*)&glwidth);
+    glwidth = getTextureBackend().getLevelParameter(mTarget, gl_discard, GL_TEXTURE_WIDTH);
     if (glwidth == 0)
     {
         // No mip data smaller than current discard level
@@ -1864,7 +1852,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     LLGLint is_compressed = 0;
     if (compressed_ok)
     {
-        glGetTexLevelParameteriv(mTarget, gl_discard, GL_TEXTURE_COMPRESSED, (GLint*)&is_compressed);
+        is_compressed = getTextureBackend().getLevelParameter(mTarget, gl_discard, GL_TEXTURE_COMPRESSED);
     }
 
     //-----------------------------------------------------------------------------------------------
@@ -1880,7 +1868,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     if (is_compressed)
     {
         LLGLint glbytes;
-        glGetTexLevelParameteriv(mTarget, gl_discard, GL_TEXTURE_COMPRESSED_IMAGE_SIZE, (GLint*)&glbytes);
+        glbytes = getTextureBackend().getLevelParameter(mTarget, gl_discard, GL_TEXTURE_COMPRESSED_IMAGE_SIZE);
         if(!imageraw->allocateDataSize(width, height, ncomponents, glbytes))
         {
             constexpr S64 MAX_GL_BYTES = 2048 * 2048;
@@ -1897,7 +1885,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
             return false ;
         }
 
-        glGetCompressedTexImage(mTarget, gl_discard, (GLvoid*)(imageraw->getData()));
+        getTextureBackend().readCompressedImage(mTarget, gl_discard, (GLvoid*)(imageraw->getData()));
         //stop_glerror();
     }
     else
@@ -1919,7 +1907,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
             return false ;
         }
 
-        glGetTexImage(GL_TEXTURE_2D, gl_discard, mFormatPrimary, mFormatType, (GLvoid*)(imageraw->getData()));
+        getTextureBackend().readImage(GL_TEXTURE_2D, gl_discard, mFormatPrimary, mFormatType, (GLvoid*)(imageraw->getData()));
         //stop_glerror();
     }
 
@@ -2012,7 +2000,7 @@ bool LLImageGL::getIsResident(bool test_now)
     {
         if (mTexName != 0)
         {
-            glAreTexturesResident(1, (GLuint*)&mTexName, &mIsResident);
+            mIsResident = getTextureBackend().isResident(mTexName);
         }
         else
         {
@@ -2505,8 +2493,8 @@ bool LLImageGL::scaleDown(S32 desired_discard)
 #endif
 
             free_tex_image(mTexName);
-            glTexImage2D(mTarget, 0, mFormatInternal, desired_width, desired_height, 0, mFormatPrimary, mFormatType, nullptr);
-            glCopyTexSubImage2D(mTarget, 0, 0, 0, 0, 0, desired_width, desired_height);
+            getTextureBackend().image2D(mTarget, 0, mFormatInternal, desired_width, desired_height, mFormatPrimary, mFormatType, nullptr);
+            getTextureBackend().copyFromFramebuffer2D(mTarget, 0, 0, 0, 0, 0, desired_width, desired_height);
             alloc_tex_image(desired_width, desired_height, mFormatInternal, 1);
 
             mTexOptionsDirty = true;
@@ -2515,7 +2503,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
             { // generate mipmaps if needed
                 LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("scaleDown - glGenerateMipmap");
                 gGL.getTexUnit(0)->bind(this);
-                glGenerateMipmap(mTarget);
+                getTextureBackend().generateMipmaps(mTarget);
                 gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
             }
         }
@@ -2531,36 +2519,14 @@ bool LLImageGL::scaleDown(S32 desired_discard)
         llassert(size <= 2048 * 2048 * 4); // we shouldn't be using this method to downscale huge textures, but it'll work
         gGL.getTexUnit(0)->bind(this, false, true);
 
-        if (sScratchPBO == 0)
-        {
-            glGenBuffers(1, &sScratchPBO);
-            sScratchPBOSize = 0;
-        }
-
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, sScratchPBO);
-
-        if (size > sScratchPBOSize)
-        {
-            glBufferData(GL_PIXEL_PACK_BUFFER, size, NULL, GL_STREAM_COPY);
-            sScratchPBOSize = (U32)size;
-        }
-
-        glGetTexImage(mTarget, mip, mFormatPrimary, mFormatType, nullptr);
-
         free_tex_image(mTexName);
-
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, sScratchPBO);
-        glTexImage2D(mTarget, 0, mFormatInternal, desired_width, desired_height, 0, mFormatPrimary, mFormatType, nullptr);
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-
+        getTextureBackend().replaceWithMipLevel(mTarget, mip, mFormatInternal, desired_width, desired_height, mFormatPrimary, mFormatType, size);
         alloc_tex_image(desired_width, desired_height, mFormatInternal, 1);
 
         if (mHasMipMaps)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("scaleDown - glGenerateMipmap");
-            glGenerateMipmap(mTarget);
+            getTextureBackend().generateMipmaps(mTarget);
         }
 
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
