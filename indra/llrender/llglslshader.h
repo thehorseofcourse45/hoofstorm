@@ -234,8 +234,6 @@ public:
 
     void setMinimumAlpha(F32 minimum);
 
-    void vertexAttrib4f(U32 index, GLfloat x, GLfloat y, GLfloat z, GLfloat w);
-    void vertexAttrib4fv(U32 index, GLfloat* v);
 
     //GLint getUniformLocation(const std::string& uniform);
     GLint getUniformLocation(const LLStaticHashedString& uniform);

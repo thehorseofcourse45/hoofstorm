@@ -2005,22 +2005,6 @@ void LLGLSLShader::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 cou
 }
 
 
-void LLGLSLShader::vertexAttrib4f(U32 index, GLfloat x, GLfloat y, GLfloat z, GLfloat w)
-{
-    if (mAttribute[index] > 0)
-    {
-        glVertexAttrib4f(mAttribute[index], x, y, z, w);
-    }
-}
-
-void LLGLSLShader::vertexAttrib4fv(U32 index, GLfloat* v)
-{
-    if (mAttribute[index] > 0)
-    {
-        glVertexAttrib4fv(mAttribute[index], v);
-    }
-}
-
 void LLGLSLShader::setMinimumAlpha(F32 minimum)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;

@@ -696,6 +696,19 @@ public:
         STOP_GLERROR;
     }
 
+    void initContextState() override
+    {
+        // bind a dummy vertex array object so we're core profile compliant
+        U32 ret;
+        glGenVertexArrays(1, &ret);
+        glBindVertexArray(ret);
+    }
+
+    void drawArraysNoInput(U32 mode, U32 first, U32 count) override
+    {
+        glDrawArrays(sGLMode[mode], first, count);
+    }
+
     void setLabel(BufferHandle handle, const char* label) override
     {
         LL_LABEL_OBJECT_GL(GL_BUFFER, (GLuint) handle.id, strlen(label), label);
