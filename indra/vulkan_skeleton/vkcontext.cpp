@@ -36,6 +36,29 @@ uint32_t VkContext::findMemoryType(uint32_t typeBits, VkMemoryPropertyFlags prop
     abort();
 }
 
+VkShaderModule VkContext::createShaderModule(const uint32_t* code, size_t bytes) const
+{
+    VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    ci.codeSize = bytes;
+    ci.pCode = code;
+    VkShaderModule module;
+    VK_CHECK(vkCreateShaderModule(device, &ci, nullptr, &module));
+    return module;
+}
+
+uint32_t VkContext::uploadRingAlloc(const void* data, uint32_t bytes)
+{
+    const VkDeviceSize at = (ringOffset + uboAlignment - 1) / uboAlignment * uboAlignment;
+    if (at + bytes > ringSize)
+    {
+        fprintf(stderr, "FATAL: uniform ring buffer full\n");
+        abort();
+    }
+    memcpy(ringMapped + at, data, bytes);
+    ringOffset = at + bytes;
+    return (uint32_t) at;
+}
+
 VkShaderModule VkContext::loadShader(const char* path) const
 {
     FILE* f = fopen(path, "rb");
@@ -59,7 +82,7 @@ VkShaderModule VkContext::loadShader(const char* path) const
     return module;
 }
 
-bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation)
+bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantDepthClipControl)
 {
     // ---- instance
     std::vector<const char*> layers;
@@ -178,13 +201,45 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation)
 
     VkPhysicalDeviceVulkan13Features enable13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     enable13.dynamicRendering = VK_TRUE;
-    const char* deviceExt[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+
+    // VK_EXT_depth_clip_control: ask whether the device can use GL's -1..1 clip depth range
+    {
+        uint32_t en = 0;
+        vkEnumerateDeviceExtensionProperties(phys, nullptr, &en, nullptr);
+        std::vector<VkExtensionProperties> exts(en);
+        vkEnumerateDeviceExtensionProperties(phys, nullptr, &en, exts.data());
+        bool listed = false;
+        for (auto& e : exts)
+        {
+            listed |= strcmp(e.extensionName, VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME) == 0;
+        }
+        VkPhysicalDeviceDepthClipControlFeaturesEXT dcf{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_CONTROL_FEATURES_EXT};
+        VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+        f2.pNext = &dcf;
+        vkGetPhysicalDeviceFeatures2(phys, &f2);
+        const bool supported = listed && dcf.depthClipControl;
+        depthClipControl = wantDepthClipControl && supported;
+        fprintf(stdout, "VK_EXT_depth_clip_control: %s, %s\n", supported ? "supported" : "NOT supported",
+                depthClipControl ? "enabled" : "not used");
+    }
+    VkPhysicalDeviceDepthClipControlFeaturesEXT enableClip{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_CONTROL_FEATURES_EXT};
+    enableClip.depthClipControl = VK_TRUE;
+    if (depthClipControl)
+    {
+        enable13.pNext = &enableClip;
+    }
+
+    std::vector<const char*> deviceExt = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    if (depthClipControl)
+    {
+        deviceExt.push_back(VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME);
+    }
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     dci.pNext = &enable13;
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
-    dci.enabledExtensionCount = 1;
-    dci.ppEnabledExtensionNames = deviceExt;
+    dci.enabledExtensionCount = (uint32_t) deviceExt.size();
+    dci.ppEnabledExtensionNames = deviceExt.data();
     VK_CHECK(vkCreateDevice(phys, &dci, nullptr, &device));
     vkGetDeviceQueue(device, queueFamily, 0, &queue);
 
@@ -277,12 +332,72 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation)
         VK_CHECK(vkBindBufferMemory(device, readBuffer, readMemory, 0));
         VK_CHECK(vkMapMemory(device, readMemory, 0, VK_WHOLE_SIZE, 0, (void**) &readMapped));
     }
+
+    // ---- depth attachment
+    {
+        VkImageCreateInfo dci2{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        dci2.imageType = VK_IMAGE_TYPE_2D;
+        dci2.format = depthFormat;
+        dci2.extent = {extent.width, extent.height, 1};
+        dci2.mipLevels = 1;
+        dci2.arrayLayers = 1;
+        dci2.samples = VK_SAMPLE_COUNT_1_BIT;
+        dci2.tiling = VK_IMAGE_TILING_OPTIMAL;
+        dci2.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        dci2.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VK_CHECK(vkCreateImage(device, &dci2, nullptr, &depthImage));
+        VkMemoryRequirements req;
+        vkGetImageMemoryRequirements(device, depthImage, &req);
+        VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        mai.allocationSize = req.size;
+        mai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        VK_CHECK(vkAllocateMemory(device, &mai, nullptr, &depthMemory));
+        VK_CHECK(vkBindImageMemory(device, depthImage, depthMemory, 0));
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = depthImage;
+        vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vi.format = depthFormat;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        VK_CHECK(vkCreateImageView(device, &vi, nullptr, &depthView));
+    }
+
+    // ---- uniform ring buffer and descriptor pools
+    {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(phys, &props);
+        uboAlignment = props.limits.minUniformBufferOffsetAlignment;
+        VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bci.size = ringSize;
+        bci.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+        VK_CHECK(vkCreateBuffer(device, &bci, nullptr, &ringBuffer));
+        VkMemoryRequirements req;
+        vkGetBufferMemoryRequirements(device, ringBuffer, &req);
+        VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        mai.allocationSize = req.size;
+        mai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VK_CHECK(vkAllocateMemory(device, &mai, nullptr, &ringMemory));
+        VK_CHECK(vkBindBufferMemory(device, ringBuffer, ringMemory, 0));
+        VK_CHECK(vkMapMemory(device, ringMemory, 0, VK_WHOLE_SIZE, 0, (void**) &ringMapped));
+
+        VkDescriptorPoolSize staticSizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 64}};
+        VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        dpi.maxSets = 64;
+        dpi.poolSizeCount = 1;
+        dpi.pPoolSizes = staticSizes;
+        VK_CHECK(vkCreateDescriptorPool(device, &dpi, nullptr, &staticPool));
+
+        VkDescriptorPoolSize frameSizes[] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096}};
+        dpi.maxSets = 1024;
+        dpi.pPoolSizes = frameSizes;
+        VK_CHECK(vkCreateDescriptorPool(device, &dpi, nullptr, &framePool));
+    }
     return true;
 }
 
 static void image_barrier(VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to,
                           VkPipelineStageFlags srcStage, VkAccessFlags srcAccess,
-                          VkPipelineStageFlags dstStage, VkAccessFlags dstAccess)
+                          VkPipelineStageFlags dstStage, VkAccessFlags dstAccess,
+                          VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT)
 {
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     b.srcAccessMask = srcAccess;
@@ -292,7 +407,7 @@ static void image_barrier(VkCommandBuffer cmd, VkImage image, VkImageLayout from
     b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     b.image = image;
-    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    b.subresourceRange = {aspect, 0, 1, 0, 1};
     vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &b);
 }
 
@@ -306,6 +421,9 @@ bool VkContext::beginFrame(const float clear[4])
     }
     VK_CHECK(r);
     VK_CHECK(vkResetFences(device, 1, &frameFence));
+    ++frameCounter;
+    ringOffset = 0;
+    VK_CHECK(vkResetDescriptorPool(device, framePool, 0));
 
     VK_CHECK(vkResetCommandBuffer(cmd, 0));
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -315,6 +433,19 @@ bool VkContext::beginFrame(const float clear[4])
     image_barrier(cmd, images[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                   VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0,
                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+
+    image_barrier(cmd, depthImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                  VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0,
+                  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                  VK_IMAGE_ASPECT_DEPTH_BIT);
+
+    VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    depth.imageView = depthView;
+    depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth.clearValue.depthStencil = {1.0f, 0};
 
     VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     color.imageView = views[imageIndex];
@@ -328,6 +459,7 @@ bool VkContext::beginFrame(const float clear[4])
     ri.layerCount = 1;
     ri.colorAttachmentCount = 1;
     ri.pColorAttachments = &color;
+    ri.pDepthAttachment = &depth;
     vkCmdBeginRendering(cmd, &ri);
     return true;
 }
@@ -388,6 +520,14 @@ void VkContext::shutdown()
         return;
     }
     vkDeviceWaitIdle(device);
+    vkDestroyDescriptorPool(device, framePool, nullptr);
+    vkDestroyDescriptorPool(device, staticPool, nullptr);
+    vkUnmapMemory(device, ringMemory);
+    vkDestroyBuffer(device, ringBuffer, nullptr);
+    vkFreeMemory(device, ringMemory, nullptr);
+    vkDestroyImageView(device, depthView, nullptr);
+    vkDestroyImage(device, depthImage, nullptr);
+    vkFreeMemory(device, depthMemory, nullptr);
     if (readBuffer)
     {
         vkUnmapMemory(device, readMemory);

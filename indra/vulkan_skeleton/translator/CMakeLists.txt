@@ -20,7 +20,7 @@ if(NOT DEFINED ENV{VULKAN_SDK})
 endif()
 set(SDK "$ENV{VULKAN_SDK}")
 
-add_executable(translator_test translator_test.cpp llshadertranslator.cpp)
+add_executable(translator_test translator_test.cpp llshadertranslator.cpp llshadercompiler.cpp)
 target_include_directories(translator_test PRIVATE "${SDK}/Include" "${SDK}/Include/glslang")
 target_compile_definitions(translator_test PRIVATE _CRT_SECURE_NO_WARNINGS)
 foreach(lib glslang SPIRV MachineIndependent GenericCodeGen OSDependent glslang-default-resource-limits SPIRV-Tools-opt SPIRV-Tools)

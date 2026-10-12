@@ -1,4 +1,5 @@
 #include "vkbackends.h"
+#include "vkprogram.h"
 
 #include <GL/gl.h> // GL constants only: the viewer's state vocabulary is GL values, so a backend has to know them
 #include <cstring>
@@ -62,6 +63,10 @@ struct PipelineKey
     U8 factors[4];
     U8 colorMask;
     U8 vertexInput;
+    U8 depthTest;
+    U8 depthWrite;
+    U8 depthFunc;
+    U32 program;
 };
 } // namespace
 
@@ -138,10 +143,6 @@ VulkanVertexBufferBackend::~VulkanVertexBufferBackend()
     for (auto& p : mPipelines)
     {
         vkDestroyPipeline(mCtx->device, p.second, nullptr);
-    }
-    if (mLayout)
-    {
-        vkDestroyPipelineLayout(mCtx->device, mLayout, nullptr);
     }
     for (auto& kv : mBuffers)
     {
@@ -262,6 +263,10 @@ VkPipeline VulkanVertexBufferBackend::getPipeline(U32 mode, bool vertexInput)
     key.blendEnable = st.blend;
     memcpy(key.factors, st.blendFactors, 4);
     key.colorMask = (U8) (st.colorMask[0] | st.colorMask[1] << 1 | st.colorMask[2] << 2 | st.colorMask[3] << 3);
+    key.depthTest = st.depthTest;
+    key.depthWrite = st.depthWrite;
+    key.depthFunc = (U8) (st.depthFunc & 0xFF);
+    key.program = mCtx->program ? mCtx->program->id : 0;
 
     std::string k((const char*) &key, sizeof(key));
     auto it = mPipelines.find(k);
@@ -270,26 +275,20 @@ VkPipeline VulkanVertexBufferBackend::getPipeline(U32 mode, bool vertexInput)
         return it->second;
     }
 
-    if (!mCtx->vertexShader || !mCtx->fragmentShader)
+    if (!mCtx->program)
     {
-        fprintf(stderr, "FATAL: no current shader (the interfaces cannot express one)\n");
+        fprintf(stderr, "FATAL: no current program (LLShaderBackend::use() sets it in the viewer)\n");
         abort();
-    }
-
-    if (!mLayout)
-    {
-        VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        VK_CHECK(vkCreatePipelineLayout(mCtx->device, &lci, nullptr, &mLayout));
     }
 
     VkPipelineShaderStageCreateInfo stages[2]{};
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = mCtx->vertexShader;
+    stages[0].module = mCtx->program->vs;
     stages[0].pName = "main";
     stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = mCtx->fragmentShader;
+    stages[1].module = mCtx->program->fs;
     stages[1].pName = "main";
 
     // vertex input from the attribute mask: one binding per attribute array (LLVertexBuffer stores each
@@ -333,6 +332,13 @@ VkPipeline VulkanVertexBufferBackend::getPipeline(U32 mode, bool vertexInput)
     VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
     vp.viewportCount = 1;
     vp.scissorCount = 1;
+    // GL's clip depth range is -1..1; without this Vulkan clips everything with z < 0
+    VkPipelineViewportDepthClipControlCreateInfoEXT clip{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_DEPTH_CLIP_CONTROL_CREATE_INFO_EXT};
+    clip.negativeOneToOne = VK_TRUE;
+    if (mCtx->depthClipControl)
+    {
+        vp.pNext = &clip;
+    }
 
     VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
     rs.polygonMode = st.polygonMode == GL_LINE ? VK_POLYGON_MODE_LINE : st.polygonMode == GL_POINT ? VK_POLYGON_MODE_POINT : VK_POLYGON_MODE_FILL;
@@ -363,10 +369,17 @@ VkPipeline VulkanVertexBufferBackend::getPipeline(U32 mode, bool vertexInput)
     ds.dynamicStateCount = 2;
     ds.pDynamicStates = dyn;
 
-    // No depth/stencil attachment in the skeleton, so depth and stencil state from the viewer is recorded but cannot apply.
+    // GL depth functions (GL_NEVER .. GL_ALWAYS = 0x200 .. 0x207) are in the same order as VkCompareOp. Stencil and polygon
+    // offset are still recorded but not applied.
+    VkPipelineDepthStencilStateCreateInfo dss{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    dss.depthTestEnable = st.depthTest ? VK_TRUE : VK_FALSE;
+    dss.depthWriteEnable = st.depthWrite ? VK_TRUE : VK_FALSE;
+    dss.depthCompareOp = (VkCompareOp) (st.depthFunc - GL_NEVER);
+
     VkPipelineRenderingCreateInfo ri{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
     ri.colorAttachmentCount = 1;
     ri.pColorAttachmentFormats = &mCtx->swapFormat;
+    ri.depthAttachmentFormat = mCtx->depthFormat;
 
     VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
     gp.pNext = &ri;
@@ -377,9 +390,10 @@ VkPipeline VulkanVertexBufferBackend::getPipeline(U32 mode, bool vertexInput)
     gp.pViewportState = &vp;
     gp.pRasterizationState = &rs;
     gp.pMultisampleState = &ms;
+    gp.pDepthStencilState = &dss;
     gp.pColorBlendState = &cb;
     gp.pDynamicState = &ds;
-    gp.layout = mLayout;
+    gp.layout = mCtx->program->pipelineLayout;
 
     VkPipeline pipeline;
     VK_CHECK(vkCreateGraphicsPipelines(mCtx->device, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeline));
@@ -394,6 +408,7 @@ void VulkanVertexBufferBackend::recordCommon(U32 mode, bool indexed)
     const float fbH = (float) mCtx->extent.height;
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, getPipeline(mode, true));
+    mCtx->program->prepareDraw();   // uniform block snapshot and descriptor sets of the current program
 
     // GL's window origin is bottom-left, Vulkan's is top-left. A negative viewport height flips Y so that GL
     // clip space, GL winding and GL viewport rectangles keep working unchanged (core since Vulkan 1.1).
