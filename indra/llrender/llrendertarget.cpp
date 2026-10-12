@@ -472,7 +472,7 @@ void LLRenderTarget::clear(U32 mask_in)
     else
     {
         LLGLEnable scissor(GL_SCISSOR_TEST);
-        glScissor(0, 0, mResX, mResY);
+        gGL.setScissor(0, 0, mResX, mResY);
         stop_glerror();
         glClear(mask & mask_in);
     }
