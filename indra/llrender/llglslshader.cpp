@@ -29,6 +29,7 @@
 #include "llglslshader.h"
 
 #include "llshadermgr.h"
+#include "llshaderbackend.h"
 #include "llfile.h"
 #include "llrender.h"
 #include "llvertexbuffer.h"
@@ -36,6 +37,10 @@
 
 #include "hbxxh.h"
 #include "llsdserialize.h"
+
+// defined in llshadermgr.cpp: records which program the following shader objects belong to (FS_SHADER_DUMP_DIR only)
+void fs_dump_program_begin(const char* program_name);
+void fs_dump_attach(unsigned int shader_object);
 
 #if LL_DARWIN
 #include "OpenGL/OpenGL.h"
@@ -364,24 +369,7 @@ void LLGLSLShader::unloadInternal()
 
     if (mProgramObject)
     {
-        GLuint obj[1024];
-        GLsizei count = 0;
-        glGetAttachedShaders(mProgramObject, 1024, &count, obj);
-
-        for (GLsizei i = 0; i < count; i++)
-        {
-            glDetachShader(mProgramObject, obj[i]);
-        }
-
-        for (GLsizei i = 0; i < count; i++)
-        {
-            if (glIsShader(obj[i]))
-            {
-                glDeleteShader(obj[i]);
-            }
-        }
-
-        glDeleteProgram(mProgramObject);
+        getShaderBackend().deleteProgramAndObjects(mProgramObject);
 
         mProgramObject = 0;
     }
@@ -432,7 +420,7 @@ bool LLGLSLShader::createShader()
     mShaderHash = hash();
 
     // Create program
-    mProgramObject = glCreateProgram();
+    mProgramObject = getShaderBackend().createProgram();
     if (mProgramObject == 0)
     {
         // Shouldn't happen if shader related extensions, like ARB_vertex_shader, exist.
@@ -452,6 +440,7 @@ bool LLGLSLShader::createShader()
 #endif // DEBUG_SHADER_INCLUDES
 
         //compile new source
+        fs_dump_program_begin(mName.c_str()); // developer aid, see llshadermgr.cpp (FS_SHADER_DUMP_DIR)
         vector< pair<string, GLenum> >::iterator fileIter = mShaderFiles.begin();
         for (; fileIter != mShaderFiles.end(); fileIter++)
         {
@@ -580,7 +569,8 @@ bool LLGLSLShader::attachVertexObject(std::string object_path)
     if (LLShaderMgr::instance()->mVertexShaderObjects.count(object_path) > 0)
     {
         stop_glerror();
-        glAttachShader(mProgramObject, LLShaderMgr::instance()->mVertexShaderObjects[object_path]);
+        getShaderBackend().attachObject(mProgramObject, LLShaderMgr::instance()->mVertexShaderObjects[object_path]);
+        fs_dump_attach(LLShaderMgr::instance()->mVertexShaderObjects[object_path]); // developer aid (FS_SHADER_DUMP_DIR)
 #if DEBUG_SHADER_INCLUDES
         dumpAttachObject("attachVertexObject", mProgramObject, object_path);
 #endif // DEBUG_SHADER_INCLUDES
@@ -602,7 +592,8 @@ bool LLGLSLShader::attachFragmentObject(std::string object_path)
     if (LLShaderMgr::instance()->mFragmentShaderObjects.count(object_path) > 0)
     {
         stop_glerror();
-        glAttachShader(mProgramObject, LLShaderMgr::instance()->mFragmentShaderObjects[object_path]);
+        getShaderBackend().attachObject(mProgramObject, LLShaderMgr::instance()->mFragmentShaderObjects[object_path]);
+        fs_dump_attach(LLShaderMgr::instance()->mFragmentShaderObjects[object_path]); // developer aid (FS_SHADER_DUMP_DIR)
 #if DEBUG_SHADER_INCLUDES
         dumpAttachObject("attachFragmentObject", mProgramObject, object_path);
 #endif // DEBUG_SHADER_INCLUDES
@@ -624,7 +615,8 @@ void LLGLSLShader::attachObject(GLuint object)
     if (object != 0)
     {
         stop_glerror();
-        glAttachShader(mProgramObject, object);
+        getShaderBackend().attachObject(mProgramObject, object);
+        fs_dump_attach(object); // developer aid, see llshadermgr.cpp (FS_SHADER_DUMP_DIR)
 #if DEBUG_SHADER_INCLUDES
         std::string object_path("???");
         dumpAttachObject("attachObject", mProgramObject, object_path);
@@ -659,7 +651,7 @@ bool LLGLSLShader::mapAttributes()
         for (U32 i = 0; i < LLShaderMgr::instance()->mReservedAttribs.size(); i++)
         {
             const char* name = LLShaderMgr::instance()->mReservedAttribs[i].c_str();
-            glBindAttribLocation(mProgramObject, i, (const GLchar*)name);
+            getShaderBackend().bindAttribLocation(mProgramObject, i, name);
         }
 
         //link the program
@@ -682,7 +674,7 @@ bool LLGLSLShader::mapAttributes()
         for (U32 i = 0; i < LLShaderMgr::instance()->mReservedAttribs.size(); i++)
         {
             const char* name = LLShaderMgr::instance()->mReservedAttribs[i].c_str();
-            S32 index = glGetAttribLocation(mProgramObject, (const GLchar*)name);
+            S32 index = getShaderBackend().getAttribLocation(mProgramObject, name);
             if (index != -1)
             {
 #if LL_RELEASE_WITH_DEBUG_INFO
@@ -711,13 +703,18 @@ void LLGLSLShader::mapUniform(GLint index)
     }
 
     GLenum type;
-    GLsizei length;
     GLint size = -1;
     char name[1024];        /* Flawfinder: ignore */
     name[0] = 0;
 
-
-    glGetActiveUniform(mProgramObject, index, 1024, &length, &size, &type, (GLchar*)name);
+    {
+        std::string uniform_name;
+        U32 uniform_type = 0;
+        getShaderBackend().getActiveUniform(mProgramObject, index, uniform_name, uniform_type, size);
+        type = uniform_type;
+        strncpy(name, uniform_name.c_str(), sizeof(name) - 1);
+        name[sizeof(name) - 1] = 0;
+    }
     if (size > 0)
     {
         switch (type)
@@ -760,7 +757,7 @@ void LLGLSLShader::mapUniform(GLint index)
         mTotalUniformSize += size;
     }
 
-    S32 location = glGetUniformLocation(mProgramObject, name);
+    S32 location = getShaderBackend().getUniformLocation(mProgramObject, name);
     if (location != -1)
     {
         //chop off "[0]" so we can always access the first element
@@ -826,7 +823,7 @@ GLint LLGLSLShader::mapUniformTextureChannel(GLint location, GLenum type, GLint 
         GLint ret = mActiveTextureChannels;
         if (size == 1)
         {
-            glUniform1i(location, mActiveTextureChannels);
+            getShaderBackend().uniform1i(mProgramObject, location, mActiveTextureChannels);
             mActiveTextureChannels++;
         }
         else
@@ -839,7 +836,7 @@ GLint LLGLSLShader::mapUniformTextureChannel(GLint location, GLenum type, GLint 
             {
                 channel[i] = mActiveTextureChannels++;
             }
-            glUniform1iv(location, size, channel);
+            getShaderBackend().uniform1iv(mProgramObject, location, size, channel);
         }
 
         return ret;
@@ -866,8 +863,7 @@ bool LLGLSLShader::mapUniforms()
     bind();
 
     //get the number of active uniforms
-    GLint activeCount;
-    glGetProgramiv(mProgramObject, GL_ACTIVE_UNIFORMS, &activeCount);
+    GLint activeCount = getShaderBackend().getActiveUniformCount(mProgramObject);
 
     //........................................................................................................................................
     //........................................................................................
@@ -894,61 +890,58 @@ bool LLGLSLShader::mapUniforms()
     */
 
 
-    S32 diffuseMap = glGetUniformLocation(mProgramObject, "diffuseMap");
-    S32 specularMap = glGetUniformLocation(mProgramObject, "specularMap");
-    S32 bumpMap = glGetUniformLocation(mProgramObject, "bumpMap");
-    S32 altDiffuseMap = glGetUniformLocation(mProgramObject, "altDiffuseMap");
-    S32 environmentMap = glGetUniformLocation(mProgramObject, "environmentMap");
-    S32 reflectionMap = glGetUniformLocation(mProgramObject, "reflectionMap");
+    S32 diffuseMap = getShaderBackend().getUniformLocation(mProgramObject, "diffuseMap");
+    S32 specularMap = getShaderBackend().getUniformLocation(mProgramObject, "specularMap");
+    S32 bumpMap = getShaderBackend().getUniformLocation(mProgramObject, "bumpMap");
+    S32 altDiffuseMap = getShaderBackend().getUniformLocation(mProgramObject, "altDiffuseMap");
+    S32 environmentMap = getShaderBackend().getUniformLocation(mProgramObject, "environmentMap");
+    S32 reflectionMap = getShaderBackend().getUniformLocation(mProgramObject, "reflectionMap");
 
     std::set<S32> skip_index;
 
     if (-1 != diffuseMap && (-1 != specularMap || -1 != bumpMap || -1 != environmentMap || -1 != altDiffuseMap))
     {
-        GLenum type;
-        GLsizei length;
-        GLint size = -1;
-        char name[1024];
-
         diffuseMap = altDiffuseMap = specularMap = bumpMap = environmentMap = -1;
 
         for (S32 i = 0; i < activeCount; i++)
         {
-            name[0] = '\0';
+            std::string name;
+            U32 type = 0;
+            S32 size = -1;
 
-            glGetActiveUniform(mProgramObject, i, 1024, &length, &size, &type, (GLchar*)name);
+            getShaderBackend().getActiveUniform(mProgramObject, i, name, type, size);
 
-            if (-1 == diffuseMap && std::string(name) == "diffuseMap")
+            if (-1 == diffuseMap && name == "diffuseMap")
             {
                 diffuseMap = i;
                 continue;
             }
 
-            if (-1 == specularMap && std::string(name) == "specularMap")
+            if (-1 == specularMap && name == "specularMap")
             {
                 specularMap = i;
                 continue;
             }
 
-            if (-1 == bumpMap && std::string(name) == "bumpMap")
+            if (-1 == bumpMap && name == "bumpMap")
             {
                 bumpMap = i;
                 continue;
             }
 
-            if (-1 == environmentMap && std::string(name) == "environmentMap")
+            if (-1 == environmentMap && name == "environmentMap")
             {
                 environmentMap = i;
                 continue;
             }
 
-            if (-1 == reflectionMap && std::string(name) == "reflectionMap")
+            if (-1 == reflectionMap && name == "reflectionMap")
             {
                 reflectionMap = i;
                 continue;
             }
 
-            if (-1 == altDiffuseMap && std::string(name) == "altDiffuseMap")
+            if (-1 == altDiffuseMap && name == "altDiffuseMap")
             {
                 altDiffuseMap = i;
                 continue;
@@ -1013,11 +1006,7 @@ bool LLGLSLShader::mapUniforms()
 
     for (U32 i = 0; i < NUM_UNIFORM_BLOCKS; ++i)
     {
-        GLuint UBOBlockIndex = glGetUniformBlockIndex(mProgramObject, ubo_names[i]);
-        if (UBOBlockIndex != GL_INVALID_INDEX)
-        {
-            glUniformBlockBinding(mProgramObject, UBOBlockIndex, i);
-        }
+        getShaderBackend().bindUniformBlock(mProgramObject, ubo_names[i], i);
     }
 
     unbind();
@@ -1061,7 +1050,7 @@ void LLGLSLShader::bind()
             sCurBoundShaderPtr->readProfileQuery();
         }
         LLVertexBuffer::unbind();
-        glUseProgram(mProgramObject);
+        getShaderBackend().use(mProgramObject);
         sCurBoundShader = mProgramObject;
         sCurBoundShaderPtr = this;
         placeProfileQuery();
@@ -1109,7 +1098,7 @@ void LLGLSLShader::unbind(void)
         sCurBoundShaderPtr->readProfileQuery();
     }
 
-    glUseProgram(0);
+    getShaderBackend().use(0);
     sCurBoundShader = 0;
     sCurBoundShaderPtr = NULL;
 }
@@ -1306,7 +1295,7 @@ void LLGLSLShader::uniform1i(U32 index, GLint x)
             const auto& iter = mValue.find(mUniform[index]);
             if (iter == mValue.end() || iter->second.mV[0] != x)
             {
-                glUniform1i(mUniform[index], x);
+                getShaderBackend().uniform1i(mProgramObject, mUniform[index], x);
                 mValue[mUniform[index]] = LLVector4((F32)x, 0.f, 0.f, 0.f);
             }
         }
@@ -1332,7 +1321,7 @@ void LLGLSLShader::uniform1f(U32 index, GLfloat x)
             const auto& iter = mValue.find(mUniform[index]);
             if (iter == mValue.end() || iter->second.mV[0] != x)
             {
-                glUniform1f(mUniform[index], x);
+                getShaderBackend().uniform1f(mProgramObject, mUniform[index], x);
                 mValue[mUniform[index]] = LLVector4(x, 0.f, 0.f, 0.f);
             }
         }
@@ -1346,7 +1335,7 @@ void LLGLSLShader::fastUniform1f(U32 index, GLfloat x)
     llassert(mProgramObject);
     llassert(mUniform.size() <= index);
     llassert(mUniform[index] >= 0);
-    glUniform1f(mUniform[index], x);
+    getShaderBackend().uniform1f(mProgramObject, mUniform[index], x);
 }
 
 void LLGLSLShader::uniform2f(U32 index, GLfloat x, GLfloat y)
@@ -1369,7 +1358,7 @@ void LLGLSLShader::uniform2f(U32 index, GLfloat x, GLfloat y)
             LLVector4 vec(x, y, 0.f, 0.f);
             if (iter == mValue.end() || shouldChange(iter->second, vec))
             {
-                glUniform2f(mUniform[index], x, y);
+                getShaderBackend().uniform2f(mProgramObject, mUniform[index], x, y);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1396,7 +1385,7 @@ void LLGLSLShader::uniform3f(U32 index, GLfloat x, GLfloat y, GLfloat z)
             LLVector4 vec(x, y, z, 0.f);
             if (iter == mValue.end() || shouldChange(iter->second, vec))
             {
-                glUniform3f(mUniform[index], x, y, z);
+                getShaderBackend().uniform3f(mProgramObject, mUniform[index], x, y, z);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1423,7 +1412,7 @@ void LLGLSLShader::uniform4f(U32 index, GLfloat x, GLfloat y, GLfloat z, GLfloat
             LLVector4 vec(x, y, z, w);
             if (iter == mValue.end() || shouldChange(iter->second, vec))
             {
-                glUniform4f(mUniform[index], x, y, z, w);
+                getShaderBackend().uniform4f(mProgramObject, mUniform[index], x, y, z, w);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1450,7 +1439,7 @@ void LLGLSLShader::uniform1iv(U32 index, U32 count, const GLint* v)
             LLVector4 vec((F32)v[0], 0.f, 0.f, 0.f);
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
-                glUniform1iv(mUniform[index], count, v);
+                getShaderBackend().uniform1iv(mProgramObject, mUniform[index], count, v);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1477,7 +1466,7 @@ void LLGLSLShader::uniform4iv(U32 index, U32 count, const GLint* v)
             LLVector4 vec((F32)v[0], (F32)v[1], (F32)v[2], (F32)v[3]);
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
-                glUniform4iv(mUniform[index], count, v); // <FS:Beq/>  Apparent copy/paste error.
+                getShaderBackend().uniform4iv(mProgramObject, mUniform[index], count, v); // <FS:Beq/>  Apparent copy/paste error.
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1505,7 +1494,7 @@ void LLGLSLShader::uniform1fv(U32 index, U32 count, const GLfloat* v)
             LLVector4 vec(v[0], 0.f, 0.f, 0.f);
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
-                glUniform1fv(mUniform[index], count, v);
+                getShaderBackend().uniform1fv(mProgramObject, mUniform[index], count, v);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1532,7 +1521,7 @@ void LLGLSLShader::uniform2fv(U32 index, U32 count, const GLfloat* v)
             LLVector4 vec(v[0], v[1], 0.f, 0.f);
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
-                glUniform2fv(mUniform[index], count, v);
+                getShaderBackend().uniform2fv(mProgramObject, mUniform[index], count, v);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1559,7 +1548,7 @@ void LLGLSLShader::uniform3fv(U32 index, U32 count, const GLfloat* v)
             LLVector4 vec(v[0], v[1], v[2], 0.f);
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
-                glUniform3fv(mUniform[index], count, v);
+                getShaderBackend().uniform3fv(mProgramObject, mUniform[index], count, v);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1587,7 +1576,7 @@ void LLGLSLShader::uniform4fv(U32 index, U32 count, const GLfloat* v)
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
                 LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-                glUniform4fv(mUniform[index], count, v);
+                getShaderBackend().uniform4fv(mProgramObject, mUniform[index], count, v);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1615,7 +1604,7 @@ void LLGLSLShader::uniform4uiv(U32 index, U32 count, const GLuint* v)
             if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
             {
                 LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-                glUniform4uiv(mUniform[index], count, v);
+                getShaderBackend().uniform4uiv(mProgramObject, mUniform[index], count, v);
                 mValue[mUniform[index]] = vec;
             }
         }
@@ -1638,7 +1627,7 @@ void LLGLSLShader::uniformMatrix2fv(U32 index, U32 count, GLboolean transpose, c
 
         if (mUniform[index] >= 0)
         {
-            glUniformMatrix2fv(mUniform[index], count, transpose, v);
+            getShaderBackend().uniformMatrix2fv(mProgramObject, mUniform[index], count, transpose, v);
         }
     }
 }
@@ -1659,7 +1648,7 @@ void LLGLSLShader::uniformMatrix3fv(U32 index, U32 count, GLboolean transpose, c
 
         if (mUniform[index] >= 0)
         {
-            glUniformMatrix3fv(mUniform[index], count, transpose, v);
+            getShaderBackend().uniformMatrix3fv(mProgramObject, mUniform[index], count, transpose, v);
         }
     }
 }
@@ -1680,7 +1669,7 @@ void LLGLSLShader::uniformMatrix3x4fv(U32 index, U32 count, GLboolean transpose,
 
         if (mUniform[index] >= 0)
         {
-            glUniformMatrix3x4fv(mUniform[index], count, transpose, v);
+            getShaderBackend().uniformMatrix3x4fv(mProgramObject, mUniform[index], count, transpose, v);
         }
     }
 }
@@ -1701,7 +1690,7 @@ void LLGLSLShader::uniformMatrix4fv(U32 index, U32 count, GLboolean transpose, c
 
         if (mUniform[index] >= 0)
         {
-            glUniformMatrix4fv(mUniform[index], count, transpose, v);
+            getShaderBackend().uniformMatrix4fv(mProgramObject, mUniform[index], count, transpose, v);
         }
     }
 }
@@ -1719,7 +1708,7 @@ GLint LLGLSLShader::getUniformLocation(const LLStaticHashedString& uniform)
             if (gDebugGL)
             {
                 stop_glerror();
-                if (iter->second != glGetUniformLocation(mProgramObject, uniform.String().c_str()))
+                if (iter->second != getShaderBackend().getUniformLocation(mProgramObject, uniform.String().c_str()))
                 {
                     LL_ERRS() << "Uniform does not match." << LL_ENDL;
                 }
@@ -1775,7 +1764,7 @@ void LLGLSLShader::uniform1i(const LLStaticHashedString& uniform, GLint v)
         LLVector4 vec((F32)v, 0.f, 0.f, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
-            glUniform1i(location, v);
+            getShaderBackend().uniform1i(mProgramObject, location, v);
             mValue[location] = vec;
         }
     }
@@ -1793,7 +1782,7 @@ void LLGLSLShader::uniform1iv(const LLStaticHashedString& uniform, U32 count, co
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-            glUniform1iv(location, count, v);
+            getShaderBackend().uniform1iv(mProgramObject, location, count, v);
             mValue[location] = vec;
         }
     }
@@ -1811,7 +1800,7 @@ void LLGLSLShader::uniform4iv(const LLStaticHashedString& uniform, U32 count, co
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-            glUniform4iv(location, count, v);
+            getShaderBackend().uniform4iv(mProgramObject, location, count, v);
             mValue[location] = vec;
         }
     }
@@ -1828,7 +1817,7 @@ void LLGLSLShader::uniform2i(const LLStaticHashedString& uniform, GLint i, GLint
         LLVector4 vec((F32)i, (F32)j, 0.f, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
-            glUniform2i(location, i, j);
+            getShaderBackend().uniform2i(mProgramObject, location, i, j);
             mValue[location] = vec;
         }
     }
@@ -1846,7 +1835,7 @@ void LLGLSLShader::uniform1f(const LLStaticHashedString& uniform, GLfloat v)
         LLVector4 vec(v, 0.f, 0.f, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
-            glUniform1f(location, v);
+            getShaderBackend().uniform1f(mProgramObject, location, v);
             mValue[location] = vec;
         }
     }
@@ -1863,7 +1852,7 @@ void LLGLSLShader::uniform2f(const LLStaticHashedString& uniform, GLfloat x, GLf
         LLVector4 vec(x, y, 0.f, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
-            glUniform2f(location, x, y);
+            getShaderBackend().uniform2f(mProgramObject, location, x, y);
             mValue[location] = vec;
         }
     }
@@ -1881,7 +1870,7 @@ void LLGLSLShader::uniform3f(const LLStaticHashedString& uniform, GLfloat x, GLf
         LLVector4 vec(x, y, z, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
-            glUniform3f(location, x, y, z);
+            getShaderBackend().uniform3f(mProgramObject, location, x, y, z);
             mValue[location] = vec;
         }
     }
@@ -1898,7 +1887,7 @@ void LLGLSLShader::uniform4f(const LLStaticHashedString& uniform, GLfloat x, GLf
         LLVector4 vec(x, y, z, w);
         if (iter == mValue.end() || shouldChange(iter->second, vec))
         {
-            glUniform4f(location, x, y, z, w);
+            getShaderBackend().uniform4f(mProgramObject, location, x, y, z, w);
             mValue[location] = vec;
         }
     }
@@ -1915,7 +1904,7 @@ void LLGLSLShader::uniform1fv(const LLStaticHashedString& uniform, U32 count, co
         LLVector4 vec(v[0], 0.f, 0.f, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
-            glUniform1fv(location, count, v);
+            getShaderBackend().uniform1fv(mProgramObject, location, count, v);
             mValue[location] = vec;
         }
     }
@@ -1932,7 +1921,7 @@ void LLGLSLShader::uniform2fv(const LLStaticHashedString& uniform, U32 count, co
         LLVector4 vec(v[0], v[1], 0.f, 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
-            glUniform2fv(location, count, v);
+            getShaderBackend().uniform2fv(mProgramObject, location, count, v);
             mValue[location] = vec;
         }
     }
@@ -1949,7 +1938,7 @@ void LLGLSLShader::uniform3fv(const LLStaticHashedString& uniform, U32 count, co
         LLVector4 vec(v[0], v[1], v[2], 0.f);
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
-            glUniform3fv(location, count, v);
+            getShaderBackend().uniform3fv(mProgramObject, location, count, v);
             mValue[location] = vec;
         }
     }
@@ -1967,7 +1956,7 @@ void LLGLSLShader::uniform4fv(const LLStaticHashedString& uniform, U32 count, co
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-            glUniform4fv(location, count, v);
+            getShaderBackend().uniform4fv(mProgramObject, location, count, v);
             mValue[location] = vec;
         }
     }
@@ -1985,7 +1974,7 @@ void LLGLSLShader::uniform4uiv(const LLStaticHashedString& uniform, U32 count, c
         if (iter == mValue.end() || shouldChange(iter->second, vec) || count != 1)
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-            glUniform4uiv(location, count, v);
+            getShaderBackend().uniform4uiv(mProgramObject, location, count, v);
             mValue[location] = vec;
         }
     }
@@ -1999,7 +1988,7 @@ void LLGLSLShader::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 cou
     if (location >= 0)
     {
         stop_glerror();
-        glUniformMatrix4fv(location, count, transpose, v);
+        getShaderBackend().uniformMatrix4fv(mProgramObject, location, count, transpose, v);
         stop_glerror();
     }
 }

@@ -29,6 +29,7 @@
 
 #include "lldrawpoolmaterials.h"
 #include "llviewershadermgr.h"
+#include "llshaderbackend.h"
 #include "pipeline.h"
 #include "llglcommonfunc.h"
 #include "llvoavatar.h"
@@ -165,22 +166,22 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
 
     if (intensity > -1)
     {
-        glUniform1f(intensity, lastIntensity);
+        getShaderBackend().uniform1f(mShader->mProgramObject, intensity, lastIntensity);
     }
 
     if (brightness > -1)
     {
-        glUniform1f(brightness, lastFullbright);
+        getShaderBackend().uniform1f(mShader->mProgramObject, brightness, lastFullbright);
     }
 
     if (minAlpha > -1)
     {
-        glUniform1f(minAlpha, lastMinimumAlpha);
+        getShaderBackend().uniform1f(mShader->mProgramObject, minAlpha, lastMinimumAlpha);
     }
 
     if (specular > -1)
     {
-        glUniform4fv(specular, 1, lastSpecular.mV);
+        getShaderBackend().uniform4fv(mShader->mProgramObject, specular, 1, lastSpecular.mV);
     }
 
     const LLVOAvatar* lastAvatar = nullptr;
@@ -197,26 +198,26 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
         if (specular > -1 && params.mSpecColor != lastSpecular)
         {
             lastSpecular = params.mSpecColor;
-            glUniform4fv(specular, 1, lastSpecular.mV);
+            getShaderBackend().uniform4fv(mShader->mProgramObject, specular, 1, lastSpecular.mV);
         }
 
         if (intensity != -1 && lastIntensity != params.mEnvIntensity)
         {
             lastIntensity = params.mEnvIntensity;
-            glUniform1f(intensity, lastIntensity);
+            getShaderBackend().uniform1f(mShader->mProgramObject, intensity, lastIntensity);
         }
 
         if (minAlpha > -1 && lastMinimumAlpha != params.mAlphaMaskCutoff)
         {
             lastMinimumAlpha = params.mAlphaMaskCutoff;
-            glUniform1f(minAlpha, lastMinimumAlpha);
+            getShaderBackend().uniform1f(mShader->mProgramObject, minAlpha, lastMinimumAlpha);
         }
 
         F32 fullbright = params.mFullbright ? 1.f : 0.f;
         if (brightness > -1 && lastFullbright != fullbright)
         {
             lastFullbright = fullbright;
-            glUniform1f(brightness, lastFullbright);
+            getShaderBackend().uniform1f(mShader->mProgramObject, brightness, lastFullbright);
         }
 
         if (normChannel > -1 && params.mNormalMap != lastNormalMap)
