@@ -5827,13 +5827,26 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         // Far away avatars of other residents animate every Nth frame. The motion controller measures elapsed time since
         // its last update, so a skipped frame costs pose smoothness, not animation speed.
         static LLCachedControl<U32> far_period(gSavedSettings, "FSDistantAvatarAnimPeriod", 3);
-        static LLCachedControl<F32> far_distance(gSavedSettings, "FSDistantAvatarAnimDistance", 32.f);
+        static LLCachedControl<F32> far_distance(gSavedSettings, "FSDistantAvatarAnimDistance", 10.f);
         const bool far_skip = far_period > 1 && !isSelf() && !isControlAvatar() && !mIsDummy && mDrawable.notNull()
             && mDrawable->mDistanceWRTCamera > far_distance
             && ((LLDrawable::getCurrentFrame() + mID.mData[0]) % far_period) != 0;
         if (!far_skip)
         {
             updateMotions(LLCharacter::NORMAL_UPDATE);
+        }
+        // Throttle statistics: how many other-avatar updates ran vs were skipped, and how many were beyond the distance.
+        static U32 sRan = 0, sSkipped = 0, sFar = 0, sNear = 0; static S32 sLogFrame = 0;
+        if (!isSelf() && mDrawable.notNull())
+        {
+            (far_skip ? sSkipped : sRan)++;
+            (mDrawable->mDistanceWRTCamera > far_distance ? sFar : sNear)++;
+            if (LLDrawable::getCurrentFrame() >= sLogFrame + 300)
+            {
+                LL_INFOS("AvatarThrottle") << "last 300 frames: other-avatar updates ran=" << sRan << " skipped=" << sSkipped
+                    << " (beyond " << far_distance << "m: " << sFar << ", within: " << sNear << "), period=" << far_period << LL_ENDL;
+                sRan = sSkipped = sFar = sNear = 0; sLogFrame = LLDrawable::getCurrentFrame();
+            }
         }
     }
 

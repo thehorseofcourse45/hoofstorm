@@ -254,7 +254,7 @@
     <key>Type</key>
     <string>F32</string>
     <key>Value</key>
-    <real>32.0</real>
+    <real>10.0</real>
   </map>
 
   <key>FSAvatarTurnSpeed</key>
