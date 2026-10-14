@@ -55,13 +55,23 @@ void VulkanQueryBackend::destroy(int count,const uint32_t* ids)
 VulkanQueryBackend::Slot VulkanQueryBackend::allocate(VkQueryType type,uint32_t count)
 {
     std::shared_ptr<Page> selected;
-    mCtx->refreshCompleted();
+    // Fast path: a page with room needs no fence query and no reset (its free slots are already reset).
     for (auto& page:mPages)
+        if (page->type==type && page->used+count<=CAPACITY) { selected=page; break; }
+    if (!selected)
     {
-        if (page->type!=type) continue;
-        // Only recycle a page after its GPU fence and every logical result referencing it are finished.
-        if (page.use_count()==1 && page->frame<=mCtx->completedFrame) page->used=0;
-        if (page->used+count<=CAPACITY) { selected=page; break; }
+        mCtx->refreshCompleted();
+        for (auto& page:mPages)
+        {
+            if (page->type!=type) continue;
+            // Only recycle a page after its GPU fence and every logical result referencing it are finished.
+            if (page.use_count()==1 && page->frame<=mCtx->completedFrame)
+            {
+                // Host reset makes availability unambiguously false before the new submission executes.
+                vkResetQueryPool(mCtx->device,page->pool,0,CAPACITY);
+                page->used=0; selected=page; break;
+            }
+        }
     }
     if (!selected)
     {
@@ -72,12 +82,11 @@ VulkanQueryBackend::Slot VulkanQueryBackend::allocate(VkQueryType type,uint32_t 
                 (mCtx->geometryShader ? VK_QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_PRIMITIVES_BIT : 0);
         VkQueryPool pool;
         VK_CHECK(vkCreateQueryPool(mCtx->device,&info,nullptr,&pool));
+        vkResetQueryPool(mCtx->device,pool,0,CAPACITY);
         selected=std::make_shared<Page>(Page{pool,type}); mPages.push_back(selected);
     }
     Slot slot{selected,selected->used,mCtx->submissionSerial+1};
     selected->used+=count; selected->frame=mCtx->frameCounter;
-    // Host reset makes availability unambiguously false before the new submission executes.
-    vkResetQueryPool(mCtx->device,selected->pool,slot.index,count);
     return slot;
 }
 void VulkanQueryBackend::begin(uint32_t target,uint32_t id)
