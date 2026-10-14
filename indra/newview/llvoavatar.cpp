@@ -2667,6 +2667,7 @@ void LLVOAvatar::applyDefaultParams()
 //-----------------------------------------------------------------------------
 void LLVOAvatar::resetSkeleton(bool reset_animations)
 {
+    mMatrixPaletteCache.clear();
     LL_DEBUGS("Avatar") << avString() << " reset starts" << LL_ENDL;
     if (!isControlAvatar() && !mLastProcessedAppearance)
     {
@@ -8336,6 +8337,7 @@ void LLVOAvatar::initAttachmentPoints(bool ignore_hud_joints)
 //-----------------------------------------------------------------------------
 void LLVOAvatar::updateVisualParams()
 {
+    mMatrixPaletteCache.clear();     // joint scales and offsets may change
     ESex avatar_sex = (getVisualParamWeight("male") > 0.5f) ? SEX_MALE : SEX_FEMALE;
     if (getSex() != avatar_sex)
     {
@@ -11397,11 +11399,19 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
     U64 hash = skin->mHash;
     MatrixPaletteCache& entry = mMatrixPaletteCache[hash];
 
+    if (entry.mFrame != gFrameCount && mFarAnimSkipped && entry.mRootKnown && !entry.mMatrixPalette.empty()
+        && entry.mRootMatrix == mRoot->getWorldMatrix4a())
+    {
+        entry.mFrame = gFrameCount;     // pose unchanged since the palette was built
+    }
+
     if (entry.mFrame != gFrameCount)
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
         entry.mFrame = gFrameCount;
+        entry.mRootMatrix = mRoot->getWorldMatrix4a();
+        entry.mRootKnown = true;
 
         //build matrix palette
         U32 count = LLSkinningUtil::getMeshJointCount(skin);

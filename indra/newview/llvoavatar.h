@@ -962,6 +962,11 @@ public:
         // Float array ready to be sent to GL
         std::vector<F32> mGLMp;
 
+        // Root joint world matrix the palette was built with: while the animation update is skipped (distance throttle) and the
+        // root has not moved, the joints cannot have changed and the palette is reused.
+        LLMatrix4a mRootMatrix;
+        bool mRootKnown = false;
+
         MatrixPaletteCache() :
             mFrame(gFrameCount - 1)
         {
