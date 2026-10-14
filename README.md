@@ -1,36 +1,37 @@
-<img align="left" width="100" height="100" src="doc/firestorm_256.png" alt="Logo of Firestorm viewer"/>
+# Hoofstorm
 
-**[Firestorm](https://www.firestormviewer.org) is a free client for 3D virtual worlds such as Second Life and various OpenSim worlds where users can create, connect and chat with others from around the world.**
+A fork of the [Firestorm](https://github.com/FirestormViewer/phoenix-firestorm) Second Life viewer with a native Vulkan renderer. OpenGL stays as the fallback.
 
-This repository contains the official source code for the Firestorm viewer.
+This is an unofficial personal fork. It is not supported by the Firestorm project.
 
-## Open Source
+## What is different from Firestorm
 
-Firestorm is a third party viewer derived from the official [Second Life](https://github.com/secondlife/viewer) client. The client codebase has been open source since 2007 and is available under the LGPL license.
+- **Render backend layer.** Calls that used to go straight to OpenGL now go through backend interfaces in `indra/llrender/`: render state, shaders, textures, vertex buffers and framebuffers. Each has a GL implementation and a Vulkan implementation.
+- **Native Vulkan renderer** in `indra/llrender/vulkan/`. It is the default when the viewer is built with it. Set `FS_RENDER_BACKEND=opengl` to use OpenGL instead. If Vulkan window init fails, the viewer falls back to OpenGL.
+- **Performance work on the Vulkan path:**
+  - two frames in flight (`FS_VK_FRAMES_IN_FLIGHT=1` turns it off)
+  - batched texture uploads and a fast 8-bit upload path
+  - async pipeline compilation (`FS_VK_ASYNC_PIPELINES=0` turns it off)
+  - pooled vertex and index buffers
+  - cached texture views and samplers, and persistent per-program uniform sets
+  - push descriptors (`FS_VK_PUSH_DESCRIPTORS=0` turns them off) and narrow barriers (`FS_VK_NARROW_BARRIERS=0` turns them off)
+  - redundant state, pipeline and buffer binds skipped per command buffer
+- **Distant avatar animation throttle.** Settings `FSDistantAvatarAnimPeriod` (default 3, 1 = off) and `FSDistantAvatarAnimDistance` (default 32).
+- **Render target feedback tolerance.** A draw that samples a target it is writing uses a fallback texture instead of aborting. `FS_VK_STRICT_FEEDBACK=1` restores the abort.
+- **Test suites** under `indra/llrender/vulkan/tests/` and a standalone skeleton in `indra/vulkan_skeleton/`.
 
-## Download
+## Status
 
-Pre-built versions of the viewer releases for Windows, Mac and Linux can be downloaded from the [official website](https://www.firestormviewer.org/choose-your-platform/).
+Work in progress. Vulkan runs in-world but is not yet faster than OpenGL in heavy regions (roughly 32 to 36 FPS against 45 to 48 FPS in one test region). Visual parity and coverage across GPUs are not fully verified. Windows and Visual Studio 2022 only.
 
-## Build Instructions
+## Building
 
-Build instructions for each operating system can be found using the links below and in the official [wiki](https://wiki.firestormviewer.org).
+Build as you would Firestorm, following the [Firestorm build instructions](https://wiki.firestormviewer.org/fs_compiling_firestorm). You also need the [Vulkan SDK](https://vulkan.lunarg.com/) with `glslang`/`glslc`. Helper scripts are in `doc/vulkan/tools/`.
 
-- [Windows](doc/building_windows.md)
-- [Mac](doc/building_macos.md)
-- [Linux](doc/building_linux.md)
+## Documentation
 
-> [!NOTE]
-> We do not provide support for compiling the viewer or issues resulting from using a self-compiled viewer. However, there is a self-compilers group within Second Life that can be joined to ask questions related to compiling the viewer: [Firestorm Self Compilers](https://tinyurl.com/firestorm-self-compilers)
+Design notes, build commands, gotchas and profiling logs are in [`doc/vulkan/`](doc/vulkan). Start with `HANDOFF.md` and `PROJECT-NOTES.md`.
 
-## Contribute
+## License
 
-Help make Firestorm better! You can get involved with improvements by filing bugs and suggesting enhancements via [JIRA](https://jira.firestormviewer.org) or [creating pull requests](CONTRIBUTING.md).
-
-## Community respect
-
-This section is guided by the [TPV Policy](https://secondlife.com/corporate/third-party-viewers) and the [Second Life Code of Conduct](https://github.com/secondlife/viewer?tab=coc-ov-file).
-
-Firestorm code is made available during ongoing development, with the **master** branch representing the current nightly build. Developers and self-compilers are encouraged to work on their own forks and contribute back via pull requests, as detailed in the [contributing guide](CONTRIBUTING.md).
-
-If you intend to use our code for your own viewer beyond personal use, please only use code from official release branches (for example, `Firestorm_7.1.13`), rather than from pre-release/preview or nightly builds.
+Same as Firestorm and the Linden Lab viewer: LGPL 2.1. See [`LICENSE`](LICENSE) and the notices in the source tree. Firestorm and Second Life are trademarks of their respective owners.
