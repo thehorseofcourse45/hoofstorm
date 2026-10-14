@@ -376,6 +376,7 @@ void VulkanTextureBackend::destroyImage(Tex& t)
     auto views = std::move(t.views);
     t.views.clear();
     t.cView = VK_NULL_HANDLE;
+    t.aView = VK_NULL_HANDLE;
     mCtx->deferRelease([device, image, memory, views] {
         for (const auto& view : views) vkDestroyImageView(device, view.second, nullptr);
         vkDestroyImage(device, image, nullptr);
@@ -530,6 +531,15 @@ void VulkanTextureBackend::upload(Tex& t, uint32_t level, uint32_t layer, uint32
 
 // ----------------------------------------------------------------------------------------------------------------
 // pixel conversion
+
+size_t VulkanTextureBackend::sourceBytes(U32 format, U32 type, uint32_t w, uint32_t h, uint32_t count, S32 rowLength)
+{
+    bool bgr = false;
+    const size_t comps = (size_t) formatComps(format, bgr), tb = (size_t) typeBytes(type);
+    if (!comps || !tb || !w || !h || !count) return 0;
+    const size_t rowBytes = (size_t) (rowLength > 0 ? (uint32_t) rowLength : w) * comps * tb;
+    return (count - 1) * rowBytes * h + (h - 1) * rowBytes + (size_t) w * comps * tb;     // what convertForUpload reads, no more
+}
 
 std::vector<uint8_t> VulkanTextureBackend::convertForUpload(const Tex& t, U32 format, U32 type, uint32_t w, uint32_t h, uint32_t count,
                                                             const void* src)
@@ -734,11 +744,12 @@ void VulkanTextureBackend::destroy(S32 count, const U32* names)
         }
         destroyImage(it->second);
         mTextures.erase(it);
-        for (auto& u : mUnitTex)
+        for (size_t u = 0; u < kUnits; ++u)
         {
-            if (u == names[i])
+            if (mUnitTex[u] == names[i])
             {
-                u = 0;
+                mUnitTex[u] = 0;
+                mUnitPtr[u] = nullptr;
             }
         }
     }
@@ -746,7 +757,12 @@ void VulkanTextureBackend::destroy(S32 count, const U32* names)
 
 void VulkanTextureBackend::bind(U32 target, U32 texture)
 {
+    if (mUnitTex[mActive] == texture && (mUnitPtr[mActive] || !texture))
+    {
+        return;     // already bound, and glTarget was set by the bind that put it there
+    }
     mUnitTex[mActive] = texture;
+    mUnitPtr[mActive] = nullptr;
     if (texture)
     {
         Tex& t = mTextures[texture];       // a name the viewer made up (LLTexUnit::bindManual) still gets an object
@@ -754,14 +770,14 @@ void VulkanTextureBackend::bind(U32 target, U32 texture)
         {
             t.glTarget = isCubeFace(target) ? glc::TEXTURE_CUBE_MAP : target;
         }
+        mUnitPtr[mActive] = &t;
     }
 }
 
 VulkanTextureBackend::Tex* VulkanTextureBackend::bound(U32 target)
 {
     (void) target;
-    auto it = mTextures.find(mUnitTex[mActive]);
-    return it == mTextures.end() ? nullptr : &it->second;
+    return mUnitPtr[mActive];
 }
 
 void VulkanTextureBackend::setWrap(U32 target, S32 wrapS, S32 wrapT, S32 wrapR)
@@ -1019,6 +1035,7 @@ void VulkanTextureBackend::replaceWithMipLevel(U32 target, S32 mip, S32 internal
     t.memory = VK_NULL_HANDLE;
     t.views.clear();
     t.cView = VK_NULL_HANDLE;
+    t.aView = VK_NULL_HANDLE;
     ensureImage(t, (uint32_t) width, (uint32_t) height, old.layers, internalFormat, old.cube, old.cubeArray, false);
     const VkImageAspectFlags aspect = aspectOf(t.info.format);
     submitNow([&](VkCommandBuffer cmd) {
@@ -1247,10 +1264,9 @@ void VulkanTextureBackend::unitDescriptor(uint32_t unit, int kind, const std::st
     Tex* t = nullptr;
     if (unit < kUnits)
     {
-        auto it = mTextures.find(mUnitTex[unit]);
-        if (it != mTextures.end() && it->second.image)
+        if (mUnitPtr[unit] && mUnitPtr[unit]->image)
         {
-            t = &it->second;
+            t = mUnitPtr[unit];
         }
     }
     const bool wantCube = kind == 1, wantArray = kind == 2;

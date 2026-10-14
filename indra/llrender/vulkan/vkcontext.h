@@ -216,6 +216,8 @@ struct VkContext
     }
     uint64_t cmdSerial = 0;
     uint64_t statDraws = 0, statBarriers = 0, statRenderPasses = 0, statSamplerSets = 0, statProgramBinds = 0;   // VulkanPacing counters
+    // draws and render passes per target, keyed {framebuffer name, width, height, color attachments}; cleared every 300 frames
+    std::map<std::array<uint32_t, 4>, std::pair<uint64_t, uint64_t>> statPassDraws;
 
     // per frame
     uint32_t imageIndex = 0;

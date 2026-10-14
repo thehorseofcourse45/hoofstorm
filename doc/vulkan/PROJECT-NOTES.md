@@ -1,5 +1,16 @@
 # Vulkan project notes
 
+## Current status: CPU latency work and render thread, 2026-10-14
+
+Main-thread profiling of the heavy region (300 samples, viewer focused) drove this round. Done and built, all measured only in-world and only with indicative scene parity (draw counts differ run to run, 2,350 to 3,085):
+- Avatar: throttled frames also skip joint LOD updates (`LLVOAvatar::updateLOD`, uses `mFarAnimSkipped`); second throttle tier `FSFarAvatarAnimPeriod` (6) beyond `FSFarAvatarAnimDistance` (25 m), first tier unchanged (period 3 beyond 10 m).
+- Backend: framebuffer attachment view cached per texture (`Tex::aView`), per-unit bound texture pointer (`mUnitPtr`), and vertex/index buffer lookup by sequential id (`mById`) plus a per-binding pointer cache, which removed the per-draw `mBuffers.find`. Texture priority pass refreshes 2.5% of textures per frame instead of 5% (`updateImagesFetchTextures`).
+- Measured: recording 22.6-23.5 ms -> 16.7-19.8 ms at 2,500-2,900 draws; GPU 14 -> 10-12 ms. `VulkanPacing` now also logs draws and render passes per target (framebuffer name, size, colors). G-buffer pass is about 60% of draws (1,500 of 2,500); no shadow passes in that scene.
+- **Render thread (new, default on):** runs every real backend call on a second thread; `FS_VK_RENDER_THREAD=0` turns it off. Design: `render-thread-design.md`. Code: `indra/llrender/vulkan/vkrenderthread.h` (queue, no Vulkan), `indra/llrender/llrenderbackend_threaded.h` (proxies for the five backend interfaces), wiring in `llrenderbackend_vulkan.cpp`. Names (textures, framebuffers, vertex buffers, uniform buffers) are handed out by the proxy and checked on the render thread. `VulkanQueryBackend` has a recursive mutex. `VulkanTextureBackend::sourceBytes` and `VulkanVertexBufferBackend::allocateWithId` were added for the proxies. Verified: `tests/thread_queue_test.cpp` (queue, standalone), `viewer_vulkan_activation_test` 45/45 with and without the switch, zero validation messages. In-world: 85-95 FPS in the heavy region (OpenGL 45-48), 0 syncs per frame after the query-result fix; occlusion flicker fixed by reporting a query unavailable until its queued begin has run.
+- `VulkanPacing` log gains "render thread per frame: records, KiB, syncs, sync wait ms, throttle wait ms" when the thread is on.
+
+Next steps: (1) in-world check of distant avatars (10 m / 25 m tiers) and texture sharpening speed (revert the `/40` in `updateImagesFetchTextures` if slow); (2) main thread is now bound by scene work (avatar/joint updates, particles, sorting); (3) remaining ideas: `RenderAvatarMaxNonImpostors` 30 -> 15, fewer G-buffer draws, bindless/indirect draws.
+
 ## Current status: texture upload optimization, 2026-10-13
 
 Native Vulkan is working in-world, but performance parity is unfinished. The user confirmed 16–17 FPS on the preceding binary versus 45–48 FPS in regular installed OpenGL Firestorm. Exact camera/settings/viewer-version parity was requested but not independently verified. Earlier 35–40 and 20–25 FPS reports preceded captured native activation and must not be treated as native measurements.

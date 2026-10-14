@@ -82,6 +82,7 @@ public:
 
     bool usesDeferredUpload() const override { return false; }
     void allocate(BufferKind kind, U32 size, BufferHandle& handle, U8*& data) override;
+    void allocateWithId(BufferKind kind, U32 size, U64 id);     // GPU side of allocate() for a handle the caller already chose (threaded renderer)
     void free(BufferKind kind, U32 size, BufferHandle handle, U8* data) override;
     U64 getVramBytesUsed() override { return mBytes + mPooledBytes; }
     void createStatic(BufferKind kind, BufferHandle& handle, U32 size, const void* data) override;
@@ -135,6 +136,7 @@ private:
     VkContext* mCtx;
     VulkanRenderStateBackend* mState;
     std::unordered_map<U64, Buf> mBuffers;
+    std::vector<Buf*> mById;    // mBuffers entries indexed by id (ids are sequential), null once freed; ponytail: grows 8 bytes per buffer ever made
     U64 mNextId = 1;
     U64 mBytes = 0;
     U64 mRetiredBytes = 0, mPooledBytes = 0;
@@ -146,6 +148,8 @@ private:
 
     // pending vertex input, set by setBuffers()
     BufferHandle mCurVB, mCurIB;
+    Buf *mCurVBp = nullptr, *mCurIBp = nullptr;     // mBuffers entries for mCurVB/mCurIB, looked up on first draw; cleared by setBuffers and free
+    Buf& resolve(BufferHandle h, Buf*& cache);      // cached lookup of a draw buffer, aborts when the buffer is gone
     U32 mAttribMask = 0;
     U32 mOffsets[14] = {};
 

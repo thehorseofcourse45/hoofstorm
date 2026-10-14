@@ -237,16 +237,24 @@ VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createStorag
     return b;
 }
 
-void VulkanVertexBufferBackend::allocate(BufferKind kind, U32 size, BufferHandle& handle, U8*& data)
+void VulkanVertexBufferBackend::allocateWithId(BufferKind kind, U32 size, U64 id)
 {
     Buf b;
     b.shadow.assign(size, 0);
     static_cast<BufferStorage&>(b) = createStorage(kind, size);
     b.size = size;
     b.kind = kind;
-    handle.id = mNextId++;
-    mBuffers[handle.id] = std::move(b);
+    mNextId = id + 1;
     mBytes += b.allocationBytes;
+    Buf& stored = mBuffers[id] = std::move(b);
+    if (mById.size() <= id) mById.resize(id + 1024, nullptr);
+    mById[id] = &stored;
+}
+
+void VulkanVertexBufferBackend::allocate(BufferKind kind, U32 size, BufferHandle& handle, U8*& data)
+{
+    handle.id = mNextId;
+    allocateWithId(kind, size, handle.id);
 
     // the CPU shadow copy LLVertexBuffer writes through its striders (ll_aligned_malloc_16 in the viewer)
     data = (U8*) _aligned_malloc(size, 16);
@@ -277,6 +285,9 @@ void VulkanVertexBufferBackend::free(BufferKind, U32 size, BufferHandle handle, 
         recycleStorage(kind, storage);
         for (const auto& version : retired) recycleStorage(kind, version);
     });
+    if (mCurVBp == &it->second) mCurVBp = nullptr;
+    if (mCurIBp == &it->second) mCurIBp = nullptr;
+    mById[handle.id] = nullptr;
     mBuffers.erase(it);
     (void)size;
     if (mBoundVB == handle) mBoundVB = {};
@@ -366,6 +377,8 @@ void VulkanVertexBufferBackend::upload(BufferKind kind, BufferHandle handle, U32
 
 void VulkanVertexBufferBackend::setBuffers(BufferHandle vb, BufferHandle ib, U32 attribMask, const U32* offsets)
 {
+    if (!(vb == mCurVB)) mCurVBp = nullptr;
+    if (!(ib == mCurIB)) mCurIBp = nullptr;
     mCurVB = vb;
     mCurIB = ib;
     mAttribMask = attribMask;
@@ -678,6 +691,21 @@ VkPipeline VulkanVertexBufferBackend::getPipeline(U32 mode, bool vertexInput)
     return pipeline;
 }
 
+VulkanVertexBufferBackend::Buf& VulkanVertexBufferBackend::resolve(BufferHandle h, Buf*& cache)
+{
+    if (!cache)
+    {
+        cache = h.id < mById.size() ? mById[h.id] : nullptr;
+        if (!cache)
+        {
+            fprintf(stderr, "FATAL: draw with a buffer that was freed or never allocated\n");
+            abort();
+        }
+    }
+    cache->usedFrame = mCtx->frameCounter;
+    return *cache;
+}
+
 bool VulkanVertexBufferBackend::recordCommon(U32 mode, bool indexed, bool vertexInput)
 {
     if (!mCtx->recording)
@@ -739,20 +767,10 @@ bool VulkanVertexBufferBackend::recordCommon(U32 mode, bool indexed, bool vertex
     }
     dc.viewportSet = true;
 
-    auto bufferOf = [&](BufferHandle h) {
-        auto it = mBuffers.find(h.id);
-        if (it == mBuffers.end())
-        {
-            fprintf(stderr, "FATAL: draw with a buffer that was freed or never allocated\n");
-            abort();
-        }
-        it->second.usedFrame = mCtx->frameCounter;
-        return it->second.buffer;
-    };
-
     ++mCtx->statDraws;
+    ++mCtx->statPassDraws[{mCtx->framebuffers->getBound(), renderExtent.width, renderExtent.height, mCtx->framebuffers->colorCount()}].first;
     if (!vertexInput) { ++drawCalls; return true; }
-    VkBuffer vb = bufferOf(mCurVB);
+    VkBuffer vb = resolve(mCurVB, mCurVBp).buffer;
     for (int t = 0; t < TYPE_MAX; ++t)
     {
         if (mAttribMask & (1u << t))
@@ -779,28 +797,22 @@ void VulkanVertexBufferBackend::drawIndexed(U32 mode, U32 start, U32 end, U32 co
     if (!recordCommon(loop ? 5 : mode, true)) return;
 
     const U32 indexSize = type == IndexType::U32 ? 4 : 2;
-    auto it = mBuffers.find(mCurIB.id);
-    if (it == mBuffers.end())
-    {
-        fprintf(stderr, "FATAL: drawIndexed without an index buffer\n");
-        abort();
-    }
-    it->second.usedFrame = mCtx->frameCounter;
+    Buf& ib = resolve(mCurIB, mCurIBp);
     const VkIndexType indexType = type == IndexType::U32 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
     auto& dc = mCtx->drawCache;
-    if (dc.indexBuffer != it->second.buffer || dc.indexType != indexType)
+    if (dc.indexBuffer != ib.buffer || dc.indexType != indexType)
     {
-        vkCmdBindIndexBuffer(mCtx->slot().cmd, it->second.buffer, 0, indexType);
-        dc.indexBuffer = it->second.buffer;
+        vkCmdBindIndexBuffer(mCtx->slot().cmd, ib.buffer, 0, indexType);
+        dc.indexBuffer = ib.buffer;
         dc.indexType = indexType;
     }
     vkCmdDrawIndexed(mCtx->slot().cmd, count, 1, indexByteOffset / indexSize, 0, 0);
     if(loop && count>1)
     {
-        if(indexByteOffset + uint64_t(count)*indexSize > it->second.size) throw std::runtime_error("Line loop indices outside buffer");
+        if(indexByteOffset + uint64_t(count)*indexSize > ib.size) throw std::runtime_error("Line loop indices outside buffer");
         U32 first=0,last=0;
-        memcpy(&first,it->second.mapped+indexByteOffset,indexSize);
-        memcpy(&last,it->second.mapped+indexByteOffset+(count-1)*indexSize,indexSize);
+        memcpy(&first,ib.mapped+indexByteOffset,indexSize);
+        memcpy(&last,ib.mapped+indexByteOffset+(count-1)*indexSize,indexSize);
         closeLoop(last,first);
     }
 }

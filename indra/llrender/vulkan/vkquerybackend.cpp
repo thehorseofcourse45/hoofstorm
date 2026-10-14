@@ -34,6 +34,7 @@ bool VulkanQueryBackend::supported(uint32_t target) const
 }
 void VulkanQueryBackend::generate(int count,uint32_t* ids)
 {
+    std::lock_guard<std::recursive_mutex> lock(mLock);
     if (count<0 || (count && !ids)) throw std::runtime_error("Invalid query allocation");
     for (int i=0;i<count;++i) { ids[i]=++mNext; mQueries.emplace(ids[i],Query{}); }
 }
@@ -45,6 +46,7 @@ VulkanQueryBackend::Query& VulkanQueryBackend::object(uint32_t id)
 }
 void VulkanQueryBackend::destroy(int count,const uint32_t* ids)
 {
+    std::lock_guard<std::recursive_mutex> lock(mLock);
     if (count<0 || (count && !ids)) throw std::runtime_error("Invalid query deletion");
     for (int i=0;i<count;++i)
     {
@@ -91,6 +93,7 @@ VulkanQueryBackend::Slot VulkanQueryBackend::allocate(VkQueryType type,uint32_t 
 }
 void VulkanQueryBackend::begin(uint32_t target,uint32_t id)
 {
+    std::lock_guard<std::recursive_mutex> lock(mLock);
     if (!supported(target)) throw std::runtime_error("Unsupported Vulkan query target");
     if (mActive.count(target)) throw std::runtime_error("Vulkan query target already active");
     if (!mCtx->recording)
@@ -116,6 +119,7 @@ void VulkanQueryBackend::begin(uint32_t target,uint32_t id)
 }
 void VulkanQueryBackend::end(uint32_t target)
 {
+    std::lock_guard<std::recursive_mutex> lock(mLock);
     auto active=mActive.find(target);
     if (active==mActive.end()) throw std::runtime_error("Ending inactive Vulkan query");
     if (occlusion(target))
@@ -151,11 +155,13 @@ void VulkanQueryBackend::finishTime(Query& query)
 }
 void VulkanQueryBackend::beginRecording()
 {
+    std::lock_guard<std::recursive_mutex> lock(mLock);
     auto active=mActive.find(TIME);
     if (active!=mActive.end()) startTime(object(active->second));
 }
 void VulkanQueryBackend::endRecording()
 {
+    std::lock_guard<std::recursive_mutex> lock(mLock);
     auto active=mActive.find(TIME);
     if (active!=mActive.end()) finishTime(object(active->second));
 }
@@ -173,6 +179,7 @@ void VulkanQueryBackend::startStatistics()
 }
 void VulkanQueryBackend::beginRendering()
 {
+    std::lock_guard<std::recursive_mutex> lock(mLock);
     bool samples=false;
     for (auto& active:mActive) samples|=occlusion(active.first);
     if (samples) startOcclusion();
@@ -185,6 +192,7 @@ void VulkanQueryBackend::beginRendering()
 }
 void VulkanQueryBackend::endRendering()
 {
+    std::lock_guard<std::recursive_mutex> lock(mLock);
     for (auto* slot:{&mOcclusion,&mStatistics}) if (slot->page)
     {
         vkCmdEndQuery(mCtx->slot().cmd,slot->page->pool,slot->index); *slot=Slot{};
@@ -231,15 +239,17 @@ bool VulkanQueryBackend::read(Query& query,bool wait)
     query.value=sum; query.cached=true; query.slots.clear();
     return true;
 }
-bool VulkanQueryBackend::available(uint32_t id) { return read(object(id),false); }
+bool VulkanQueryBackend::available(uint32_t id) { std::lock_guard<std::recursive_mutex> lock(mLock); return read(object(id),false); }
 uint64_t VulkanQueryBackend::result(uint32_t id)
 {
+    std::lock_guard<std::recursive_mutex> lock(mLock);
     auto& query=object(id);
     if (!read(query,true)) throw std::runtime_error("Reading unfinished Vulkan query");
     return query.value;
 }
 void VulkanQueryBackend::beginFrame()
 {
+    std::lock_guard<std::recursive_mutex> lock(mLock);
     const uint32_t timer=mFrameTimers[mCtx->currentSlot];   // last used two frames ago with two slots, so it has finished
     if (!timer) return;
     auto& query=object(timer);
@@ -250,6 +260,7 @@ void VulkanQueryBackend::beginFrame()
 }
 void VulkanQueryBackend::endFrame()
 {
+    std::lock_guard<std::recursive_mutex> lock(mLock);
     const uint32_t timer=mFrameTimers[mCtx->currentSlot];
     if (!timer) return;
     auto& query=object(timer); finishTime(query);

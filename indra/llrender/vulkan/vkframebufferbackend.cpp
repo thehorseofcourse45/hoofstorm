@@ -72,9 +72,15 @@ VulkanFramebufferBackend::Image VulkanFramebufferBackend::imageOf(const Attachme
         layer = a.target - glc::TEXTURE_CUBE_MAP_POSITIVE_X;
     else if (a.target != glc::TEXTURE_2D && a.target != glc::TEXTURE_RECTANGLE) fail("unsupported attachment target");
     if (layer >= t.layers) fail("attachment layer outside texture");
+    const bool first = a.level == 0 && layer == 0;      // nearly every attachment; skips the string-keyed lookup
     const std::string key{'A', (char) a.level, (char) layer};   // short enough for no heap allocation; viewOf keys are longer
-    auto view = t.views.find(key);
-    if (view == t.views.end())
+    VkImageView found = first ? t.aView : VK_NULL_HANDLE;
+    if (!found)
+    {
+        auto view = t.views.find(key);
+        if (view != t.views.end()) found = view->second;
+    }
+    if (!found)
     {
         VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         vi.image = t.image;
@@ -82,11 +88,11 @@ VulkanFramebufferBackend::Image VulkanFramebufferBackend::imageOf(const Attachme
         vi.format = t.info.format;
         vi.subresourceRange = {VkImageAspectFlags(t.info.kind == VulkanTextureBackend::Kind::D32 ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT),
                                (U32) a.level, 1, layer, 1};
-        VkImageView created;
-        VK_CHECK(vkCreateImageView(mCtx->device, &vi, nullptr, &created));
-        view = t.views.emplace(key, created).first;
+        VK_CHECK(vkCreateImageView(mCtx->device, &vi, nullptr, &found));
+        t.views.emplace(key, found);
     }
-    return {t.image, view->second, t.info.format,
+    if (first) t.aView = found;
+    return {t.image, found, t.info.format,
             {std::max(1u, t.width >> a.level), std::max(1u, t.height >> a.level)},
             VkImageAspectFlags(t.info.kind == VulkanTextureBackend::Kind::D32 ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT),
             a.texture, (U32) a.level, layer};
@@ -232,6 +238,7 @@ void VulkanFramebufferBackend::beginRendering(U32 clearMask)
     info.pColorAttachments = colors;
     info.pDepthAttachment = image.image ? &depth : nullptr;
     ++mCtx->statRenderPasses;
+    ++mCtx->statPassDraws[{mDraw, info.renderArea.extent.width, info.renderArea.extent.height, colorCount()}].second;
     vkCmdBeginRendering(mCtx->slot().cmd, &info);
     if (mCtx->queries) mCtx->queries->beginRendering();
     mRendering = true;

@@ -30,6 +30,8 @@
 #include <exception>
 #include "llgl.h"
 #include <algorithm>
+#include <mutex>
+#include <set>
 
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
 #include "vulkan/vkcontext.h"
@@ -38,12 +40,60 @@
 #include "vulkan/vktexturebackend.h"
 #include "vulkan/vkframebufferbackend.h"
 #include "vulkan/vkquerybackend.h"
+#include "llrenderbackend_threaded.h"
 namespace
 {
 std::uint32_t sErrors = 0, sWarnings = 0;
+bool sDeferPresentation = false;
 struct NativeRenderer
 {
     VkContext context;
+    // Threaded renderer (on unless FS_VK_RENDER_THREAD=0, doc/vulkan/render-thread-design.md): the viewer's thread talks to proxies and
+    // the render thread owns every real backend call. All of these stay empty when it is switched off.
+    std::unique_ptr<rt::Thread> thread;
+    rt::Shared shared;
+    std::unique_ptr<rt::StateProxy> stateProxy;
+    std::unique_ptr<rt::ShaderProxy> shaderProxy;
+    std::unique_ptr<rt::TextureProxy> textureProxy;
+    std::unique_ptr<rt::FramebufferProxy> framebufferProxy;
+    bool frameActive = false;                // main thread's view of context.recording while threaded
+    std::mutex queryMutex;                   // queries whose begin() is queued but not yet run: their old result must not be reported
+    std::set<std::uint32_t> queryBeginPending;
+    std::uint32_t nextUniformBuffer = 0;     // uniform buffer ids handed out by the main thread while threaded
+    rt::Thread::Stats previousThreadStats;
+    bool beginThreadedFrame(const float clear[4])
+    {
+        if (frameActive) return true;
+        if (!context.headless)
+        {
+            // the same checks VkContext::beginFrame makes before it touches the swapchain
+            RECT client{};
+            if (!IsWindow(context.window) || !GetClientRect(context.window, &client) || IsIconic(context.window) ||
+                client.right <= client.left || client.bottom <= client.top) return false;
+        }
+        frameActive = true;
+        const std::array<float, 4> color{clear[0], clear[1], clear[2], clear[3]};
+        thread->post([ctx = &context, sh = &shared, color] {
+            sh->frameFailed = false;
+            if (!ctx->recording && !ctx->beginFrame(color.data())) sh->frameFailed = true;     // draws of this frame are dropped
+        });
+        return true;
+    }
+    void endThreadedFrame()
+    {
+        if (!frameActive || sDeferPresentation) return;
+        frameActive = false;
+        thread->post([this, t = thread.get()] {
+            if (context.recording)
+            {
+                context.endFrame(false);
+                logFramePacing();
+            }
+            t->frameDone();
+        });
+        thread->frameQueued();
+        thread->throttle(1);     // at most one finished frame waiting for the render thread
+    }
     uint32_t pacingFrames = 0;
     double recordingTotal = 0, recordingMax = 0, fenceTotal = 0, acquireTotal = 0, presentTotal = 0;
     uint64_t previousDraws = 0, previousPasses = 0, previousBarriers = 0, previousSamplerSets = 0;
@@ -92,6 +142,26 @@ struct NativeRenderer
         }
         LL_INFOS("VulkanPacing") << "per frame: draws=" << (context.statDraws-previousDraws)/300.0 << "; render passes=" << (context.statRenderPasses-previousPasses)/300.0
             << "; texture barriers=" << (g_barrierCount-previousBarriers)/300.0 << "; push descriptors=" << context.pushDescriptors << "; narrow barriers=" << g_narrowBarriers << "; new sampler sets=" << (context.statSamplerSets-previousSamplerSets)/300.0 << LL_ENDL;
+        {
+            std::vector<std::pair<std::pair<uint64_t, uint64_t>, std::array<uint32_t, 4>>> byDraws;
+            for (const auto& e : context.statPassDraws) byDraws.emplace_back(e.second, e.first);
+            std::sort(byDraws.rbegin(), byDraws.rend());
+            for (size_t i = 0; i < std::min<size_t>(byDraws.size(), 14); ++i)
+                LL_INFOS("VulkanPacing") << "target fb=" << byDraws[i].second[0] << " " << byDraws[i].second[1] << "x" << byDraws[i].second[2]
+                    << " colors=" << byDraws[i].second[3] << ": draws/frame=" << byDraws[i].first.first / 300.0
+                    << " passes/frame=" << byDraws[i].first.second / 300.0 << LL_ENDL;
+            context.statPassDraws.clear();
+        }
+        if (thread)
+        {
+            const auto& now = thread->stats();     // written by the main thread; a torn read only skews one log line
+            LL_INFOS("VulkanPacing") << "render thread per frame: records=" << (now.posts - previousThreadStats.posts) / 300.0
+                << "; KiB=" << (now.bytes - previousThreadStats.bytes) / 1024.0 / 300.0
+                << "; syncs=" << (now.syncs - previousThreadStats.syncs) / 300.0
+                << "; sync wait ms=" << (now.syncMs - previousThreadStats.syncMs) / 300.0
+                << "; throttle wait ms=" << (now.throttleMs - previousThreadStats.throttleMs) / 300.0 << LL_ENDL;
+            previousThreadStats = now;
+        }
         previousDraws=context.statDraws; previousPasses=context.statRenderPasses; previousBarriers=g_barrierCount; previousSamplerSets=context.statSamplerSets;
         LL_INFOS("VulkanPacing") << "buffer storage alloc/reuse/evict=" << context.bufferAllocations-previousBufferAllocations
             << "/" << context.bufferPoolHits-previousBufferPoolHits << "/" << context.bufferPoolEvictions-previousBufferPoolEvictions << LL_ENDL;
@@ -118,6 +188,7 @@ struct NativeRenderer
     std::unique_ptr<VulkanVertexBufferBackend> vertices;
     ~NativeRenderer()
     {
+        thread.reset();     // runs everything still queued, then joins
         if (context.device) vkDeviceWaitIdle(context.device);
         vertices.reset();
         queries.reset();
@@ -183,6 +254,18 @@ bool activateVulkanRenderBackend(void* instance, void* window, bool validation, 
         candidate->framebuffers = std::make_unique<VulkanFramebufferBackend>(&candidate->context, candidate->state.get());
         candidate->queries = std::make_unique<VulkanQueryBackend>(&candidate->context);
         candidate->vertices = std::make_unique<VulkanVertexBufferBackend>(&candidate->context, candidate->state.get());
+        {
+            const char* threaded = std::getenv("FS_VK_RENDER_THREAD");     // set to 0 to run backend calls on the viewer thread instead
+            if (!(threaded && std::string(threaded) == "0"))
+            {
+                candidate->thread = std::make_unique<rt::Thread>();
+                candidate->stateProxy = std::make_unique<rt::StateProxy>(*candidate->thread, candidate->state.get());
+                candidate->shaderProxy = std::make_unique<rt::ShaderProxy>(*candidate->thread, candidate->shaders.get());
+                candidate->textureProxy = std::make_unique<rt::TextureProxy>(*candidate->thread, candidate->textures.get());
+                candidate->framebufferProxy = std::make_unique<rt::FramebufferProxy>(*candidate->thread, candidate->framebuffers.get());
+                LL_INFOS("VulkanPacing") << "render thread enabled" << LL_ENDL;
+            }
+        }
         LL_INFOS("VulkanQueries") << "GPU timing=" << candidate->queries->supported(GL_TIME_ELAPSED)
             << "; occlusion=" << candidate->queries->supported(GL_ANY_SAMPLES_PASSED)
             << "; precise samples=" << candidate->queries->supported(GL_SAMPLES_PASSED)
@@ -218,11 +301,11 @@ bool isVulkanRenderBackendActive()
     return false;
 #endif
 }
-static bool sDeferPresentation = false;
 void deferRenderBackendPresentation(bool defer) { sDeferPresentation = defer; }
 bool beginRenderBackendFrame(const float clear[4])
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread) return sNative->beginThreadedFrame(clear);
     if (sNative) return sNative->context.recording || sNative->context.beginFrame(clear);
 #endif
     (void)clear;
@@ -231,6 +314,7 @@ bool beginRenderBackendFrame(const float clear[4])
 bool isRenderBackendFrameActive()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread) return sNative->frameActive;
     if (sNative) return sNative->context.recording;
 #endif
     return true;
@@ -238,6 +322,7 @@ bool isRenderBackendFrameActive()
 void endRenderBackendFrame()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread) { sNative->endThreadedFrame(); return; }
     if (sNative && sNative->context.recording && !sDeferPresentation)
     {
         sNative->context.endFrame(false);
@@ -267,28 +352,28 @@ void getRenderBackendValidationCounts(std::uint32_t& errors, std::uint32_t& warn
 LLRenderStateBackend* activeVulkanRenderStateBackend()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
-    if (sNative) return sNative->state.get();
+    if (sNative) return sNative->stateProxy ? static_cast<LLRenderStateBackend*>(sNative->stateProxy.get()) : sNative->state.get();
 #endif
     return nullptr;
 }
 LLShaderBackend* activeVulkanShaderBackend()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
-    if (sNative) return sNative->shaders.get();
+    if (sNative) return sNative->shaderProxy ? static_cast<LLShaderBackend*>(sNative->shaderProxy.get()) : sNative->shaders.get();
 #endif
     return nullptr;
 }
 LLTextureBackend* activeVulkanTextureBackend()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
-    if (sNative) return sNative->textures.get();
+    if (sNative) return sNative->textureProxy ? static_cast<LLTextureBackend*>(sNative->textureProxy.get()) : sNative->textures.get();
 #endif
     return nullptr;
 }
 LLFramebufferBackend* activeVulkanFramebufferBackend()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
-    if (sNative) return sNative->framebuffers.get();
+    if (sNative) return sNative->framebufferProxy ? static_cast<LLFramebufferBackend*>(sNative->framebufferProxy.get()) : sNative->framebuffers.get();
 #endif
     return nullptr;
 }
@@ -297,8 +382,10 @@ LLVertexBufferBackend* createActiveVulkanVertexBufferBackend()
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
     if (sNative)
     {
-        if (sNative->vertices) return sNative->vertices.release();
-        return new VulkanVertexBufferBackend(&sNative->context, sNative->state.get());
+        VulkanVertexBufferBackend* real = sNative->vertices ? sNative->vertices.release()
+            : new VulkanVertexBufferBackend(&sNative->context, sNative->state.get());
+        if (sNative->thread) return new rt::VertexProxy(*sNative->thread, real, &sNative->shared);     // the proxy owns the real backend
+        return real;
     }
 #endif
     return nullptr;
@@ -309,6 +396,7 @@ void configureRenderPipelineCache(const std::string& file, bool writable)
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
     if (sNative)
     {
+        if (sNative->thread) sNative->thread->sync();
         sNative->context.configurePipelineCache(file, writable);
         LL_INFOS("VulkanPipelineCache") << "Loaded bytes=" << sNative->context.pipelineCacheLoadedBytes
             << "; writable=" << writable << "; file=" << file << LL_ENDL;
@@ -319,12 +407,14 @@ void configureRenderPipelineCache(const std::string& file, bool writable)
 void pushSyncPipelines()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread) { sNative->thread->post([ctx = &sNative->context] { ++ctx->syncPipelineScopes; }); return; }
     if (sNative) ++sNative->context.syncPipelineScopes;
 #endif
 }
 void popSyncPipelines()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread) { sNative->thread->post([ctx = &sNative->context] { if (ctx->syncPipelineScopes > 0) --ctx->syncPipelineScopes; }); return; }
     if (sNative && sNative->context.syncPipelineScopes > 0) --sNative->context.syncPipelineScopes;
 #endif
 }
@@ -334,6 +424,7 @@ void waitRenderBackendIdle()
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
     if (sNative)
     {
+        if (sNative->thread) sNative->thread->sync();     // the render thread is idle from here, so this thread may drive the context
         if (sNative->context.recording) sNative->context.flushCommands(VkContext::Stall::Explicit);
         else
         {
@@ -393,6 +484,12 @@ bool initializeVulkanCapabilities(LLGLManager& m)
 std::uint32_t createRenderUniformBuffer()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread)
+    {
+        const auto id=++sNative->nextUniformBuffer;
+        sNative->thread->post([ctx=&sNative->context,id] { ctx->nextUniformBuffer=id; ctx->uniformBuffers.emplace(id, VkContext::UniformBuffer{}); });
+        return id;
+    }
     if (sNative)
     {
         auto& ctx=sNative->context;
@@ -407,6 +504,14 @@ void deleteRenderUniformBuffer(std::uint32_t buffer)
 {
     if (!buffer) return;
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread)
+    {
+        sNative->thread->post([ctx=&sNative->context,buffer] {
+            ctx->uniformBuffers.erase(buffer);
+            for (auto& id:ctx->uniformBindings) if(id==buffer) id=0;
+        });
+        return;
+    }
     if (sNative)
     {
         auto& ctx=sNative->context;
@@ -420,6 +525,19 @@ void deleteRenderUniformBuffer(std::uint32_t buffer)
 void uploadRenderUniformBuffer(std::uint32_t buffer,const void* data,std::size_t bytes)
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread)
+    {
+        sNative->thread->postData(data,bytes,[ctx=&sNative->context,buffer,bytes](const void* copy) {
+            auto it=ctx->uniformBuffers.find(buffer);
+            if(it==ctx->uniformBuffers.end() || bytes>ctx->uniformBlockLimit)
+                throw std::runtime_error("Invalid Vulkan uniform buffer upload");
+            auto& u=it->second;
+            u.data.assign(ctx->uniformBlockLimit,0);
+            if(bytes) memcpy(u.data.data(),copy,bytes);
+            u.frame=0;
+        });
+        return;
+    }
     if (sNative)
     {
         auto& ctx=sNative->context;
@@ -440,6 +558,15 @@ void uploadRenderUniformBuffer(std::uint32_t buffer,const void* data,std::size_t
 void bindRenderUniformBuffer(std::uint32_t binding,std::uint32_t buffer)
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread)
+    {
+        sNative->thread->post([ctx=&sNative->context,binding,buffer] {
+            if(binding>=4 || (buffer && ctx->uniformBuffers.find(buffer)==ctx->uniformBuffers.end()))
+                throw std::runtime_error("Invalid Vulkan uniform buffer binding");
+            ctx->uniformBindings[binding]=buffer;
+        });
+        return;
+    }
     if (sNative)
     {
         auto& ctx=sNative->context;
@@ -469,6 +596,11 @@ void generateRenderQueries(int count, std::uint32_t* ids)
 void deleteRenderQueries(int count, const std::uint32_t* ids)
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread)
+    {
+        if (count>0 && ids) sNative->thread->postData(ids,size_t(count)*sizeof(std::uint32_t),[q=sNative->queries.get(),count](const void* copy) { q->destroy(count,static_cast<const std::uint32_t*>(copy)); });
+        return;
+    }
     if (sNative) { sNative->queries->destroy(count,ids); return; }
 #endif
     glDeleteQueries(count,ids);
@@ -476,6 +608,16 @@ void deleteRenderQueries(int count, const std::uint32_t* ids)
 void beginRenderQuery(std::uint32_t target, std::uint32_t id)
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread)
+    {
+        { std::lock_guard<std::mutex> lock(sNative->queryMutex); sNative->queryBeginPending.insert(id); }
+        sNative->thread->post([n=sNative,target,id] {
+            n->queries->begin(target,id);
+            std::lock_guard<std::mutex> lock(n->queryMutex);
+            n->queryBeginPending.erase(id);
+        });
+        return;
+    }
     if (sNative) { sNative->queries->begin(target,id); return; }
 #endif
     glBeginQuery(target,id);
@@ -483,6 +625,7 @@ void beginRenderQuery(std::uint32_t target, std::uint32_t id)
 void endRenderQuery(std::uint32_t target)
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread) { sNative->thread->post([q=sNative->queries.get(),target] { q->end(target); }); return; }
     if (sNative) { sNative->queries->end(target); return; }
 #endif
     glEndQuery(target);
@@ -492,8 +635,22 @@ void getRenderQuery64(std::uint32_t id, std::uint32_t parameter, unsigned long l
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
     if (sNative)
     {
-        if (parameter==GL_QUERY_RESULT_AVAILABLE) *value=sNative->queries->available(id);
-        else if (parameter==GL_QUERY_RESULT) *value=sNative->queries->result(id);
+        if (parameter==GL_QUERY_RESULT_AVAILABLE)
+        {
+            bool pending=false;
+            if (sNative->thread)
+            {
+                std::lock_guard<std::mutex> lock(sNative->queryMutex);
+                pending=sNative->queryBeginPending.count(id)!=0;     // the finished query it still holds is last frame's
+            }
+            *value=!pending && sNative->queries->available(id);     // locked inside, safe next to the render thread
+        }
+        else if (parameter==GL_QUERY_RESULT)
+        {
+            // a ready result is read as it is; otherwise the frame must have been recorded first, and the read may wait for the GPU
+            if (sNative->thread && !sNative->queries->available(id)) sNative->thread->sync();
+            *value=sNative->queries->result(id);
+        }
         else throw std::runtime_error("Invalid query result parameter");
         return;
     }

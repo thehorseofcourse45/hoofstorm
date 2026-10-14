@@ -2,6 +2,7 @@
 #pragma once
 #include "vkcontext.h"
 #include <memory>
+#include <mutex>
 
 class VulkanQueryBackend
 {
@@ -42,6 +43,7 @@ private:
     Query& object(uint32_t id);
     bool read(Query& query, bool wait);
     VkContext* mCtx;
+    mutable std::recursive_mutex mLock;     // the threaded renderer reads results on the main thread while the render thread records
     std::vector<std::shared_ptr<Page>> mPages;
     std::map<uint32_t, Query> mQueries;
     std::map<uint32_t, uint32_t> mActive;

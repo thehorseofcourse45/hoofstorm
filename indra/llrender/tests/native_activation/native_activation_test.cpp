@@ -255,9 +255,11 @@ int main(int argc, char** argv)
         window->swapBuffers();
         // Worker TLS renderers must not destroy the main renderer's cached Vulkan buffers.
         on_main_thread();
+        waitRenderBackendIdle();     // the byte count is updated by the render thread when threaded; let it settle
         const auto cacheBytes = LLVertexBuffer::getBytesAllocated();
         std::thread worker([] { gGL.shutdown(); });
         worker.join();
+        waitRenderBackendIdle();
         expect("worker renderer exit preserves main-thread cached buffers",LLVertexBuffer::getBytesAllocated()==cacheBytes);
         expect("rendering survives worker renderer exit",frame());
         if(argc>1 && !strcmp(argv[1],"--pacing"))

@@ -25,6 +25,8 @@
 class VulkanTextureBackend final : public LLTextureBackend
 {
 public:
+    // bytes convertForUpload reads from a source of this layout (0 if the format or type is not supported)
+    static size_t sourceBytes(U32 format, U32 type, uint32_t w, uint32_t h, uint32_t count, S32 rowLength);
     explicit VulkanTextureBackend(VkContext* ctx);
     ~VulkanTextureBackend() override;
 
@@ -125,6 +127,7 @@ private:
         VkImageView cView = VK_NULL_HANDLE;
         VkImage cImage = VK_NULL_HANDLE;
         uint32_t cLevels = 0;
+        VkImageView aView = VK_NULL_HANDLE;     // framebuffer attachment view of level 0, layer 0; reset with cView
         S32 cBase = 0, cMax = 0, cSwizzle[4] = {};
     };
 
@@ -149,6 +152,7 @@ private:
     std::unordered_map<U32, Tex> mTextures;       // node based: references stay valid across inserts
     U32 mNext = 1;
     std::array<U32, kUnits> mUnitTex{};
+    std::array<Tex*, kUnits> mUnitPtr{};          // mTextures entry for mUnitTex, null if none; cleared when the texture is deleted
     U32 mActive = 0;
     S32 mRowLength = 0;
     bool mSwapBytes = false;
