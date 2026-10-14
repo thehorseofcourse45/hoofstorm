@@ -1131,6 +1131,7 @@ void LLViewerObjectList::update(LLAgent &agent)
                 objectp->idleUpdate(agent, frame_time);
             }
         }
+        LLVOAvatar::flushDeferredMotions();
     }
     else
     {
@@ -1141,6 +1142,9 @@ void LLViewerObjectList::update(LLAgent &agent)
             llassert(objectp->isActive());
                 objectp->idleUpdate(agent, frame_time);
         }
+
+        // animate the avatars whose motion update idleUpdate() deferred
+        LLVOAvatar::flushDeferredMotions();
 
         //update flexible objects
         LLVolumeImplFlexible::updateClass();

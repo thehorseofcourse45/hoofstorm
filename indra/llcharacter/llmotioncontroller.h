@@ -147,6 +147,7 @@ public:
     void pauseAllMotions();
     void unpauseAllMotions();
     bool isPaused() const { return mPaused; }
+    bool hasLoadingMotions() const { return !mLoadingMotions.empty(); }     // updateMotions() would start asset fetches
     S32 getPausedFrame() const { return mPausedFrame; }
 
     void setTimeStep(F32 step);

@@ -142,6 +142,9 @@ public:
                                                      const EObjectUpdateType update_type,
                                                      LLDataPacker *dp);
     virtual void                idleUpdate(LLAgent &agent, const F64 &time);
+    // Ordinary avatars queue their motion and skeleton update in updateCharacter(); this runs the queue on worker threads
+    // (the calling thread waits) and must be called once after the idle updates of a frame, before anything reads poses.
+    static void                 flushDeferredMotions();
     /*virtual*/ bool            updateLOD();
     bool                        updateJointLODs();
     void                        updateLODRiggedAttachments(void);
@@ -606,6 +609,7 @@ private:
 
     S32         mUpdatePeriod;
     bool        mFarAnimSkipped = false; // this frame's motion update was skipped by the distant-avatar throttle
+    bool        mMotionDeferred = false; // motion and skeleton update queued for flushDeferredMotions() this frame
     S32         mNumInitFaces; //number of faces generated when creating the avatar drawable, does not inculde splitted faces due to long vertex buffer.
 
     // profile handle

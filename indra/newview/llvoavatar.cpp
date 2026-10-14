@@ -137,6 +137,7 @@
 #include "llsidepanelappearance.h"
 #include "llviewermenufile.h"
 #include "llviewernetwork.h"    // [FS:CR] isInSecondlife()
+#include "fsparallelfor.h"
 
 
 extern F32 SPEED_ADJUST_MAX;
@@ -5723,6 +5724,9 @@ bool LLVOAvatar::computeNeedsUpdate()
 // simulator.
 //
 //------------------------------------------------------------------------
+// Avatars whose motion update was deferred this frame; kept alive until flushDeferredMotions().
+static std::vector<LLPointer<LLVOAvatar>> sDeferredMotion;
+
 bool LLVOAvatar::updateCharacter(LLAgent &agent)
 {
     updateDebugText();
@@ -5843,7 +5847,20 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         mFarAnimSkipped = far_skip;
         if (!far_skip)
         {
-            updateMotions(LLCharacter::NORMAL_UPDATE);
+            // Other residents' avatars update their motion and skeleton on worker threads after the idle loop. Not for: yourself
+            // (turn-around and animation triggers rely on running in order), animesh, previews, motions still loading (asset
+            // fetch) and paused controllers.
+            static LLCachedControl<bool> parallel_motion(gSavedSettings, "FSParallelAvatarMotion", true);
+            if (parallel_motion && !isSelf() && !isControlAvatar() && !mIsDummy && mSpecialRenderMode != 1
+                && !mMotionController.hasLoadingMotions() && !mMotionController.isPaused())
+            {
+                mMotionDeferred = true;
+                sDeferredMotion.emplace_back(this);
+            }
+            else
+            {
+                updateMotions(LLCharacter::NORMAL_UPDATE);
+            }
         }
         // Throttle statistics: how many other-avatar updates ran vs were skipped, and how many were beyond the distance.
         static U32 sRan = 0, sSkipped = 0, sFar = 0, sNear = 0; static S32 sLogFrame = 0;
@@ -5881,8 +5898,11 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // Generate footstep sounds when feet hit the ground
     updateFootstepSounds();
 
-    // Update child joints as needed.
-    mRoot->updateWorldMatrixChildren();
+    // Update child joints as needed (deferred avatars do this together with their motions).
+    if (!mMotionDeferred)
+    {
+        mRoot->updateWorldMatrixChildren();
+    }
 
     if (visible)
     {
@@ -5891,6 +5911,29 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     }
 
     return visible;
+}
+
+//static
+void LLVOAvatar::flushDeferredMotions()
+{
+    if (sDeferredMotion.empty())
+    {
+        return;
+    }
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+    // Each task touches only its own avatar's motion controller and skeleton (see doc/vulkan/avatar-parallel-audit.md).
+    auto task = [](size_t i)
+    {
+        LLVOAvatar* avatar = sDeferredMotion[i].get();
+        avatar->updateMotions(LLCharacter::NORMAL_UPDATE);
+        avatar->mRoot->updateWorldMatrixChildren();
+    };
+    FSParallelPool::get().run(sDeferredMotion.size(), task);
+    for (auto& avatar : sDeferredMotion)
+    {
+        avatar->mMotionDeferred = false;
+    }
+    sDeferredMotion.clear();
 }
 
 //-----------------------------------------------------------------------------

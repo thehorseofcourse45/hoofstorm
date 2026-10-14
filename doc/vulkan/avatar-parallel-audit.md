@@ -1,6 +1,6 @@
 # Avatar animation on worker threads: audit
 
-Status: audit only, no code changed. Written 2026-10-14 from `llvoavatar.cpp`, `llmotioncontroller.cpp`, `llkeyframemotion.cpp` and the motion subclasses.
+Status: implemented 2026-10-14 (setting `FSParallelAvatarMotion`, default on; `fsparallelfor.h`, `LLVOAvatar::flushDeferredMotions`). In-world: avatars fine, about 0.5 ms saved on the main thread (motion + matrices 9% -> 4%). Audit written 2026-10-14 from `llvoavatar.cpp`, `llmotioncontroller.cpp`, `llkeyframemotion.cpp` and the motion subclasses.
 
 ## What it could buy
 
