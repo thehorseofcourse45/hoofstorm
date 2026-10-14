@@ -3271,7 +3271,8 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     // animate the character
     // store off last frame's root position to be consistent with camera position
     mLastRootPos = mRoot->getWorldPosition();
-    bool detailed_update = updateCharacter(agent);
+    // On frames where a distant avatar's motions were skipped, its attachments, lip sync and effects need no refresh either.
+    bool detailed_update = updateCharacter(agent) && !mFarAnimSkipped;
 
     static LLUICachedControl<bool> visualizers_in_calls("ShowVoiceVisualizersInCalls", false);
     bool voice_enabled = (visualizers_in_calls || LLVoiceClient::getInstance()->inProximalChannel()) &&
@@ -5725,6 +5726,7 @@ bool LLVOAvatar::computeNeedsUpdate()
 bool LLVOAvatar::updateCharacter(LLAgent &agent)
 {
     updateDebugText();
+    mFarAnimSkipped = false;
 
     if (!mIsBuilt)
     {
@@ -5831,6 +5833,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         const bool far_skip = far_period > 1 && !isSelf() && !isControlAvatar() && !mIsDummy && mDrawable.notNull()
             && mDrawable->mDistanceWRTCamera > far_distance
             && ((LLDrawable::getCurrentFrame() + mID.mData[0]) % far_period) != 0;
+        mFarAnimSkipped = far_skip;
         if (!far_skip)
         {
             updateMotions(LLCharacter::NORMAL_UPDATE);

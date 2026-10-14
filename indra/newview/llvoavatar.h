@@ -605,6 +605,7 @@ private:
     F32         mLastSkinTime; //value of gFrameTimeSeconds at last skin update
 
     S32         mUpdatePeriod;
+    bool        mFarAnimSkipped = false; // this frame's motion update was skipped by the distant-avatar throttle
     S32         mNumInitFaces; //number of faces generated when creating the avatar drawable, does not inculde splitted faces due to long vertex buffer.
 
     // profile handle
