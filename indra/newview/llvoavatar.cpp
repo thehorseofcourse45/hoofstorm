@@ -3865,6 +3865,13 @@ void LLVOAvatar::idleUpdateNameTag(const LLVector3& root_pos_last)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
+    // Distant avatars with an existing tag and no chat or typing refresh it on the frames their animation update is
+    // skipped too (see updateCharacter); a stale tag position or title lasts a few frames at most.
+    if (mFarAnimSkipped && mNameText && !isSelf() && mChats.empty() && !mTyping)
+    {
+        return;
+    }
+
     // update chat bubble
     //--------------------------------------------------------------------
     // draw text label over character's head
@@ -5811,7 +5818,27 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // In some cases, calls updateOrientation() for a lot of the
     // work
     // --------------------------------------------------------------------
-    updateRootPositionAndRotation(agent, speed, was_sit_ground_constrained);
+    // Far away avatars of other residents animate every Nth frame. The motion controller measures elapsed time since
+    // its last update, so a skipped frame costs pose smoothness, not animation speed.
+    static LLCachedControl<U32> far_period(gSavedSettings, "FSDistantAvatarAnimPeriod", 3);
+    static LLCachedControl<F32> far_skip_distance(gSavedSettings, "FSDistantAvatarAnimDistance", 10.f);
+    static LLCachedControl<U32> farther_period(gSavedSettings, "FSFarAvatarAnimPeriod", 6);
+    static LLCachedControl<F32> farther_distance(gSavedSettings, "FSFarAvatarAnimDistance", 25.f);
+    bool far_skip = false;
+    if (far_period > 1 && !isSelf() && !isControlAvatar() && !mIsDummy && mDrawable.notNull()
+        && mDrawable->mDistanceWRTCamera > far_skip_distance)
+    {
+        const F32 dist = mDrawable->mDistanceWRTCamera;
+        const U32 period = (farther_period > far_period && dist > farther_distance) ? (U32) farther_period : (U32) far_period;
+        far_skip = ((LLDrawable::getCurrentFrame() + mID.mData[0]) % period) != 0;
+    }
+
+    // The root position (ground height lookup, orientation) is also redone only on the frames that animate. Standing and
+    // walking avatars only: sitting and ground-sit state change the root through other paths and always update.
+    if (!(far_skip && mTimeLast != 0.f && !getParent() && !isSitting() && !was_sit_ground_constrained))
+    {
+        updateRootPositionAndRotation(agent, speed, was_sit_ground_constrained);
+    }
 
     //-------------------------------------------------------------------------
     // Update character motions
@@ -5833,18 +5860,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         // Might be better to do HIDDEN_UPDATE if cloud
         // Far away avatars of other residents animate every Nth frame. The motion controller measures elapsed time since
         // its last update, so a skipped frame costs pose smoothness, not animation speed.
-        static LLCachedControl<U32> far_period(gSavedSettings, "FSDistantAvatarAnimPeriod", 3);
         static LLCachedControl<F32> far_distance(gSavedSettings, "FSDistantAvatarAnimDistance", 10.f);
-        static LLCachedControl<U32> farther_period(gSavedSettings, "FSFarAvatarAnimPeriod", 6);
-        static LLCachedControl<F32> farther_distance(gSavedSettings, "FSFarAvatarAnimDistance", 25.f);
-        bool far_skip = false;
-        if (far_period > 1 && !isSelf() && !isControlAvatar() && !mIsDummy && mDrawable.notNull()
-            && mDrawable->mDistanceWRTCamera > far_distance)
-        {
-            const F32 dist = mDrawable->mDistanceWRTCamera;
-            const U32 period = (farther_period > far_period && dist > farther_distance) ? (U32) farther_period : (U32) far_period;
-            far_skip = ((LLDrawable::getCurrentFrame() + mID.mData[0]) % period) != 0;
-        }
         mFarAnimSkipped = far_skip;
         if (!far_skip)
         {
