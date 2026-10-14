@@ -1287,8 +1287,9 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
     // NOTE:  a texture may be deleted as a side effect of some of these updates
     // Deletion rules check ref count, so be careful not to hold any LLPointer references to the textures here other than the one in entries.
 
-    //update MIN_UPDATE_COUNT or 5% of other textures, whichever is greater
-    update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size()/20);
+    //update MIN_UPDATE_COUNT or 2.5% of other textures, whichever is greater (was 5%: halves the per-frame priority pass,
+    //a full cycle over all textures takes about twice as many frames)
+    update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size()/40);
     if (LLViewerTexture::sDesiredDiscardBias > 1.f
         && LLViewerTexture::sBiasTexturesUpdated < (U32)mUUIDMap.size())
     {
