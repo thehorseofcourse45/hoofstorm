@@ -5830,9 +5830,16 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         // its last update, so a skipped frame costs pose smoothness, not animation speed.
         static LLCachedControl<U32> far_period(gSavedSettings, "FSDistantAvatarAnimPeriod", 3);
         static LLCachedControl<F32> far_distance(gSavedSettings, "FSDistantAvatarAnimDistance", 10.f);
-        const bool far_skip = far_period > 1 && !isSelf() && !isControlAvatar() && !mIsDummy && mDrawable.notNull()
-            && mDrawable->mDistanceWRTCamera > far_distance
-            && ((LLDrawable::getCurrentFrame() + mID.mData[0]) % far_period) != 0;
+        static LLCachedControl<U32> farther_period(gSavedSettings, "FSFarAvatarAnimPeriod", 6);
+        static LLCachedControl<F32> farther_distance(gSavedSettings, "FSFarAvatarAnimDistance", 25.f);
+        bool far_skip = false;
+        if (far_period > 1 && !isSelf() && !isControlAvatar() && !mIsDummy && mDrawable.notNull()
+            && mDrawable->mDistanceWRTCamera > far_distance)
+        {
+            const F32 dist = mDrawable->mDistanceWRTCamera;
+            const U32 period = (farther_period > far_period && dist > farther_distance) ? (U32) farther_period : (U32) far_period;
+            far_skip = ((LLDrawable::getCurrentFrame() + mID.mData[0]) % period) != 0;
+        }
         mFarAnimSkipped = far_skip;
         if (!far_skip)
         {
@@ -12094,7 +12101,8 @@ bool LLVOAvatar::updateLOD()
         return true;
     }
 
-    bool res = updateJointLODs();
+    // Distant avatars skipped by the animation throttle keep last LOD this frame.
+    bool res = mFarAnimSkipped ? false : updateJointLODs();
 
     LLFace* facep = mDrawable->getFace(0);
     if (!facep || !facep->getVertexBuffer())

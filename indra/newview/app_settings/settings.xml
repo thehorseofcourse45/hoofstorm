@@ -257,6 +257,30 @@
     <real>10.0</real>
   </map>
 
+  <key>FSFarAvatarAnimPeriod</key>
+  <map>
+    <key>Comment</key>
+    <string>Avatars of other residents farther than FSFarAvatarAnimDistance run their animation update only every Nth frame, replacing FSDistantAvatarAnimPeriod for them. 1 disables this second tier.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>U32</string>
+    <key>Value</key>
+    <integer>6</integer>
+  </map>
+
+  <key>FSFarAvatarAnimDistance</key>
+  <map>
+    <key>Comment</key>
+    <string>Distance in meters from the camera beyond which FSFarAvatarAnimPeriod applies.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>25.0</real>
+  </map>
+
   <key>FSAvatarTurnSpeed</key>
   <map>
     <key>Comment</key>
