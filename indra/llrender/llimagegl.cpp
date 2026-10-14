@@ -28,6 +28,7 @@
 // TODO: create 2 classes for images w/ and w/o discard levels?
 
 #include "linden_common.h"
+#include "llrenderbackend.h"
 
 #include "llimagegl.h"
 #include "lltexturebackend.h"
@@ -175,6 +176,7 @@ U32* LLImageGL::sManualScratch = nullptr;
 
 void LLImageGL::checkTexSize(bool forced) const
 {
+    if (isVulkanRenderBackendActive()) return;
     if ((forced || gDebugGL) && mTarget == GL_TEXTURE_2D)
     {
         {
@@ -1857,7 +1859,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
 
     //-----------------------------------------------------------------------------------------------
     GLenum error ;
-    while((error = glGetError()) != GL_NO_ERROR)
+    while(!isVulkanRenderBackendActive() && (error = glGetError()) != GL_NO_ERROR)
     {
         LL_WARNS() << "GL Error happens before reading back texture. Error code: " << error << LL_ENDL ;
     }
@@ -1912,12 +1914,12 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     }
 
     //-----------------------------------------------------------------------------------------------
-    if((error = glGetError()) != GL_NO_ERROR)
+    if(!isVulkanRenderBackendActive() && (error = glGetError()) != GL_NO_ERROR)
     {
         LL_WARNS() << "GL Error happens after reading back texture. Error code: " << error << LL_ENDL ;
         imageraw->deleteData() ;
 
-        while((error = glGetError()) != GL_NO_ERROR)
+        while(!isVulkanRenderBackendActive() && (error = glGetError()) != GL_NO_ERROR)
         {
             LL_WARNS() << "GL Error happens after reading back texture. Error code: " << error << LL_ENDL ;
         }

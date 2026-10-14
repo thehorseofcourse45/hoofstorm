@@ -376,7 +376,7 @@ void LLVertexBuffer::initClass(LLWindow* window)
 {
     llassert(sBackend == nullptr);
 
-    sBackend = createGLVertexBufferBackend();
+    sBackend = createViewerVertexBufferBackend();
 }
 
 //static

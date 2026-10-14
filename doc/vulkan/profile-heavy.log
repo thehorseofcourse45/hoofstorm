@@ -1,0 +1,74 @@
+PID=19760 TID=18940 samples=200
+VALID=200 TOTAL_SUSPEND_MS=354.329 FOREGROUND_SAMPLES=200
+LEAF
+  14   7.00% memmove
+   9   4.50% ZwDelayExecution
+   7   3.50% RtlCreateUnicodeString
+   6   3.00% vk_icdGetInstanceProcAddrSG
+   5   2.50% NtGdiDdDDILock2
+   4   2.00% NtGdiDdDDIWaitForSynchronizationObjectFromCpu
+   4   2.00% LLViewerOctreeGroup::isVisible
+   3   1.50% std::_Hash<std::_Uset_traits<LLVOVolume *,std::_Uhash_compare<LLVOVolume *,std::hash<LLVOVolume *>,std::equal_to<LLVOVolume *> >,std::allocator<LLVOVolume *>,0> >::find
+   3   1.50% std140pack::writeMatrices
+   3   1.50% VulkanTextureBackend::unitDescriptor
+   3   1.50% VulkanFramebufferBackend::prepareSample
+   3   1.50% RtlFreeHeap
+   3   1.50% LLOcclusionCullingGroup::checkOcclusion
+   3   1.50% LLKeyframeMotion::PositionCurve::getValue
+   3   1.50% 0x7ff9ce404d76
+   2   1.00% std::_Hash<std::_Umap_traits<unsigned int,unsigned int,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,unsigned int> >,0> >::find
+   2   1.00% malloc
+   2   1.00% VulkanTextureBackend::viewOf
+   2   1.00% RtlAllocateHeap
+   2   1.00% NtGdiDdDDIUnlock2
+   2   1.00% LLXformMatrix::updateMatrix
+   2   1.00% LLViewerTextureList::updateImageDecodePriority
+   2   1.00% LLVertexBuffer::setBuffer
+   2   1.00% LLSpatialPartition::calcDistance
+   2   1.00% LLSpatialBridge::transformExtents
+   2   1.00% LLPoseBlender::addMotion
+   2   1.00% LLPipeline::stateSort
+   2   1.00% LLParticlePartition::addGeometryCount
+   2   1.00% LLKeyframeMotion::RotationCurve::getValue
+   2   1.00% LLJoint::touch
+   1   0.50% vkResetEvent
+   1   0.50% vkCmdBindPipeline
+   1   0.50% vkCmdBindDescriptorSets
+   1   0.50% std::vector<LLMsgVarData,std::allocator<LLMsgVarData> >::_Emplace_one_at_back<LLMsgVarData>
+   1   0.50% std::map<unsigned int,VulkanTextureBackend::Tex,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,VulkanTextureBackend::Tex> > >::operator[]
+INCLUSIVE
+ 190  95.00% LLAppViewer::frame
+ 190  95.00% LLAppViewer::doFrame
+ 189  94.50% wWinMain
+ 188  94.00% __scrt_common_main_seh
+ 188  94.00% BaseThreadInitThunk
+ 184  92.00% RtlUserThreadStart
+ 121  60.50% display
+  58  29.00% LLAppViewer::idle
+  54  27.00% VulkanVertexBufferBackend::recordCommon
+  54  27.00% LLPipeline::renderGeomDeferred
+  51  25.50% VulkanVertexBufferBackend::drawIndexed
+  51  25.50% LLVertexBuffer::drawRange
+  37  18.50% VkProgram::prepareDraw
+  37  18.50% LLViewerObjectList::update
+  37  18.50% LLVOAvatar::idleUpdate
+  33  16.50% vk_icdGetInstanceProcAddrSG
+  28  14.00% LLPipeline::renderDeferredLighting
+  28  14.00% IcdPresentBuffers
+  26  13.00% LLDrawPoolMaterials::renderDeferred
+  25  12.50% vkResetEvent
+  24  12.00% LLPipeline::renderGeomPostDeferred
+  23  11.50% LLVOAvatar::updateCharacter
+  20  10.00% VulkanTextureBackend::unitDescriptor
+  19   9.50% LLDrawPoolAlpha::renderPostDeferred
+  18   9.00% LLDrawPoolAlpha::renderAlpha
+  15   7.50% LLViewerTextureList::updateImages
+  14   7.00% memmove
+  13   6.50% operator new
+  13   6.50% VkContext::flushCommands
+  13   6.50% LLMotionController::updateMotions
+  12   6.00% LLPipeline::stateSort
+  12   6.00% LLPipeline::doOcclusion
+  12   6.00% LLMotionController::updateMotionsByType
+  11   5.50% LLViewerTextureList::updateImagesCreateTextures
+  11   5.50% LLRenderPass::pushBatch

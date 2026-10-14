@@ -24,6 +24,7 @@
  * $/LicenseInfo$
  */
 #include "linden_common.h"
+#include "llrenderbackend.h"
 #include "lltexturebackend.h"
 
 #include "llworkerthread.h"
@@ -221,7 +222,7 @@ void LLCubeMap::initEnvironmentMap(const std::vector<LLPointer<LLImageRaw> >& ra
     enableTexture(0);
     bind();
     mImages[0]->setFilteringOption(LLTexUnit::TFO_ANISOTROPIC);
-    glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+    if (!isVulkanRenderBackendActive()) glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
     getTextureBackend().generateMipmaps(GL_TEXTURE_CUBE_MAP);
     gGL.getTexUnit(0)->disable();
     disable();

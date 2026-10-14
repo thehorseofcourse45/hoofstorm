@@ -29,6 +29,7 @@
 #if LL_WINDOWS && !LL_MESA_HEADLESS
 
 #include "llwindowwin32.h"
+#include "llrenderbackend.h"
 
 // LLWindow library includes
 #include "llkeyboardwin32.h"
@@ -584,6 +585,7 @@ LLWindowWin32::LLWindowWin32(LLWindowCallbacks* callbacks,
     mKeyVirtualKey = 0;
     mhDC = NULL;
     mhRC = NULL;
+    mWantsVulkan = (flags & LL_WINDOW_VULKAN) != 0;
     memset(mCurrentGammaRamp, 0, sizeof(mCurrentGammaRamp));
     memset(mPrevGammaRamp, 0, sizeof(mPrevGammaRamp));
     mCustomGammaSet = false;
@@ -1007,6 +1009,12 @@ void LLWindowWin32::close()
         return;
     }
 
+    if (mVulkanWindow)
+    {
+        gGLManager.shutdownGL();
+        shutdownRenderBackend();
+        mVulkanWindow = false;
+    }
     mDragDrop->reset();
     clearHighPerformanceGPURequest();
 
@@ -1234,6 +1242,13 @@ bool LLWindowWin32::setSizeImpl(const LLCoordWindow size)
 bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bool enable_vsync, const LLCoordScreen* const posp)
 {
     //called from main thread
+    if (mVulkanWindow)
+    {
+        // Preserve the surface/window while the renderer owns it. Fullscreen recreation is a later integration step.
+        if (fullscreen != mFullscreen) return false;
+        if (posp) setPosition(*posp);
+        return setSizeImpl(size);
+    }
     GLuint  pixel_format;
     DEVMODE dev_mode;
     ::ZeroMemory(&dev_mode, sizeof(DEVMODE));
@@ -1396,6 +1411,23 @@ bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bo
     //-----------------------------------------------------------------------
     // Create GL drawing context
     //-----------------------------------------------------------------------
+    if (mWantsVulkan)
+    {
+        std::string error;
+        mVulkanWindow = activateVulkanRenderBackend(mhInstance, mWindowHandle, gDebugGL, error);
+        if (!mVulkanWindow)
+        {
+            if (isVulkanRenderBackendActive()) return false;
+            LL_WARNS("RenderInit") << "Vulkan startup failed; falling back to OpenGL: " << error << LL_ENDL;
+            mWantsVulkan = false;
+        }
+    }
+    if (mVulkanWindow)
+    {
+        if (!gGLManager.initGL()) { close(); return false; }
+        LL_INFOS("RenderInit") << "Native window renderer: Vulkan; WGL bypassed; validation=" << gDebugGL << LL_ENDL;
+        return finishContextSetup(auto_show);
+    }
     static PIXELFORMATDESCRIPTOR pfd =
     {
         sizeof(PIXELFORMATDESCRIPTOR),
@@ -1800,7 +1832,11 @@ const   S32   max_format  = (S32)num_formats - 1;
 
     // Disable vertical sync for swap
     toggleVSync(enable_vsync);
+    return finishContextSetup(auto_show);
+}
 
+bool LLWindowWin32::finishContextSetup(bool auto_show)
+{
     SetWindowLongPtr(mWindowHandle, GWLP_USERDATA, (LONG_PTR)this);
 
     // register this window as handling drag/drop events from the OS
@@ -1816,7 +1852,7 @@ const   S32   max_format  = (S32)num_formats - 1;
 
     // *HACK: Attempt to prevent startup crashes by deferring memory accounting
     // until after some graphics setup. See SL-20177. -Cosmic,2023-09-18
-    mWindowThread->post([=]()
+    if (!mVulkanWindow) mWindowThread->post([=]()
     {
         mWindowThread->glReady();
     });
@@ -1824,8 +1860,16 @@ const   S32   max_format  = (S32)num_formats - 1;
     if (auto_show)
     {
         show();
-        glClearColor(0.0f, 0.0f, 0.0f, 0.f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        if (mVulkanWindow)
+        {
+            const float clear[4] = {};
+            beginRenderBackendFrame(clear);
+        }
+        else
+        {
+            glClearColor(0.0f, 0.0f, 0.0f, 0.f);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
         swapBuffers();
     }
 
@@ -1948,6 +1992,7 @@ void LLWindowWin32::recreateWindow(RECT window_rect, DWORD dw_ex_style, DWORD dw
 
 void* LLWindowWin32::createSharedContext()
 {
+    if (mVulkanWindow) return nullptr;
     mMaxGLVersion = llclamp(mMaxGLVersion, 3.f, 4.6f);
 
     S32 version_major = llfloor(mMaxGLVersion);
@@ -2015,6 +2060,11 @@ void LLWindowWin32::destroySharedContext(void* contextPtr)
 
 void LLWindowWin32::toggleVSync(bool enable_vsync)
 {
+    if (mVulkanWindow)
+    {
+        LL_INFOS("RenderInit") << "Vulkan swapchain uses FIFO presentation" << LL_ENDL;
+        return;
+    }
     if (wglSwapIntervalEXT == nullptr)
     {
         LL_INFOS("Window") << "VSync: wglSwapIntervalEXT not initialized" << LL_ENDL;
@@ -3960,6 +4010,11 @@ bool LLWindowWin32::resetDisplayResolution()
 
 void LLWindowWin32::swapBuffers()
 {
+    if (mVulkanWindow)
+    {
+        endRenderBackendFrame();
+        return;
+    }
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_WIN32;
         SwapBuffers(mhDC);

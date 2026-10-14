@@ -25,6 +25,7 @@
 #include "vkprogram.h"
 #include "vkshaderbackend.h"
 #include "vktexturebackend.h"
+#include "vkframebufferbackend.h"
 #include "glconsts.h"
 #include "shaderdump.h"
 
@@ -117,8 +118,8 @@ static bool render_frames(VkContext& ctx, bool test, int testFrames, const float
 
         if (!ctx.beginFrame(clear))
         {
-            fprintf(stderr, "swapchain out of date (resizing is not supported by the skeleton)\n");
-            return false;
+            Sleep(10); // minimized or recreating; keep pumping window messages
+            continue;
         }
         draw();
 
@@ -126,7 +127,7 @@ static bool render_frames(VkContext& ctx, bool test, int testFrames, const float
         ctx.endFrame(readBack);
         if (readBack)
         {
-            VK_CHECK(vkWaitForFences(ctx.device, 1, &ctx.frameFence, VK_TRUE, UINT64_MAX));
+            VK_CHECK(vkWaitForFences(ctx.device, 1, &ctx.slot().fence, VK_TRUE, UINT64_MAX));
             return verify();
         }
         ++frame;
@@ -925,7 +926,7 @@ static bool link_all(VkContext& ctx, VulkanShaderBackend& shaders, const std::st
 {
     LLShaderBackend& be = shaders;
     const std::vector<shaderdump::ManifestProgram> manifest = shaderdump::readManifest(dumpDir);
-    int linked = 0, skipped_geometry = 0, failed = 0, reflect_ok = 0, roundtrip_ok = 0, total_uniforms = 0, max_samplers = 0;
+    int linked = 0, failed = 0, reflect_ok = 0, roundtrip_ok = 0, total_uniforms = 0, max_samplers = 0;
     double link_ms = 0.0, load_ms = 0.0;
     size_t blob_bytes = 0;
 
@@ -949,16 +950,6 @@ static bool link_all(VkContext& ctx, VulkanShaderBackend& shaders, const std::st
 
     for (const shaderdump::ManifestProgram& entry : manifest)
     {
-        bool geometry = false;
-        for (const std::string& o : entry.objects)
-        {
-            geometry |= o.size() > 5 && o.compare(o.size() - 5, 5, ".geom") == 0;
-        }
-        if (geometry)
-        {
-            ++skipped_geometry;
-            continue;
-        }
         MappedProgram prog;
         CachedBinary blob;
         if (!create_program(be, dumpDir, entry, nullptr, &blob, prog))
@@ -993,7 +984,7 @@ static bool link_all(VkContext& ctx, VulkanShaderBackend& shaders, const std::st
         be.deleteProgramAndObjects(prog.id);
     }
     (void) ctx;
-    printf("programs in the dump              : %zu (%d with a geometry stage skipped)\n", manifest.size(), skipped_geometry);
+    printf("programs in the dump              : %zu (no stages skipped)\n", manifest.size());
     printf("linked through LLShaderBackend    : %d, failed %d\n", linked, failed);
     printf("reflection consistent             : %d / %d\n", reflect_ok, linked);
     printf("blob round trip identical         : %d / %d\n", roundtrip_ok, linked);
@@ -1003,17 +994,25 @@ static bool link_all(VkContext& ctx, VulkanShaderBackend& shaders, const std::st
     return failed == 0 && reflect_ok == linked && roundtrip_ok == linked && linked > 0;
 }
 
-int main(int argc, char** argv)
+bool test_framebuffers(VkContext&, VulkanRenderStateBackend&, VulkanVertexBufferBackend&,
+                       VulkanShaderBackend&, VulkanTextureBackend&, VulkanFramebufferBackend&);
+
+bool test_window_lifecycle(VkContext&);
+bool test_shaders(VkContext&, VulkanRenderStateBackend&, VulkanVertexBufferBackend&,
+                  VulkanShaderBackend&, VulkanFramebufferBackend&);
+
+static int run(int argc, char** argv)
 {
     bool test = false;
     bool validation = true;
     bool clipControl = true;
-    bool linkAll = false;
+    bool linkAll = false, headless = false;
     int testFrames = 3;
     std::string dumpDir, programName = "UI Shader", scene;
     for (int i = 1; i < argc; ++i)
     {
         if (!strcmp(argv[i], "--test")) test = true;
+        else if (!strcmp(argv[i], "--headless")) { headless = true; test = true; }
         else if (!strcmp(argv[i], "--no-validation")) validation = false;
         else if (!strcmp(argv[i], "--no-depth-clip-control")) clipControl = false;
         else if (!strcmp(argv[i], "--link-all")) linkAll = true;
@@ -1022,9 +1021,25 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--program") && i + 1 < argc) programName = argv[++i];
         else if (!strcmp(argv[i], "--scene") && i + 1 < argc) scene = argv[++i];
     }
+    if (!scene.empty() && scene != "triangle" && scene != "ui" && scene != "textures" && scene != "shader" && scene != "framebuffers" && scene != "window")
+    {
+        fprintf(stderr, "unknown scene: %s\n", scene.c_str());
+        return 1;
+    }
+    if (headless && scene == "window")
+    {
+        fprintf(stderr, "the window lifecycle test requires a presentation surface; omit --headless\n");
+        return 1;
+    }
+    if (scene == "framebuffers" || scene == "window" || scene == "shader") test = true;
     if (linkAll)
     {
         test = true;
+    }
+    if (testFrames < 1)
+    {
+        fprintf(stderr, "--frames must be positive\n");
+        return 1;
     }
     if (scene.empty())
     {
@@ -1051,11 +1066,11 @@ int main(int argc, char** argv)
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     RegisterClassA(&wc);
     RECT rect{0, 0, W, H};
-    AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX), FALSE);
-    HWND hwnd = CreateWindowA("vulkan_skeleton", "Vulkan skeleton: scenes through the backend interfaces",
-                              WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX) | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
+    AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
+    HWND hwnd = headless ? nullptr : CreateWindowA("vulkan_skeleton", "Vulkan skeleton: scenes through the backend interfaces",
+                              WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
                               rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, hinst, nullptr);
-    if (!hwnd)
+    if (!hwnd && !headless)
     {
         fprintf(stderr, "FATAL: cannot create window\n");
         return 1;
@@ -1067,7 +1082,7 @@ int main(int argc, char** argv)
     {
         return 1;
     }
-    printf("swapchain: %ux%u, %zu images, readback %s, validation %s\n", ctx.extent.width, ctx.extent.height,
+    printf("%s: %ux%u, %zu images, readback %s, validation %s\n", headless ? "headless GPU target" : "swapchain", ctx.extent.width, ctx.extent.height,
            ctx.images.size(), ctx.canReadBack ? "yes" : "no", ctx.validation ? "on" : "off");
 
     bool passed = true;
@@ -1076,9 +1091,16 @@ int main(int argc, char** argv)
         VulkanVertexBufferBackend vertexImpl(&ctx, &stateImpl);
         VulkanShaderBackend shaderImpl(&ctx);
         VulkanTextureBackend textureImpl(&ctx);
+        VulkanFramebufferBackend framebufferImpl(&ctx, &stateImpl);
         LLRenderStateBackend& st = stateImpl;       // from here on, only the viewer's interfaces are used
         LLVertexBufferBackend& vb = vertexImpl;
 
+        if (!gQuit && !linkAll && (scene == "shader" || scene == "both"))
+            passed &= test_shaders(ctx, stateImpl, vertexImpl, shaderImpl, framebufferImpl);
+        if (!gQuit && !linkAll && (scene == "window" || scene == "both"))
+            passed &= test_window_lifecycle(ctx);
+        if (!gQuit && !linkAll && (scene == "framebuffers" || scene == "both"))
+            passed &= test_framebuffers(ctx, stateImpl, vertexImpl, shaderImpl, textureImpl, framebufferImpl);
         if (!gQuit && !linkAll && (scene == "textures" || scene == "both"))
         {
             passed &= scene_textures(ctx, st, vb, shaderImpl, textureImpl, test, testFrames, dumpDir);
@@ -1121,7 +1143,7 @@ int main(int argc, char** argv)
         }
     } // the backends are destroyed here, before the context is shut down
     ctx.shutdown();
-    DestroyWindow(hwnd);
+    if (hwnd) DestroyWindow(hwnd);
 
     printf("validation: %u errors, %u warnings\n", ctx.validationErrors, ctx.validationWarnings);
     if (test)
@@ -1131,4 +1153,14 @@ int main(int argc, char** argv)
         return ok ? 0 : 1;
     }
     return 0;
+}
+
+int main(int argc, char** argv)
+{
+    try { return run(argc, argv); }
+    catch (const std::exception& error)
+    {
+        fprintf(stderr, "Vulkan initialization/rendering failed: %s\n", error.what());
+        return 1;
+    }
 }

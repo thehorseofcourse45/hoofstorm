@@ -244,9 +244,3 @@ LLTextureBackend* createGLTextureBackend()
 {
     return new LLGLTextureBackend();
 }
-
-LLTextureBackend& getTextureBackend()
-{
-    static LLTextureBackend* sBackend = createGLTextureBackend();
-    return *sBackend;
-}

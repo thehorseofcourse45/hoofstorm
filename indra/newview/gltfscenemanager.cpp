@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llrenderbackend.h"
 #include "lltexturebackend.h"
 
 #include "gltfscenemanager.h"
@@ -690,10 +691,10 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
 
                 if (!rigged)
                 {
-                    glBindBufferBase(GL_UNIFORM_BUFFER, LLGLSLShader::UB_GLTF_NODES, asset.mNodesUBO);
+                    bindRenderUniformBuffer(LLGLSLShader::UB_GLTF_NODES, asset.mNodesUBO);
                 }
 
-                glBindBufferBase(GL_UNIFORM_BUFFER, LLGLSLShader::UB_GLTF_MATERIALS, asset.mMaterialsUBO);
+                bindRenderUniformBuffer(LLGLSLShader::UB_GLTF_MATERIALS, asset.mMaterialsUBO);
 
                 for (U32 i = 0; i < TEXTURE_TYPE_COUNT; ++i)
                 {
@@ -733,7 +734,7 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
                     LL_PROFILE_ZONE_NAMED_CATEGORY_GLTF("gltfdc - bind skin");
                     llassert(node.mSkin != INVALID_INDEX);
                     Skin& skin = asset.mSkins[node.mSkin];
-                    glBindBufferBase(GL_UNIFORM_BUFFER, LLGLSLShader::UB_GLTF_JOINTS, skin.mUBO);
+                    bindRenderUniformBuffer(LLGLSLShader::UB_GLTF_JOINTS, skin.mUBO);
                 }
                 else
                 {

@@ -26,6 +26,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llrenderbackend.h"
 #include "fsmaniprotatejoint.h"
 #include "llmath.h"
 #include "llgl.h"
@@ -118,7 +119,7 @@ static void renderPulsingSphere(const LLVector3& joint_world_position, const LLC
 
     // Check for OpenGL errors
     GLenum err;
-    while ((err = glGetError()) != GL_NO_ERROR)
+    while (!isVulkanRenderBackendActive() && (err = glGetError()) != GL_NO_ERROR)
     {
         LL_INFOS() << "OpenGL Error: " << err << LL_ENDL;
     }
@@ -163,7 +164,7 @@ static void renderStaticSphere(const LLVector3& joint_world_position, const LLCo
 
     // Check for OpenGL errors
     GLenum err;
-    while ((err = glGetError()) != GL_NO_ERROR)
+    while (!isVulkanRenderBackendActive() && (err = glGetError()) != GL_NO_ERROR)
     {
         LL_INFOS() << "OpenGL Error: " << err << LL_ENDL;
     }

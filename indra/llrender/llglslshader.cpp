@@ -25,6 +25,7 @@
  */
 
 #include "linden_common.h"
+#include "llrenderbackend.h"
 
 #include "llglslshader.h"
 
@@ -126,6 +127,7 @@ struct LLGLSLShaderCompareTimeElapsed
 //static
 void LLGLSLShader::finishProfile(boost::json::value& statsv)
 {
+    if (sCurBoundShaderPtr) sCurBoundShaderPtr->readProfileQuery(false, true);
     sProfileEnabled = false;
 
     if (! statsv.is_null())
@@ -252,44 +254,55 @@ void LLGLSLShader::stopProfile()
 
 void LLGLSLShader::placeProfileQuery(bool for_runtime)
 {
-    if (sProfileEnabled || for_runtime)
+    if (!renderQuerySupported(GL_TIME_ELAPSED) || (!for_runtime &&
+        (!renderQuerySupported(GL_SAMPLES_PASSED) || !renderQuerySupported(GL_PRIMITIVES_GENERATED)))) return;
+    if ((sProfileEnabled || for_runtime) && sCanProfile)
     {
+        if (isVulkanRenderBackendActive() && !isRenderBackendFrameActive()) return;
         if (mTimerQuery == 0)
         {
-            glGenQueries(1, &mSamplesQuery);
-            glGenQueries(1, &mTimerQuery);
-            glGenQueries(1, &mPrimitivesQuery);
+            generateRenderQueries(1, &mSamplesQuery);
+            generateRenderQueries(1, &mTimerQuery);
+            generateRenderQueries(1, &mPrimitivesQuery);
         }
 
-        glBeginQuery(GL_TIME_ELAPSED, mTimerQuery);
+        beginRenderQuery(GL_TIME_ELAPSED, mTimerQuery);
+        mProfileActive = true;
+        mProfileRuntime = for_runtime;
 
         if (!for_runtime)
         {
-            glBeginQuery(GL_SAMPLES_PASSED, mSamplesQuery);
-            glBeginQuery(GL_PRIMITIVES_GENERATED, mPrimitivesQuery);
+            beginRenderQuery(GL_SAMPLES_PASSED, mSamplesQuery);
+            beginRenderQuery(GL_PRIMITIVES_GENERATED, mPrimitivesQuery);
         }
     }
 }
 
 bool LLGLSLShader::readProfileQuery(bool for_runtime, bool force_read)
 {
-    if ((sProfileEnabled || for_runtime) && sCanProfile)
+    if (!mProfileActive && !mProfilePending) return true;
+    for_runtime = mProfileRuntime;
+    if (!renderQuerySupported(GL_TIME_ELAPSED) || (!for_runtime &&
+        (!renderQuerySupported(GL_SAMPLES_PASSED) || !renderQuerySupported(GL_PRIMITIVES_GENERATED)))) return true;
+    if ((sProfileEnabled || for_runtime || mProfileActive || mProfilePending) && sCanProfile)
     {
-        if (!mProfilePending)
+        if (!mProfileActive && !mProfilePending) return true;
+        if (mProfileActive)
         {
-            glEndQuery(GL_TIME_ELAPSED);
+            endRenderQuery(GL_TIME_ELAPSED);
             if (!for_runtime)
             {
-                glEndQuery(GL_SAMPLES_PASSED);
-                glEndQuery(GL_PRIMITIVES_GENERATED);
+                endRenderQuery(GL_SAMPLES_PASSED);
+                endRenderQuery(GL_PRIMITIVES_GENERATED);
             }
+            mProfileActive = false;
             mProfilePending = for_runtime;
         }
 
         if (mProfilePending && for_runtime && !force_read)
         {
             GLuint64 result = 0;
-            glGetQueryObjectui64v(mTimerQuery, GL_QUERY_RESULT_AVAILABLE, &result);
+            getRenderQuery64(mTimerQuery, GL_QUERY_RESULT_AVAILABLE, &result);
 
             if (result != GL_TRUE)
             {
@@ -298,23 +311,23 @@ bool LLGLSLShader::readProfileQuery(bool for_runtime, bool force_read)
         }
 
         GLuint64 time_elapsed = 0;
-        glGetQueryObjectui64v(mTimerQuery, GL_QUERY_RESULT, &time_elapsed);
+        getRenderQuery64(mTimerQuery, GL_QUERY_RESULT, &time_elapsed);
         mTimeElapsed += time_elapsed;
         mProfilePending = false;
 
         if (!for_runtime)
         {
             GLuint64 samples_passed = 0;
-            glGetQueryObjectui64v(mSamplesQuery, GL_QUERY_RESULT, &samples_passed);
+            getRenderQuery64(mSamplesQuery, GL_QUERY_RESULT, &samples_passed);
 
             GLuint64 primitives_generated = 0;
-            glGetQueryObjectui64v(mPrimitivesQuery, GL_QUERY_RESULT, &primitives_generated);
+            getRenderQuery64(mPrimitivesQuery, GL_QUERY_RESULT, &primitives_generated);
             sTotalTimeElapsed += time_elapsed;
 
             sTotalSamplesDrawn += samples_passed;
             mSamplesDrawn += samples_passed;
 
-            U32 tri_count = (U32)primitives_generated / 3;
+            U32 tri_count = isVulkanRenderBackendActive() ? (U32)primitives_generated : (U32)primitives_generated / 3;
 
             mTrianglesDrawn += tri_count;
             sTotalTrianglesDrawn += tri_count;
@@ -360,6 +373,7 @@ void LLGLSLShader::unload()
 
 void LLGLSLShader::unloadInternal()
 {
+    if (mProfileActive || mProfilePending) readProfileQuery(mProfileRuntime, true);
     sInstances.erase(this);
 
     stop_glerror();
@@ -376,18 +390,25 @@ void LLGLSLShader::unloadInternal()
 
     if (mTimerQuery)
     {
-        glDeleteQueries(1, &mTimerQuery);
+        deleteRenderQueries(1, &mTimerQuery);
         mTimerQuery = 0;
     }
 
     if (mSamplesQuery)
     {
-        glDeleteQueries(1, &mSamplesQuery);
+        deleteRenderQueries(1, &mSamplesQuery);
         mSamplesQuery = 0;
     }
 
+    mProfileActive = mProfilePending = false;
+    if (mPrimitivesQuery)
+    {
+        deleteRenderQueries(1, &mPrimitivesQuery);
+        mPrimitivesQuery = 0;
+    }
+
     //hack to make apple not complain
-    glGetError();
+    if (!isVulkanRenderBackendActive()) glGetError();
 
     stop_glerror();
 }
@@ -2049,9 +2070,17 @@ LLUUID LLGLSLShader::hash()
 
     }
     hash_obj.update(&mFeatures, sizeof(LLShaderFeatures));
-    hash_obj.update(gGLManager.mGLVendor);
-    hash_obj.update(gGLManager.mGLRenderer);
-    hash_obj.update(gGLManager.mGLVersionString);
+    const std::string salt = getShaderBackend().programBinaryCacheSalt();
+    if (salt.empty())
+    {
+        hash_obj.update(gGLManager.mGLVendor);
+        hash_obj.update(gGLManager.mGLRenderer);
+        hash_obj.update(gGLManager.mGLVersionString);
+    }
+    else
+    {
+        hash_obj.update(salt);
+    }
     return hash_obj.digest();
 }
 

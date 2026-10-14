@@ -233,6 +233,30 @@
     <integer>1</integer>
   </map>
 
+  <key>FSDistantAvatarAnimPeriod</key>
+  <map>
+    <key>Comment</key>
+    <string>Avatars of other residents farther than FSDistantAvatarAnimDistance run their animation update only every Nth frame (animation speed is kept, the pose just updates less often). 1 disables.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>U32</string>
+    <key>Value</key>
+    <integer>3</integer>
+  </map>
+
+  <key>FSDistantAvatarAnimDistance</key>
+  <map>
+    <key>Comment</key>
+    <string>Distance in meters from the camera beyond which FSDistantAvatarAnimPeriod applies.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>32.0</real>
+  </map>
+
   <key>FSAvatarTurnSpeed</key>
   <map>
     <key>Comment</key>

@@ -139,9 +139,3 @@ LLRenderStateBackend* createGLRenderStateBackend()
 {
     return new LLGLRenderStateBackend();
 }
-
-LLRenderStateBackend& getRenderStateBackend()
-{
-    static LLRenderStateBackend* sBackend = createGLRenderStateBackend();
-    return *sBackend;
-}

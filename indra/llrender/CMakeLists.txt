@@ -18,15 +18,20 @@ set(llrender_SOURCE_FILES
     llfontgl.cpp
     llfontvertexbuffer.cpp
     llfontregistry.cpp
+    llgpubenchmark.cpp
     llgl.cpp
     llglslshader.cpp
     llgltexture.cpp
     llimagegl.cpp
     llpostprocess.cpp
     llrender.cpp
+    llrenderbackend.cpp
+    llrenderbackend_vulkan.cpp
+    llrenderbackendselection.cpp
     llrenderstatebackend_gl.cpp
     llshaderbackend_gl.cpp
     lltexturebackend_gl.cpp
+    llframebufferbackend_gl.cpp
     llrender2dutils.cpp
     llrendernavprim.cpp
     llrendersphere.cpp
@@ -51,6 +56,7 @@ set(llrender_HEADER_FILES
     llfontfreetypesvg.h
     llfontbitmapcache.h
     llfontregistry.h
+    llgpubenchmark.h
     llgl.h
     llglheaders.h
     llglslshader.h
@@ -60,9 +66,12 @@ set(llrender_HEADER_FILES
     llimagegl.h
     llpostprocess.h
     llrender.h
+    llrenderbackendselection.h
+    llrenderbackend.h
     llrenderstatebackend.h
     llshaderbackend.h
     lltexturebackend.h
+    llframebufferbackend.h
     llrender2dutils.h
     llrendernavprim.h
     llrendersphere.h
@@ -117,3 +126,21 @@ target_link_libraries(llrender
         OpenGL::GLU
         )
 
+
+# Building the runtime does not make the incomplete Vulkan viewer path eligible for selection.
+option(LL_VULKAN_RUNTIME "Build the experimental Windows Vulkan runtime" OFF)
+if(LL_VULKAN_RUNTIME)
+    if(NOT WINDOWS)
+        message(FATAL_ERROR "The current Vulkan window runtime requires Windows")
+    endif()
+    add_subdirectory(vulkan)
+    target_compile_definitions(llrender PRIVATE LL_VULKAN_RUNTIME_AVAILABLE=1)
+    target_link_libraries(llrender llvulkan)
+endif()
+
+if(WINDOWS AND LL_VULKAN_RUNTIME)
+    add_executable(viewer_vulkan_activation_test EXCLUDE_FROM_ALL tests/native_activation/native_activation_test.cpp)
+    target_link_libraries(viewer_vulkan_activation_test llrender llwindow)
+    add_executable(viewer_gpu_calibration_test EXCLUDE_FROM_ALL tests/native_activation/calibration_test.cpp)
+    target_link_libraries(viewer_gpu_calibration_test llrender llwindow)
+endif()

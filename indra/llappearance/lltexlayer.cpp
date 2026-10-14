@@ -25,6 +25,7 @@
  */
 
 #include "linden_common.h"
+#include "llframebufferbackend.h"
 #include "lltexturebackend.h"
 
 #include "lltexlayer.h"
@@ -1550,7 +1551,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                         LL_ERRS() << "Failed to allocate temporary memory for morph texture: " << (S32)(mem_size * TEMP_BYTES_PER_PIXEL) << LL_ENDL;
                         return;
                     }
-                    glReadPixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, temp_data);
+                    getFramebufferBackend().readPixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, temp_data);
                     for (size_t pixel = 0; pixel < pixels; pixel++) {
                         alpha_data[pixel] = temp_data[(pixel * TEMP_BYTES_PER_PIXEL) + 3];
                     }

@@ -25,6 +25,8 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llframebufferbackend.h"
+#include "llrenderbackend.h"
 
 #include "llviewerdisplay.h"
 
@@ -169,6 +171,8 @@ void display_startup()
         return;
     }
 
+    const float startupClear[4]={0,0,0,1};
+    if (!beginRenderBackendFrame(startupClear)) return;
     gPipeline.updateGL();
 
     // Written as branch to appease GCC which doesn't like different
@@ -197,7 +201,7 @@ void display_startup()
 
     LLGLState::checkStates();
 
-    glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // | GL_STENCIL_BUFFER_BIT);
+    getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // | GL_STENCIL_BUFFER_BIT);
     LLGLSUIDefault gls_ui;
     gPipeline.disableLights();
 
@@ -214,7 +218,8 @@ void display_startup()
     if (gViewerWindow && gViewerWindow->getWindow())
     gViewerWindow->getWindow()->swapBuffers();
 
-    glClear(GL_DEPTH_BUFFER_BIT);
+    // Vulkan clears depth on the next acquired frame; its presented image is no longer recordable.
+    if (!isVulkanRenderBackendActive()) getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT);
 }
 
 void display_update_camera()
@@ -496,7 +501,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LL_DEBUGS("Window") << "Resizing window" << LL_ENDL;
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Resize Window");
         gGL.flush();
-        glClear(GL_COLOR_BUFFER_BIT);
+        getFramebufferBackend().clear(GL_COLOR_BUFFER_BIT);
         gViewerWindow->getWindow()->swapBuffers();
         LLPipeline::refreshCachedSettings();
         gPipeline.resizeScreenTexture();
@@ -828,7 +833,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         if (LLViewerDynamicTexture::updateAllInstances())
         {
             gGL.setColorMask(true, true);
-            glClear(GL_DEPTH_BUFFER_BIT);
+            getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT);
         }
     }
 
@@ -927,7 +932,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             }
 
             gGL.setColorMask(true, true);
-            glClearColor(0.f, 0.f, 0.f, 0.f);
+            getFramebufferBackend().setClearColor(0.f, 0.f, 0.f, 0.f);
 
             LLGLState::checkStates();
 
@@ -959,7 +964,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
                 LLGLState::checkStates();
             }
-            glClear(GL_DEPTH_BUFFER_BIT);
+            getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT);
         }
 
         //////////////////////////////////////
@@ -1041,8 +1046,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         if(gUseWireframe)
         {
-            glClearColor(0.5f, 0.5f, 0.5f, 0.f);
-            glClear(GL_COLOR_BUFFER_BIT);
+            getFramebufferBackend().setClearColor(0.5f, 0.5f, 0.5f, 0.f);
+            getFramebufferBackend().clear(GL_COLOR_BUFFER_BIT);
         }
 
         LLAppViewer::instance()->pingMainloopTimeout("Display:RenderStart");
@@ -1102,11 +1107,11 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         if (gUseWireframe)
         {
             constexpr F32 g = 0.5f;
-            glClearColor(g, g, g, 1.f);
+            getFramebufferBackend().setClearColor(g, g, g, 1.f);
         }
         else
         {
-            glClearColor(1, 0, 1, 1);
+            getFramebufferBackend().setClearColor(1, 0, 1, 1);
         }
         gPipeline.mRT->deferredScreen.clear();
 
@@ -1340,10 +1345,10 @@ void display_cube_face()
 
     gGL.setColorMask(true, true);
 
-    glClearColor(0.f, 0.f, 0.f, 0.f);
+    getFramebufferBackend().setClearColor(0.f, 0.f, 0.f, 0.f);
     gPipeline.generateSunShadow(*LLViewerCamera::getInstance());
 
-    glClear(GL_DEPTH_BUFFER_BIT); // | GL_STENCIL_BUFFER_BIT);
+    getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT); // | GL_STENCIL_BUFFER_BIT);
 
     {
         LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
@@ -1372,11 +1377,11 @@ void display_cube_face()
     gPipeline.mRT->deferredScreen.bindTarget();
     if (gUseWireframe)
     {
-        glClearColor(0.5f, 0.5f, 0.5f, 1.f);
+        getFramebufferBackend().setClearColor(0.5f, 0.5f, 0.5f, 1.f);
     }
     else
     {
-        glClearColor(1.f, 0.f, 1.f, 1.f);
+        getFramebufferBackend().setClearColor(1.f, 0.f, 1.f, 1.f);
     }
     gPipeline.mRT->deferredScreen.clear();
 
@@ -1988,7 +1993,7 @@ void render_ui_2d()
 
                 LLRect clip_rect(last_rect);
 
-                glClear(GL_COLOR_BUFFER_BIT);
+                getFramebufferBackend().clear(GL_COLOR_BUFFER_BIT);
 
                 gViewerWindow->draw();
             }

@@ -27,7 +27,9 @@
 #include "linden_common.h"
 
 #include "llrender.h"
+#include "llrenderbackend.h"
 #include "lltexturebackend.h"
+#include "llthread.h"
 
 #include "llvertexbuffer.h"
 #include "llrenderstatebackend.h"
@@ -584,6 +586,7 @@ GLint LLTexUnit::getTextureSourceType(eTextureBlendSrc src, bool isAlpha)
 // texture unit based on the currently set active texture in opengl.
 void LLTexUnit::debugTextureUnit(void)
 {
+    if (isVulkanRenderBackendActive()) return;
     if (mIndex < 0) return;
 
     GLint activeTexture;
@@ -815,7 +818,7 @@ LLRender::~LLRender()
 bool LLRender::init(bool needs_vertex_buffer)
 {
 #if LL_WINDOWS
-    if (gGLManager.mHasDebugOutput && gDebugGL)
+    if (!isVulkanRenderBackendActive() && gGLManager.mHasDebugOutput && gDebugGL)
     { //setup debug output callback
         //glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DEBUG_SEVERITY_LOW_ARB, 0, NULL, GL_TRUE);
         glDebugMessageCallback((GLDEBUGPROC) gl_debug_callback, NULL);
@@ -831,10 +834,10 @@ bool LLRender::init(bool needs_vertex_buffer)
     gGL.setCullFace(GL_BACK);
 
     // necessary for reflection maps
-    glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+    if (!isVulkanRenderBackendActive()) glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
 
 #if LL_WINDOWS
-    if (glGenVertexArrays == nullptr)
+    if (!isVulkanRenderBackendActive() && glGenVertexArrays == nullptr)
     {
         return false;
     }
@@ -849,13 +852,16 @@ bool LLRender::init(bool needs_vertex_buffer)
     }
 
     // <FS:Ansariel> Don't ignore OpenGL max line width
-    GLfloat range[2];
-    glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range);
-    stop_glerror();
-    mMaxLineWidthAliased = range[1];
-    glGetFloatv(GL_SMOOTH_LINE_WIDTH_RANGE, range);
-    stop_glerror();
-    mMaxLineWidthSmooth = range[1];
+    if (!isVulkanRenderBackendActive())
+    {
+        GLfloat range[2];
+        glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, range);
+        stop_glerror();
+        mMaxLineWidthAliased = range[1];
+        glGetFloatv(GL_SMOOTH_LINE_WIDTH_RANGE, range);
+        stop_glerror();
+        mMaxLineWidthSmooth = range[1];
+    }
     // </FS:Ansariel>
 
     return true;
@@ -886,6 +892,8 @@ void LLRender::resetVertexBuffer()
 
 void LLRender::shutdown()
 {
+    // The cache belongs to the main renderer; worker TLS destructors run during login.
+    if (isVulkanRenderBackendActive() && on_main_thread()) sVBCache.clear();
     resetVertexBuffer();
 }
 
@@ -1549,6 +1557,7 @@ bool LLRender::verifyTexUnitActive(U32 unitToVerify)
 
 void LLRender::clearErrors()
 {
+    if (isVulkanRenderBackendActive()) return;
     while (glGetError())
     {
         //loop until no more error flags left

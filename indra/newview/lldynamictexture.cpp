@@ -25,6 +25,8 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llrenderbackend.h"
+#include "llframebufferbackend.h"
 
 #include "lldynamictexture.h"
 
@@ -135,7 +137,7 @@ void LLViewerDynamicTexture::preRender(bool clear_depth)
     gGL.setViewport(mOrigin.mX, mOrigin.mY, mFullWidth, mFullHeight);
     if (clear_depth)
     {
-        glClear(GL_DEPTH_BUFFER_BIT);
+        getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT);
     }
 }
 
@@ -183,6 +185,7 @@ void LLViewerDynamicTexture::postRender(bool success)
 //-----------------------------------------------------------------------------
 bool LLViewerDynamicTexture::updateAllInstances()
 {
+    if (!isRenderBackendFrameActive()) return false;
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
 
     sNumRenders = 0;
@@ -222,7 +225,7 @@ bool LLViewerDynamicTexture::updateAllInstances()
                 llassert(dynamicTexture->getFullWidth() <= width);
                 llassert(dynamicTexture->getFullHeight() <= height);
 
-                glClear(GL_DEPTH_BUFFER_BIT);
+                getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT);
 
                 gGL.color4f(1.f, 1.f, 1.f, 1.f);
                 dynamicTexture->setBoundTarget(&renderTarget);

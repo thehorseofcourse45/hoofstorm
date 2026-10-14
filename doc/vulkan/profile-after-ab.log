@@ -1,0 +1,74 @@
+PID=23084 TID=3708 samples=300
+VALID=300 TOTAL_SUSPEND_MS=524.742 FOREGROUND_SAMPLES=300
+LEAF
+  14   4.67% vk_icdGetInstanceProcAddrSG
+  14   4.67% memmove
+  10   3.33% std::map<unsigned int,VulkanTextureBackend::Tex,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,VulkanTextureBackend::Tex> > >::operator[]
+   9   3.00% RtlCreateUnicodeString
+   8   2.67% VulkanTextureBackend::unitDescriptor
+   8   2.67% VulkanFramebufferBackend::imageOf
+   8   2.67% LLKeyframeMotion::RotationCurve::getValue
+   8   2.67% LLKeyframeMotion::PositionCurve::getValue
+   7   2.33% std::_Hash<std::_Uset_traits<LLVOVolume *,std::_Uhash_compare<LLVOVolume *,std::hash<LLVOVolume *>,std::equal_to<LLVOVolume *> >,std::allocator<LLVOVolume *>,0> >::find
+   6   2.00% LLPoseBlender::addMotion
+   6   2.00% LLAvatarJoint::updateLOD
+   5   1.67% std140pack::writeMatrices
+   5   1.67% NtGdiDdDDILock2
+   5   1.67% LLViewerTextureList::updateImageDecodePriority
+   4   1.33% LLXformMatrix::updateMatrix
+   4   1.33% LLSkinningUtil::initSkinningMatrixPalette
+   4   1.33% LLJointStateBlender::blendJointStates
+   4   1.33% LLJoint::touch
+   3   1.00% LLVOAvatar::idleUpdateMisc
+   3   1.00% LLPipeline::postSort
+   2   0.67% std::basic_string<char,std::char_traits<char>,std::allocator<char> >::basic_string<char,std::char_traits<char>,std::allocator<char> >
+   2   0.67% std::_Tree_const_iterator<std::_Tree_val<std::_Tree_simple_types<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,LLSD> > > >::operator++
+   2   0.67% std::_Hash<std::_Umap_traits<unsigned int,unsigned int,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,unsigned int> >,0> >::find
+   2   0.67% std::_Hash<std::_Umap_traits<unsigned __int64,LLVOAvatar::MatrixPaletteCache,std::_Uhash_compare<unsigned __int64,std::hash<unsigned __int64>,std::equal_to<unsigned __int64> >,std::allocator<std::pair<unsigned __int64 const ,LLVOAvatar::MatrixPaletteCache> >,0> >::_Try_emplace<unsigned __int64 const &>
+   2   0.67% free
+   2   0.67% VulkanVertexBufferBackend::recordCommon
+   2   0.67% VulkanFramebufferBackend::object
+   2   0.67% VkProgram::prepareDraw
+   2   0.67% RtlFreeHeap
+   2   0.67% NtGdiDdDDIWaitForSynchronizationObjectFromGpu
+   2   0.67% NtGdiDdDDIWaitForSynchronizationObjectFromCpu
+   2   0.67% NtGdiDdDDISubmitCommand
+   2   0.67% LLVOAvatar::isVisible
+   2   0.67% LLTreeNode<LLViewerOctreeEntry>::getListener
+   2   0.67% LLSpatialBridge::updateDistance
+INCLUSIVE
+ 280  93.33% LLAppViewer::doFrame
+ 279  93.00% wWinMain
+ 279  93.00% __scrt_common_main_seh
+ 279  93.00% LLAppViewer::frame
+ 276  92.00% BaseThreadInitThunk
+ 272  90.67% RtlUserThreadStart
+ 177  59.00% display
+  85  28.33% LLAppViewer::idle
+  82  27.33% LLPipeline::renderGeomDeferred
+  73  24.33% LLVertexBuffer::drawRange
+  70  23.33% VulkanVertexBufferBackend::drawIndexed
+  69  23.00% LLViewerObjectList::update
+  67  22.33% LLVOAvatar::idleUpdate
+  64  21.33% VulkanVertexBufferBackend::recordCommon
+  50  16.67% LLVOAvatar::updateCharacter
+  44  14.67% LLDrawPoolMaterials::renderDeferred
+  38  12.67% LLPipeline::renderDeferredLighting
+  38  12.67% LLMotionController::updateMotions
+  33  11.00% LLMotionController::updateMotionsByType
+  32  10.67% vkResetEvent
+  30  10.00% vk_icdGetInstanceProcAddrSG
+  29   9.67% VkProgram::prepareDraw
+  29   9.67% LLPipeline::renderGeomPostDeferred
+  20   6.67% VulkanVertexBufferBackend::getPipeline
+  20   6.67% LLPipeline::stateSort
+  19   6.33% LLDrawPoolAlpha::renderPostDeferred
+  17   5.67% LLView::drawChildren
+  17   5.67% LLView::drawChild
+  17   5.67% LLRenderPass::pushBatch
+  17   5.67% LLPanel::draw
+  17   5.67% LLLayoutStack::draw
+  17   5.67% LLKeyframeMotion::onUpdate
+  17   5.67% LLKeyframeMotion::applyKeyframes
+  16   5.33% render_ui
+  16   5.33% LLDrawPoolAlpha::renderAlpha

@@ -25,6 +25,8 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llrenderbackend.h"
+#include "llrenderbackendselection.h"
 #include "lltexturebackend.h"
 
 #include "llappviewer.h"
@@ -864,6 +866,15 @@ bool LLAppViewer::init()
 
     setupErrorHandling(mSecondInstance);
 
+    const auto& renderer = getRenderBackendSelection();
+    LL_INFOS("RenderInit") << "Renderer requested: " << renderer.requested
+        << "; selected: " << renderer.selected << LL_ENDL;
+    if (renderer.fallbackReason)
+    {
+        LL_WARNS("RenderInit") << "Renderer fallback: " << renderer.fallbackReason << LL_ENDL;
+    }
+
+
     nd::octree::debug::setOctreeLogFilename( gDirUtilp->getExpandedFilename(LL_PATH_LOGS, "octree.log" ) ); // <FS:ND/> Filename to log octree options to.
     nd::etw::init(); // <FS:ND/> Init event tracing.
 
@@ -1571,6 +1582,8 @@ bool LLAppViewer::frame()
 
 bool LLAppViewer::doFrame()
 {
+    const float renderClear[4]={0,0,0,1};
+    if (isVulkanRenderBackendActive() && !LLApp::isExiting()) beginRenderBackendFrame(renderClear);
     resumeMainloopTimeout("Main:doFrameStart");
 #ifdef LL_DISCORD
     {
@@ -1781,9 +1794,10 @@ bool LLAppViewer::doFrame()
                 pingMainloopTimeout("Main:Display");
                 gGLActive = true;
 
-                display();
-
-                if (LLStartUp::getStartupState() == STATE_STARTED) // <FS:Beq/> FIRE-34590 - Bugsplat caused by updating maps before world is loaded.
+                const float clear[4]={0,0,0,1};
+                const bool drawable=beginRenderBackendFrame(clear);
+                deferRenderBackendPresentation(true);
+                auto updateAuxiliaryViews = [&]()
                 {
                     LLPerfStats::RecordSceneTime T(LLPerfStats::StatType_t::RENDER_IDLE);
                     LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df Snapshot");
@@ -1793,9 +1807,16 @@ bool LLAppViewer::doFrame()
                     LLFloaterSimpleSnapshot::update();
                     LLFloaterFlickr::update(); // <FS:Beq/> FIRE-35002 - Flickr preview not updating whne opened directly from tool tray icon
                     FSFloaterPrimfeed::update(); // <FS:Beq/> Primfeed support
-                    gGLActive = false;
-                }
+                };
+                const bool started = LLStartUp::getStartupState() == STATE_STARTED;
+                // Probe/snapshot passes reuse framebuffer zero: finish them before Vulkan's final window image.
+                if (drawable && started && isVulkanRenderBackendActive()) updateAuxiliaryViews();
+                if (drawable) display();
+                if (drawable && started && !isVulkanRenderBackendActive()) updateAuxiliaryViews();
 
+                deferRenderBackendPresentation(false);
+                endRenderBackendFrame();
+                gGLActive = false;
                 if (LLViewerStatsRecorder::instanceExists())
                 {
                     LLViewerStatsRecorder::instance().idle();
@@ -4106,8 +4127,8 @@ LLSD LLAppViewer::getViewerInfo() const
     info["CONCURRENCY"] = LLSD::Integer(std::thread::hardware_concurrency());    // <FS:Beq> Add hardware concurrency to info
     // Moved hack adjustment to Windows memory size into llsys.cpp
     info["OS_VERSION"] = LLOSInfo::instance().getOSString();
-    info["GRAPHICS_CARD_VENDOR"] = ll_safe_string((const char*)(glGetString(GL_VENDOR)));
-    info["GRAPHICS_CARD"] = ll_safe_string((const char*)(glGetString(GL_RENDERER)));
+    info["GRAPHICS_CARD_VENDOR"] = gGLManager.mGLVendor;
+    info["GRAPHICS_CARD"] = gGLManager.mGLRenderer;
     info["GRAPHICS_CARD_MEMORY"] = LLSD::Integer(gGLManager.mVRAM);
     info["GRAPHICS_CARD_MEMORY_DETECTED"] = gGLManager.mVRAMDetected; // <FS:Beq/> allow detected hardware to be overridden.
 
@@ -4152,7 +4173,7 @@ LLSD LLAppViewer::getViewerInfo() const
 // [RLVa:KB] - Checked: 2010-04-18 (RLVa-1.2.0)
     info["RLV_VERSION"] = (rlv_handler_t::isEnabled()) ? RlvStrings::getVersionAbout() : LLTrans::getString("RLVaStatusDisabled");
 // [/RLVa:KB]
-    info["OPENGL_VERSION"] = ll_safe_string((const char*)(glGetString(GL_VERSION)));
+    info["OPENGL_VERSION"] = gGLManager.mGLVersionString;
     info["LIBCURL_VERSION"] = LLCore::LLHttp::getCURLVersion();
     // Settings
     // <FS:Beq> gViewerWindow can be null on shutdown. Crashes if bugsplatt uses the info

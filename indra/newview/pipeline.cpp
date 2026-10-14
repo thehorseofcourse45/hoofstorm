@@ -25,6 +25,8 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llrenderbackend.h"
+#include "llframebufferbackend.h"
 #include "lltexturebackend.h"
 
 #include "pipeline.h"
@@ -1204,7 +1206,7 @@ void LLPipeline::refreshCachedSettings()
     // </FS:PP>
 
     LLPipeline::sUseOcclusion =
-            (!gUseWireframe
+            (renderQuerySupported(GL_ANY_SAMPLES_PASSED) && !gUseWireframe
             && LLFeatureManager::getInstance()->isFeatureAvailable("UseOcclusion")
             && gSavedSettings.getBOOL("UseOcclusion")) ? 2 : 0;
 
@@ -1672,9 +1674,9 @@ void LLPipeline::createLUTBuffers()
 
     mExposureMap.allocate(1, 1, GL_R16F);
     mExposureMap.bindTarget();
-    glClearColor(1, 1, 1, 0);
+    getFramebufferBackend().setClearColor(1, 1, 1, 0);
     mExposureMap.clear();
-    glClearColor(0, 0, 0, 0);
+    getFramebufferBackend().setClearColor(0, 0, 0, 0);
     mExposureMap.flush();
 
     mLuminanceMap.allocate(256, 256, GL_R16F, false, LLTexUnit::TT_TEXTURE, LLTexUnit::TMG_AUTO);
@@ -3154,7 +3156,7 @@ void LLPipeline::shiftObjects(const LLVector3 &offset)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     assertInitialized();
 
-    glClear(GL_DEPTH_BUFFER_BIT);
+    getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT);
     gDepthDirty = true;
 
     LLVector4a offseta;
@@ -5096,8 +5098,8 @@ void LLPipeline::renderDebug()
                     {
                         const LLColor4 clearColor = gSavedSettings.getColor4("PathfindingNavMeshClear");
                         gGL.setColorMask(true, true);
-                        glClearColor(clearColor.mV[0],clearColor.mV[1],clearColor.mV[2],0);
-                        glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // no stencil -- deprecated | GL_STENCIL_BUFFER_BIT);
+                        getFramebufferBackend().setClearColor(clearColor.mV[0],clearColor.mV[1],clearColor.mV[2],0);
+                        getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // no stencil -- deprecated | GL_STENCIL_BUFFER_BIT);
                         gGL.setColorMask(true, false);
                         gGL.setPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
                     }
@@ -7643,7 +7645,7 @@ void apply_cube_face_rotation(U32 face)
 void validate_framebuffer_object()
 {
     GLenum status;
-    status = glCheckFramebufferStatus(GL_FRAMEBUFFER_EXT);
+    status = getFramebufferBackend().checkStatus();
     switch(status)
     {
         case GL_FRAMEBUFFER_COMPLETE:
@@ -8936,7 +8938,7 @@ void LLPipeline::renderFinalize()
     enableLightsFullbright();
 
     gGL.setColorMask(true, true);
-    glClearColor(0, 0, 0, 0);
+    getFramebufferBackend().setClearColor(0, 0, 0, 0);
 
     static LLCachedControl<bool> has_hdr(gSavedSettings, "RenderHDREnabled", true);
     bool hdr = gGLManager.mGLVersion > 4.05f && has_hdr();
@@ -9460,9 +9462,9 @@ void LLPipeline::renderDeferredLighting()
                 LLGLSLShader& sun_shader = gCubeSnapshot ? gDeferredSunProbeProgram : gDeferredSunProgram;
                 bindDeferredShader(sun_shader, deferred_light_target);
                 mScreenTriangleVB->setBuffer();
-                glClearColor(1, 1, 1, 1);
+                getFramebufferBackend().setClearColor(1, 1, 1, 1);
                 deferred_light_target->clear(GL_COLOR_BUFFER_BIT);
-                glClearColor(0, 0, 0, 0);
+                getFramebufferBackend().setClearColor(0, 0, 0, 0);
 
                 sun_shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES,
                                               (GLfloat)deferred_light_target->getWidth(),
@@ -9486,9 +9488,9 @@ void LLPipeline::renderDeferredLighting()
             LL_PROFILE_GPU_ZONE("soften shadow");
             // blur lightmap
             screen_target->bindTarget();
-            glClearColor(1, 1, 1, 1);
+            getFramebufferBackend().setClearColor(1, 1, 1, 1);
             screen_target->clear(GL_COLOR_BUFFER_BIT);
-            glClearColor(0, 0, 0, 0);
+            getFramebufferBackend().setClearColor(0, 0, 0, 0);
 
             bindDeferredShader(gDeferredBlurLightProgram);
 
@@ -9543,7 +9545,7 @@ void LLPipeline::renderDeferredLighting()
 
         screen_target->bindTarget();
         // clear color buffer here - zeroing alpha (glow) is important or it will accumulate against sky
-        glClearColor(0, 0, 0, 0);
+        getFramebufferBackend().setClearColor(0, 0, 0, 0);
         screen_target->clear(GL_COLOR_BUFFER_BIT);
 
         if (RenderDeferredAtmospheric)
@@ -10050,12 +10052,12 @@ void LLPipeline::doWaterHaze()
 void LLPipeline::doWaterExclusionMask()
 {
     mWaterExclusionMask.bindTarget();
-    glClearColor(1, 1, 1, 1);
+    getFramebufferBackend().setClearColor(1, 1, 1, 1);
     mWaterExclusionMask.clear();
     mWaterExclusionPool->render();
 
     mWaterExclusionMask.flush();
-    glClearColor(0, 0, 0, 0);
+    getFramebufferBackend().setClearColor(0, 0, 0, 0);
 }
 
 void LLPipeline::setupSpotLight(LLGLSLShader& shader, LLDrawable* drawablep)
@@ -11662,7 +11664,8 @@ void LLPipeline::renderRiggedGroups(LLRenderPass* pass, U32 type, bool texture)
 
 void LLPipeline::profileAvatar(LLVOAvatar* avatar, bool profile_attachments)
 {
-    if (gGLManager.mGLVersion < 3.25f)
+    if (gGLManager.mGLVersion < 3.25f || !renderQuerySupported(GL_TIME_ELAPSED) ||
+        (isVulkanRenderBackendActive() && (LLGLSLShader::sProfileEnabled || !isRenderBackendFrameActive())))
     { // profiling requires GL 3.3 or later
         return;
     }
@@ -11943,7 +11946,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
         gGL.loadMatrix(glm::value_ptr(mat));
         set_current_modelview(mat);
 
-        glClearColor(0.0f,0.0f,0.0f,0.0f);
+        getFramebufferBackend().setClearColor(0.0f,0.0f,0.0f,0.0f);
         gGL.setColorMask(true, true);
 
         // get the number of pixels per angle
@@ -12019,8 +12022,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
     { //create alpha mask based on depth buffer (grey out if muted)
         if (LLPipeline::sRenderDeferred)
         {
-            GLuint buff = GL_COLOR_ATTACHMENT0;
-            glDrawBuffers(1, &buff);
+            getFramebufferBackend().setDrawBuffers(1);
         }
 
         LLGLDisable blend(GL_BLEND);

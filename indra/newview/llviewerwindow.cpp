@@ -25,6 +25,9 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llrenderbackend.h"
+#include "llrenderbackendselection.h"
+#include "llframebufferbackend.h"
 #include "llviewerwindow.h"
 
 
@@ -870,7 +873,7 @@ public:
             S32 x_raw = (S32)llround(coord.mX * gViewerWindow->getWindowWidthRaw() / (F32) gViewerWindow->getWindowWidthScaled());
             S32 y_raw = (S32)llround(coord.mY * gViewerWindow->getWindowHeightRaw() / (F32) gViewerWindow->getWindowHeightScaled());
 
-            glReadPixels(x_raw, y_raw, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, color);
+            getFramebufferBackend().readPixels(x_raw, y_raw, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, color);
             addText(xpos, ypos, llformat("Pixel <%1d, %1d> R:%1d G:%1d B:%1d A:%1d", x_raw, y_raw, color[0], color[1], color[2], color[3]));
             ypos += y_inc;
         }
@@ -2025,7 +2028,8 @@ LLViewerWindow::LLViewerWindow(const Params& p)
     F32 max_gl_version = gSavedSettings.getF32("RenderMaxOpenGLVersion");
 
     mWindow = LLWindowManager::createWindow(this,
-        p.title, p.name, p.x, p.y, p.width, p.height, 0,
+        p.title, p.name, p.x, p.y, p.width, p.height,
+        std::string(getRenderBackendSelection().selected) == "vulkan" ? LL_WINDOW_VULKAN : 0,
         p.fullscreen,
         gHeadlessClient,
         gSavedSettings.getBOOL("RenderVSyncEnable"),
@@ -2150,7 +2154,7 @@ LLViewerWindow::LLViewerWindow(const Params& p)
 
     // Init the image list.  Must happen after GL is initialized and before the images that
     // LLViewerWindow needs are requested, as well as before LLViewerMedia starts updating images.
-    LLImageGL::initClass(mWindow, LLViewerTexture::MAX_GL_IMAGE_CATEGORY, false, gSavedSettings.getBOOL("RenderGLMultiThreadedTextures"), gSavedSettings.getBOOL("RenderGLMultiThreadedMedia"));
+    LLImageGL::initClass(mWindow, LLViewerTexture::MAX_GL_IMAGE_CATEGORY, false, !isVulkanRenderBackendActive() && gSavedSettings.getBOOL("RenderGLMultiThreadedTextures"), !isVulkanRenderBackendActive() && gSavedSettings.getBOOL("RenderGLMultiThreadedMedia"));
     gTextureList.init();
     LLViewerTextureManager::init() ;
     gBumpImageList.init();
@@ -5189,7 +5193,7 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
                     gDebugProgram.bind();
                 }
                 gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE); // no textures needed
-                glClearColor(0, 0, 0, 0); // bg black
+                getFramebufferBackend().setClearColor(0, 0, 0, 0); // bg black
                 gGL.setColorMask(true, true); // write color and alpha info
                 gGL.color4f(1.f, 1.f, 1.f, 0.5);
                 gGL.matrixMode(LLRender::MM_MODELVIEW);
@@ -6155,6 +6159,7 @@ bool LLViewerWindow::thumbnailSnapshot(LLImageRaw *raw, S32 preview_width, S32 p
 bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_height,
     bool keep_window_aspect, bool is_texture, bool show_ui, bool show_hud, bool do_rebuild, bool no_post, bool show_balance, LLSnapshotModel::ESnapshotLayerType type, S32 max_size)
 {
+    if (!isRenderBackendFrameActive()) return false;
     if (!raw)
     {
         return false;
@@ -6174,7 +6179,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
     gSnapshotNoPost = no_post;
     gDisplaySwapBuffers = false;
 
-    glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // stencil buffer is deprecated | GL_STENCIL_BUFFER_BIT);
+    getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // stencil buffer is deprecated | GL_STENCIL_BUFFER_BIT);
     setCursor(UI_CURSOR_WAIT);
 
     // Hide all the UI widgets first and draw a frame
@@ -6399,7 +6404,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                     {
                         if (type == LLSnapshotModel::SNAPSHOT_TYPE_COLOR)
                         {
-                            glReadPixels(
+                            getFramebufferBackend().readPixels(
                                      subimage_x_offset, out_y + subimage_y_offset,
                                      read_width, 1,
                                      GL_RGB, GL_UNSIGNED_BYTE,
@@ -6410,7 +6415,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                         else if (type == LLSnapshotModel::SNAPSHOT_TYPE_DEPTH24)
                         {
                             LLPointer<LLImageRaw> depth_line_buffer = new LLImageRaw(read_width, 1, sizeof(GLfloat)); // need to store floating point values
-                            glReadPixels(
+                            getFramebufferBackend().readPixels(
                                          subimage_x_offset, out_y + subimage_y_offset,
                                          read_width, 1,
                                          GL_DEPTH_COMPONENT, GL_FLOAT,
@@ -6444,7 +6449,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                             //LLPointer<LLImageRaw> depth_line_buffer = new LLImageRaw(read_width, 1, sizeof(GL_FLOAT)); // need to store floating point values
                             LLPointer<LLImageRaw> depth_line_buffer = new LLImageRaw(read_width, 1, sizeof(GLfloat)); // need to store floating point values
                             // </FS>
-                            glReadPixels(
+                            getFramebufferBackend().readPixels(
                                          subimage_x_offset, out_y + subimage_y_offset,
                                          read_width, 1,
                                          GL_DEPTH_COMPONENT, GL_FLOAT,
@@ -6534,10 +6539,11 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
 
 bool LLViewerWindow::simpleSnapshot(LLImageRaw* raw, S32 image_width, S32 image_height, const int num_render_passes)
 {
+    if (!isRenderBackendFrameActive()) return false;
     LL_PROFILE_ZONE_SCOPED_CATEGORY_APP;
     gDisplaySwapBuffers = false;
 
-    glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // stencil buffer is deprecated | GL_STENCIL_BUFFER_BIT);
+    getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // stencil buffer is deprecated | GL_STENCIL_BUFFER_BIT);
     setCursor(UI_CURSOR_WAIT);
 
     bool prev_draw_ui = gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI);
@@ -6603,7 +6609,7 @@ bool LLViewerWindow::simpleSnapshot(LLImageRaw* raw, S32 image_width, S32 image_
 
     LLImageDataSharedLock lock(raw);
 
-    glReadPixels(
+    getFramebufferBackend().readPixels(
         0, 0,
         image_width,
         image_height,
@@ -6643,6 +6649,7 @@ void display_cube_face();
 
 bool LLViewerWindow::cubeSnapshot(const LLVector3& origin, LLCubeMapArray* cubearray, S32 cubeIndex, S32 face, F32 near_clip, bool dynamic_render, bool useCustomClipPlane, LLPlane clipPlane)
 {
+    if (!isRenderBackendFrameActive()) return false;
     // NOTE: implementation derived from LLFloater360Capture::capture360Images() and simpleSnapshot
     LL_PROFILE_ZONE_SCOPED_CATEGORY_APP;
     LL_PROFILE_GPU_ZONE("cubeSnapshot");
@@ -6682,7 +6689,7 @@ bool LLViewerWindow::cubeSnapshot(const LLVector3& origin, LLCubeMapArray* cubea
 
     gPipeline.pushRenderTypeMask();
 
-    glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // stencil buffer is deprecated | GL_STENCIL_BUFFER_BIT);
+    getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT); // stencil buffer is deprecated | GL_STENCIL_BUFFER_BIT);
 
     U32 dynamic_render_types[] = {
         LLPipeline::RENDER_TYPE_AVATAR,

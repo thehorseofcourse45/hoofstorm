@@ -1,0 +1,74 @@
+PID=25708 TID=17976 samples=300
+VALID=300 TOTAL_SUSPEND_MS=504.954 FOREGROUND_SAMPLES=300
+LEAF
+  31  10.33% ZwDelayExecution
+  17   5.67% vk_icdGetInstanceProcAddrSG
+   9   3.00% memmove
+   7   2.33% LLJoint::touch
+   6   2.00% std::_Hash<std::_Uset_traits<LLVOVolume *,std::_Uhash_compare<LLVOVolume *,std::hash<LLVOVolume *>,std::equal_to<LLVOVolume *> >,std::allocator<LLVOVolume *>,0> >::find
+   6   2.00% std140pack::writeMatrices
+   6   2.00% NtGdiDdDDILock2
+   6   2.00% LLPoseBlender::addMotion
+   6   2.00% LLPipeline::postSort
+   5   1.67% VkProgram::prepareDraw
+   5   1.67% RtlQueryPerformanceCounter
+   5   1.67% RtlCreateUnicodeString
+   5   1.67% LLKeyframeMotion::RotationCurve::getValue
+   4   1.33% VulkanFramebufferBackend::imageOf
+   4   1.33% RtlFreeHeap
+   4   1.33% RtlDelayExecution
+   4   1.33% LLSkinningUtil::initSkinningMatrixPalette
+   4   1.33% LLAvatarJoint::updateLOD
+   3   1.00% boost::serialization::singleton<std::set<boost::serialization::void_cast_detail::void_caster const * __ptr64,boost::serialization::void_cast_detail::void_caster_compare,std::allocator<boost::serialization::void_cast_detail::void_caster const * __ptr64> > >::is_destroyed
+   3   1.00% boost::serialization::singleton<boost::serialization::extended_type_info_typeid<SC_INPUT> >::singleton<boost::serialization::extended_type_info_typeid<SC_INPUT> >
+   3   1.00% LLVOAvatar::isTextureDefined
+   3   1.00% LLTreeNode<LLViewerOctreeEntry>::getListener
+   3   1.00% LLPose::setWeight
+   3   1.00% LLOcclusionCullingGroup::checkOcclusion
+   2   0.67% std::_Tree_const_iterator<std::_Tree_val<std::_Tree_simple_types<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,LLSD> > > >::operator++
+   2   0.67% std::_Hash<std::_Umap_traits<unsigned int,VulkanTextureBackend::Tex,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,VulkanTextureBackend::Tex> >,0> >::_Try_emplace<unsigned int const &>
+   2   0.67% getRenderStateBackend
+   2   0.67% VulkanVertexBufferBackend::recordCommon
+   2   0.67% NtGdiDdDDIUnlock2
+   2   0.67% LLXformMatrix::updateMatrix
+   2   0.67% LLXformMatrix::update
+   2   0.67% LLViewerOctreeEntryData::getGroup
+   2   0.67% LLVertexBuffer::setBuffer
+   2   0.67% LLVOAvatar::idleUpdateMisc
+   2   0.67% LLVOAvatar::idleUpdate
+INCLUSIVE
+ 288  96.00% LLAppViewer::frame
+ 288  96.00% LLAppViewer::doFrame
+ 285  95.00% wWinMain
+ 283  94.33% __scrt_common_main_seh
+ 282  94.00% BaseThreadInitThunk
+ 279  93.00% RtlUserThreadStart
+ 200  66.67% display
+  95  31.67% LLVertexBuffer::drawRange
+  93  31.00% VulkanVertexBufferBackend::drawIndexed
+  78  26.00% VulkanVertexBufferBackend::recordCommon
+  76  25.33% LLPipeline::renderGeomDeferred
+  75  25.00% LLAppViewer::idle
+  74  24.67% vk_icdGetInstanceProcAddrSG
+  68  22.67% LLPipeline::renderDeferredLighting
+  67  22.33% LLPipeline::renderGeomPostDeferred
+  62  20.67% LLViewerObjectList::update
+  61  20.33% LLVOAvatar::idleUpdate
+  59  19.67% VkProgram::prepareDraw
+  59  19.67% LLDrawPoolAlpha::renderPostDeferred
+  58  19.33% LLDrawPoolAlpha::renderAlpha
+  58  19.33% IcdPresentBuffers
+  46  15.33% LLVOAvatar::updateCharacter
+  43  14.33% LLDrawPoolMaterials::renderDeferred
+  41  13.67% VkContext::flushCommands
+  39  13.00% vkResetEvent
+  35  11.67% SleepEx
+  35  11.67% RtlDelayExecution
+  31  10.33% ZwDelayExecution
+  30  10.00% LLMotionController::updateMotions
+  28   9.33% LLMotionController::updateMotionsByType
+  24   8.00% LLDrawPoolAlpha::forwardRender
+  16   5.33% render_ui
+  16   5.33% LLPipeline::stateSort
+  16   5.33% LLPipeline::doOcclusion
+  13   4.33% LLPipeline::postSort

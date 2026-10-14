@@ -83,6 +83,8 @@ public:
 
     // --- program binary cache (optional; supportsProgramBinary() == false disables it) ---------------
     virtual bool supportsProgramBinary() const = 0;
+    // Empty preserves the existing GL keys; other APIs include their compiler/translator identity.
+    virtual std::string programBinaryCacheSalt() const { return {}; }
     // Ask the API to keep a retrievable binary when linking. Call before link().
     virtual void setProgramBinaryRetrievable(U32 program) = 0;
     // True if the program is linked after loading the binary.

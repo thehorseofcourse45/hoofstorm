@@ -25,6 +25,7 @@
  */
 
 #include "linden_common.h"
+#include "llrenderbackend.h"
 #include "llshadermgr.h"
 #include "llshaderbackend.h"
 #include "llrender.h"
@@ -504,7 +505,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
 
     GLenum error = GL_NO_ERROR;
 
-    error = glGetError();
+    error = isVulkanRenderBackendActive() ? GL_NO_ERROR : glGetError();
     if (error != GL_NO_ERROR)
     {
         LL_SHADER_LOADING_WARNS() << "GL ERROR entering loadShaderFile(): " << error << " for file: " << filename << LL_ENDL;
@@ -999,12 +1000,22 @@ void LLShaderMgr::initShaderCache(bool enabled, const LLUUID& old_cache_version,
     LL_PROFILE_ZONE_SCOPED;
     LL_INFOS("ShaderMgr") << "Initializing shader cache" << LL_ENDL;
 
-    mShaderCacheEnabled = gGLManager.mGLVersion >= 4.09 && enabled && !shader_dump_dir();
+    mShaderCacheEnabled = (gGLManager.mGLVersion >= 4.09 || !getShaderBackend().programBinaryCacheSalt().empty())
+        && getShaderBackend().supportsProgramBinary() && enabled && !shader_dump_dir();
     LL_INFOS("ShaderMgr") << "Shader cache " << (mShaderCacheEnabled ? "enabled" : "disabled")
                           << (shader_dump_dir() ? " (FS_SHADER_DUMP_DIR is set)" : "") << LL_ENDL;
 
-    if(!mShaderCacheEnabled || mShaderCacheVersion.notNull())
+    if (!mShaderCacheEnabled)
+    {
+        configureRenderPipelineCache("", false);
         return;
+    }
+    if (mShaderCacheVersion.notNull())
+    {
+        LLFile::mkdir(mShaderCacheDir);
+        configureRenderPipelineCache(gDirUtilp->add(mShaderCacheDir, "vulkan-pipelines.bin"), !second_instance);
+        return;
+    }
 
     mShaderCacheVersion = current_cache_version;
 
@@ -1062,6 +1073,8 @@ void LLShaderMgr::initShaderCache(bool enabled, const LLUUID& old_cache_version,
             }
         }
     }
+    LLFile::mkdir(mShaderCacheDir);
+    configureRenderPipelineCache(gDirUtilp->add(mShaderCacheDir, "vulkan-pipelines.bin"), !second_instance);
 }
 
 void LLShaderMgr::clearShaderCache()

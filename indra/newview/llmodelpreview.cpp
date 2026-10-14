@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llframebufferbackend.h"
 
 #include "llmodelpreview.h"
 
@@ -4694,7 +4695,7 @@ bool LLModelPreview::render()
 
             if (show_physics)
             {
-                glClear(GL_DEPTH_BUFFER_BIT);
+                getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT);
 
                 for (U32 pass = 0; pass < 2; pass++)
                 {

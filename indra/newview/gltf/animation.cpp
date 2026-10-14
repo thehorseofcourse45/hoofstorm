@@ -25,6 +25,7 @@
  */
 
 #include "../llviewerprecompiledheaders.h"
+#include "llrenderbackend.h"
 
 #include "asset.h"
 #include "buffer_util.h"
@@ -395,7 +396,7 @@ Skin::~Skin()
 {
     if (mUBO)
     {
-        glDeleteBuffers(1, &mUBO);
+        deleteRenderUniformBuffer(mUBO);
     }
 }
 
@@ -408,7 +409,7 @@ void Skin::uploadMatrixPalette(Asset& asset)
 
     if (mUBO == 0)
     {
-        glGenBuffers(1, &mUBO);
+        mUBO = createRenderUniformBuffer();
     }
 
     size_t joint_count = llmin<size_t>(max_joints, mJoints.size());
@@ -452,9 +453,7 @@ void Skin::uploadMatrixPalette(Asset& asset)
         mp[idx + 11] = m[14];
     }
 
-    glBindBuffer(GL_UNIFORM_BUFFER, mUBO);
-    glBufferData(GL_UNIFORM_BUFFER, glmp.size() * sizeof(F32), glmp.data(), GL_STREAM_DRAW);
-    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    uploadRenderUniformBuffer(mUBO, glmp.data(), glmp.size() * sizeof(F32));
 }
 
 bool Skin::prep(Asset& asset)

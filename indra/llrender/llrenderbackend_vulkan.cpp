@@ -1,0 +1,513 @@
+/**
+ * @file llrenderbackend.cpp
+ * @brief Viewer startup backend selection
+ *
+ * $LicenseInfo:firstyear=2026&license=viewerlgpl$
+ * Second Life Viewer Source Code
+ * Copyright (C) 2026, Linden Research, Inc.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation;
+ * version 2.1 of the License only.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ *
+ * Linden Research, Inc., 945 Battery Street, San Francisco, CA  94111  USA
+ * $/LicenseInfo$
+ */
+
+#include "linden_common.h"
+#include "llrenderbackend.h"
+#include <memory>
+#include <exception>
+#include "llgl.h"
+#include <algorithm>
+
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+#include "vulkan/vkcontext.h"
+#include "vulkan/vkbackends.h"
+#include "vulkan/vkshaderbackend.h"
+#include "vulkan/vktexturebackend.h"
+#include "vulkan/vkframebufferbackend.h"
+#include "vulkan/vkquerybackend.h"
+namespace
+{
+std::uint32_t sErrors = 0, sWarnings = 0;
+struct NativeRenderer
+{
+    VkContext context;
+    uint32_t pacingFrames = 0;
+    double recordingTotal = 0, recordingMax = 0, fenceTotal = 0, acquireTotal = 0, presentTotal = 0;
+    uint64_t previousDraws = 0, previousPasses = 0, previousBarriers = 0, previousSamplerSets = 0;
+    uint64_t previousBlocking = 0, previousRenames = 0, previousPipelines = 0, previousSkipped = 0;
+    double previousPipelineMs = 0, gpuTotal = 0, gpuMax = 0;
+    std::array<uint64_t,VkContext::stallKinds> previousStalls{};
+    std::array<double,VkContext::stallKinds> previousStallMs{};
+    uint64_t previousTextureUploadAllocations=0, previousTextureRingUploads=0;
+    uint64_t previousCacheHits=0, previousBufferAllocations=0, previousBufferPoolHits=0, previousBufferPoolEvictions=0;
+    std::array<std::array<double,300>,5> samples{};
+    void logFramePacing()
+    {
+        samples[0][pacingFrames]=context.lastRecordingMs;
+        samples[1][pacingFrames]=context.lastFenceWaitMs;
+        samples[2][pacingFrames]=context.lastAcquireWaitMs;
+        samples[3][pacingFrames]=context.lastPresentMs;
+        samples[4][pacingFrames]=context.lastGpuMs;
+        ++pacingFrames;
+        gpuTotal += context.lastGpuMs; gpuMax = std::max(gpuMax, context.lastGpuMs);
+        recordingTotal += context.lastRecordingMs;
+        recordingMax = std::max(recordingMax, context.lastRecordingMs);
+        fenceTotal += context.lastFenceWaitMs;
+        acquireTotal += context.lastAcquireWaitMs;
+        presentTotal += context.lastPresentMs;
+        if (pacingFrames != 300) return;
+        for (auto& values:samples) std::sort(values.begin(),values.end());
+        LL_INFOS("VulkanPacing") << "300 frames; recording avg/max ms=" << recordingTotal/300 << "/" << recordingMax
+            << "; fence/acquire/present avg ms=" << fenceTotal/300 << "/" << acquireTotal/300 << "/" << presentTotal/300
+            << "; GPU avg/max ms=" << gpuTotal/300 << "/" << gpuMax
+            << "; blocking submits=" << context.blockingSubmissions-previousBlocking
+            << "; buffer versions=" << context.bufferRenames-previousRenames
+            << "; pipelines=" << context.pipelinesCreated-previousPipelines
+            << "; draws skipped for pending pipelines=" << context.pipelineDrawsSkipped-previousSkipped
+            << "; feedback substitutions=" << context.feedbackSubstitutions
+            << "; frames in flight=" << context.slotCount
+            << "; pipeline build ms=" << context.pipelineCreationMs-previousPipelineMs
+            << "; cache hits=" << context.pipelineCacheHits-previousCacheHits
+            << "; recording/fence/acquire/present/GPU p95 ms=" << samples[0][284] << "/" << samples[1][284]
+            << "/" << samples[2][284] << "/" << samples[3][284] << "/" << samples[4][284]
+            << "; fence/acquire/present max ms=" << samples[1][299] << "/" << samples[2][299] << "/" << samples[3][299] << LL_ENDL;
+        static const char* names[]={"readback","query","uniform-ring","buffer-reuse","upload","explicit"};
+        for (size_t i=0;i<VkContext::stallKinds;++i)
+        {
+            LL_INFOS("VulkanPacing") << "blocking " << names[i] << "; calls=" << context.stallCounts[i]-previousStalls[i]
+                << "; total ms=" << context.stallMs[i]-previousStallMs[i] << LL_ENDL;
+        }
+        LL_INFOS("VulkanPacing") << "per frame: draws=" << (context.statDraws-previousDraws)/300.0 << "; render passes=" << (context.statRenderPasses-previousPasses)/300.0
+            << "; texture barriers=" << (g_barrierCount-previousBarriers)/300.0 << "; push descriptors=" << context.pushDescriptors << "; narrow barriers=" << g_narrowBarriers << "; new sampler sets=" << (context.statSamplerSets-previousSamplerSets)/300.0 << LL_ENDL;
+        previousDraws=context.statDraws; previousPasses=context.statRenderPasses; previousBarriers=g_barrierCount; previousSamplerSets=context.statSamplerSets;
+        LL_INFOS("VulkanPacing") << "buffer storage alloc/reuse/evict=" << context.bufferAllocations-previousBufferAllocations
+            << "/" << context.bufferPoolHits-previousBufferPoolHits << "/" << context.bufferPoolEvictions-previousBufferPoolEvictions << LL_ENDL;
+        previousBufferAllocations=context.bufferAllocations; previousBufferPoolHits=context.bufferPoolHits;
+        previousBufferPoolEvictions=context.bufferPoolEvictions;
+        LL_INFOS("VulkanPacing") << "texture staging alloc/ring=" << context.textureUploadAllocations-previousTextureUploadAllocations
+            << "/" << context.textureRingUploads-previousTextureRingUploads << LL_ENDL;
+        previousTextureUploadAllocations=context.textureUploadAllocations; previousTextureRingUploads=context.textureRingUploads;
+        previousStalls=context.stallCounts; previousStallMs=context.stallMs;
+        previousCacheHits=context.pipelineCacheHits;
+        previousBlocking = context.blockingSubmissions;
+        previousRenames = context.bufferRenames;
+        previousPipelines = context.pipelinesCreated;
+        previousSkipped = context.pipelineDrawsSkipped;
+        previousPipelineMs = context.pipelineCreationMs;
+        pacingFrames = 0;
+        recordingTotal = recordingMax = fenceTotal = acquireTotal = presentTotal = gpuTotal = gpuMax = 0;
+    }
+    std::unique_ptr<VulkanRenderStateBackend> state;
+    std::unique_ptr<VulkanShaderBackend> shaders;
+    std::unique_ptr<VulkanTextureBackend> textures;
+    std::unique_ptr<VulkanFramebufferBackend> framebuffers;
+    std::unique_ptr<VulkanQueryBackend> queries;
+    std::unique_ptr<VulkanVertexBufferBackend> vertices;
+    ~NativeRenderer()
+    {
+        if (context.device) vkDeviceWaitIdle(context.device);
+        vertices.reset();
+        queries.reset();
+        framebuffers.reset();
+        textures.reset();
+        shaders.reset();
+        state.reset();
+        context.shutdown();
+        sErrors = context.validationErrors;
+        sWarnings = context.validationWarnings;
+    }
+};
+NativeRenderer* sNative = nullptr;
+}
+#endif
+
+bool activateVulkanRenderBackend(void* instance, void* window, bool validation, std::string& error)
+{
+    error.clear();
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative)
+    {
+        if (sNative->context.window == window) return true;
+        error = "A Vulkan renderer already owns another window";
+        return false;
+    }
+    if (renderBackendObjectsCreated())
+    {
+        error = "Backend objects already exist; startup API cannot be changed";
+        return false;
+    }
+    if (wglGetCurrentContext())
+    {
+        error = "An OpenGL context is already current; startup API cannot be changed";
+        return false;
+    }
+    if (!instance || !window || !IsWindow((HWND)window))
+    {
+        error = "Vulkan activation requires a valid native instance and window";
+        return false;
+    }
+    try
+    {
+        auto candidate = std::make_unique<NativeRenderer>();
+        {
+            // two frames in flight unless FS_VK_FRAMES_IN_FLIGHT says otherwise
+            const char* frames = std::getenv("FS_VK_FRAMES_IN_FLIGHT");
+            candidate->context.requestedFramesInFlight = frames ? (unsigned) std::atoi(frames) : 2u;
+        }
+        if (!candidate->context.init((HINSTANCE)instance, (HWND)window, validation))
+        {
+            error = "Vulkan context initialization failed";
+            return false;
+        }
+        if (validation && !candidate->context.validation)
+        {
+            error = "Requested Vulkan validation layer is unavailable";
+            return false;
+        }
+        candidate->state = std::make_unique<VulkanRenderStateBackend>();
+        candidate->shaders = std::make_unique<VulkanShaderBackend>(&candidate->context);
+        candidate->textures = std::make_unique<VulkanTextureBackend>(&candidate->context);
+        candidate->framebuffers = std::make_unique<VulkanFramebufferBackend>(&candidate->context, candidate->state.get());
+        candidate->queries = std::make_unique<VulkanQueryBackend>(&candidate->context);
+        candidate->vertices = std::make_unique<VulkanVertexBufferBackend>(&candidate->context, candidate->state.get());
+        LL_INFOS("VulkanQueries") << "GPU timing=" << candidate->queries->supported(GL_TIME_ELAPSED)
+            << "; occlusion=" << candidate->queries->supported(GL_ANY_SAMPLES_PASSED)
+            << "; precise samples=" << candidate->queries->supported(GL_SAMPLES_PASSED)
+            << "; primitive statistics=" << candidate->queries->supported(GL_PRIMITIVES_GENERATED) << LL_ENDL;
+        // Publish only after the context and the complete backend set exist.
+        {
+            const char* strict = std::getenv("FS_VK_STRICT_FEEDBACK");   // set to 1 to abort on render-target feedback
+            candidate->context.tolerateFeedback = !(strict && std::string(strict) == "1");
+            const char* env = std::getenv("FS_VK_ASYNC_PIPELINES");   // set to 0 to build pipelines synchronously
+            candidate->context.asyncPipelines = !(env && std::string(env) == "0");
+        }
+        sNative = candidate.release();
+        sErrors = sWarnings = 0;
+        return true;
+    }
+    catch (const std::exception& failure)
+    {
+        error = failure.what();
+        return false;
+    }
+#else
+    (void)instance; (void)window; (void)validation;
+    error = "Vulkan runtime was not built";
+    return false;
+#endif
+}
+
+bool isVulkanRenderBackendActive()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    return sNative != nullptr;
+#else
+    return false;
+#endif
+}
+static bool sDeferPresentation = false;
+void deferRenderBackendPresentation(bool defer) { sDeferPresentation = defer; }
+bool beginRenderBackendFrame(const float clear[4])
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) return sNative->context.recording || sNative->context.beginFrame(clear);
+#endif
+    (void)clear;
+    return true;
+}
+bool isRenderBackendFrameActive()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) return sNative->context.recording;
+#endif
+    return true;
+}
+void endRenderBackendFrame()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->context.recording && !sDeferPresentation)
+    {
+        sNative->context.endFrame(false);
+        sNative->logFramePacing();
+    }
+#endif
+}
+void shutdownRenderBackend()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (!sNative) return;
+    auto* old = sNative;
+    sNative = nullptr;
+    delete old;
+
+#endif
+}
+void getRenderBackendValidationCounts(std::uint32_t& errors, std::uint32_t& warnings)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    errors = sNative ? sNative->context.validationErrors : sErrors;
+    warnings = sNative ? sNative->context.validationWarnings : sWarnings;
+#else
+    errors = warnings = 0;
+#endif
+}
+LLRenderStateBackend* activeVulkanRenderStateBackend()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) return sNative->state.get();
+#endif
+    return nullptr;
+}
+LLShaderBackend* activeVulkanShaderBackend()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) return sNative->shaders.get();
+#endif
+    return nullptr;
+}
+LLTextureBackend* activeVulkanTextureBackend()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) return sNative->textures.get();
+#endif
+    return nullptr;
+}
+LLFramebufferBackend* activeVulkanFramebufferBackend()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) return sNative->framebuffers.get();
+#endif
+    return nullptr;
+}
+LLVertexBufferBackend* createActiveVulkanVertexBufferBackend()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative)
+    {
+        if (sNative->vertices) return sNative->vertices.release();
+        return new VulkanVertexBufferBackend(&sNative->context, sNative->state.get());
+    }
+#endif
+    return nullptr;
+}
+
+void configureRenderPipelineCache(const std::string& file, bool writable)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative)
+    {
+        sNative->context.configurePipelineCache(file, writable);
+        LL_INFOS("VulkanPipelineCache") << "Loaded bytes=" << sNative->context.pipelineCacheLoadedBytes
+            << "; writable=" << writable << "; file=" << file << LL_ENDL;
+    }
+#endif
+}
+
+void pushSyncPipelines()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) ++sNative->context.syncPipelineScopes;
+#endif
+}
+void popSyncPipelines()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->context.syncPipelineScopes > 0) --sNative->context.syncPipelineScopes;
+#endif
+}
+
+void waitRenderBackendIdle()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative)
+    {
+        if (sNative->context.recording) sNative->context.flushCommands(VkContext::Stall::Explicit);
+        else
+        {
+            const auto start=std::chrono::steady_clock::now();
+            VK_CHECK(vkDeviceWaitIdle(sNative->context.device));
+            sNative->context.recordStall(VkContext::Stall::Explicit,start);
+        }
+        return;
+    }
+#endif
+    glFinish();
+}
+bool initializeVulkanCapabilities(LLGLManager& m)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (!sNative) return false;
+    auto& ctx = sNative->context;
+    VkPhysicalDeviceProperties p{};
+    VkPhysicalDeviceFeatures features{};
+    vkGetPhysicalDeviceProperties(ctx.phys, &p);
+    vkGetPhysicalDeviceFeatures(ctx.phys, &features);
+    m.mIsAMD = p.vendorID == 0x1002;
+    m.mIsNVIDIA = p.vendorID == 0x10de;
+    m.mIsIntel = p.vendorID == 0x8086;
+    m.mGLVendor = m.mGLVendorShort = m.mIsAMD ? "AMD" : m.mIsNVIDIA ? "NVIDIA" : m.mIsIntel ? "INTEL" : "MISC";
+    m.mGLRenderer = p.deviceName;
+    m.mGLVersionString = "Vulkan " + std::to_string(VK_API_VERSION_MAJOR(p.apiVersion)) + "." +
+        std::to_string(VK_API_VERSION_MINOR(p.apiVersion)) + "." + std::to_string(VK_API_VERSION_PATCH(p.apiVersion));
+    m.mDriverVersionVendorString = std::to_string(p.driverVersion);
+    // GLSL source compatibility for the existing viewer source assembler, not a claimed OpenGL context.
+    m.mGLVersion = 4.5f; m.mGLSLVersionMajor = 4; m.mGLSLVersionMinor = 50;
+    m.mDriverVersionMajor = VK_API_VERSION_MAJOR(p.apiVersion);
+    m.mDriverVersionMinor = VK_API_VERSION_MINOR(p.apiVersion);
+    m.mDriverVersionRelease = VK_API_VERSION_PATCH(p.apiVersion);
+    m.mNumTextureImageUnits = std::min(32u, p.limits.maxPerStageDescriptorSamplers);
+    m.mGLMaxTextureSize = p.limits.maxImageDimension2D;
+    m.mGLMaxVertexRange = INT_MAX; m.mGLMaxIndexRange = INT_MAX;
+    m.mMaxUniformBlockSize = std::min(65536u, p.limits.maxUniformBufferRange);
+    m.mMaxVaryingVectors = p.limits.maxVertexOutputComponents / 4;
+    // The viewer renders into single-sample targets; multisample images are not implemented by this backend.
+    m.mMaxSamples = m.mMaxColorTextureSamples = m.mMaxDepthTextureSamples = m.mMaxIntegerSamples = 1;
+    m.mMaxSampleMaskWords = 1;
+    m.mHasCubeMapArray = features.imageCubeArray != 0;
+    m.mHasAnisotropic = ctx.samplerAnisotropy; m.mMaxAnisotropy = ctx.maxAnisotropy;
+    m.mHasDebugOutput = m.mHasTransformFeedback = false;
+    m.mHasAMDAssociations = m.mHasNVXGpuMemoryInfo = m.mHasATIMemInfo = false;
+    std::uint64_t bytes = 0;
+    for (uint32_t i=0;i<ctx.memProps.memoryHeapCount;++i)
+        if (ctx.memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) bytes += ctx.memProps.memoryHeaps[i].size;
+    m.mVRAM = m.mVRAMDetected = static_cast<uint32_t>(bytes / (1024*1024));
+    m.mInited = m.mHasRequirements = true;
+    return true;
+#else
+    (void)m; return false;
+#endif
+}
+std::uint32_t createRenderUniformBuffer()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative)
+    {
+        auto& ctx=sNative->context;
+        const auto id=++ctx.nextUniformBuffer;
+        ctx.uniformBuffers.emplace(id, VkContext::UniformBuffer{});
+        return id;
+    }
+#endif
+    GLuint id=0; glGenBuffers(1,&id); return id;
+}
+void deleteRenderUniformBuffer(std::uint32_t buffer)
+{
+    if (!buffer) return;
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative)
+    {
+        auto& ctx=sNative->context;
+        ctx.uniformBuffers.erase(buffer);
+        for (auto& id:ctx.uniformBindings) if(id==buffer) id=0;
+        return;
+    }
+#endif
+    glDeleteBuffers(1,&buffer);
+}
+void uploadRenderUniformBuffer(std::uint32_t buffer,const void* data,std::size_t bytes)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative)
+    {
+        auto& ctx=sNative->context;
+        auto it=ctx.uniformBuffers.find(buffer);
+        if(it==ctx.uniformBuffers.end() || bytes>ctx.uniformBlockLimit || (bytes && !data))
+            throw std::runtime_error("Invalid Vulkan uniform buffer upload");
+        auto& u=it->second;
+        u.data.assign(ctx.uniformBlockLimit,0);
+        if(bytes) memcpy(u.data.data(),data,bytes);
+        u.frame=0;
+        return;
+    }
+#endif
+    glBindBuffer(GL_UNIFORM_BUFFER,buffer);
+    glBufferData(GL_UNIFORM_BUFFER,bytes,data,GL_STREAM_DRAW);
+    glBindBuffer(GL_UNIFORM_BUFFER,0);
+}
+void bindRenderUniformBuffer(std::uint32_t binding,std::uint32_t buffer)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative)
+    {
+        auto& ctx=sNative->context;
+        if(binding>=4 || (buffer && ctx.uniformBuffers.find(buffer)==ctx.uniformBuffers.end()))
+            throw std::runtime_error("Invalid Vulkan uniform buffer binding");
+        ctx.uniformBindings[binding]=buffer;
+        return;
+    }
+#endif
+    glBindBufferBase(GL_UNIFORM_BUFFER,binding,buffer);
+}
+
+bool renderQuerySupported(std::uint32_t target)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) return sNative->queries->supported(target);
+#endif
+    return true;
+}
+void generateRenderQueries(int count, std::uint32_t* ids)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) { sNative->queries->generate(count,ids); return; }
+#endif
+    glGenQueries(count,ids);
+}
+void deleteRenderQueries(int count, const std::uint32_t* ids)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) { sNative->queries->destroy(count,ids); return; }
+#endif
+    glDeleteQueries(count,ids);
+}
+void beginRenderQuery(std::uint32_t target, std::uint32_t id)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) { sNative->queries->begin(target,id); return; }
+#endif
+    glBeginQuery(target,id);
+}
+void endRenderQuery(std::uint32_t target)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) { sNative->queries->end(target); return; }
+#endif
+    glEndQuery(target);
+}
+void getRenderQuery64(std::uint32_t id, std::uint32_t parameter, unsigned long long* value)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative)
+    {
+        if (parameter==GL_QUERY_RESULT_AVAILABLE) *value=sNative->queries->available(id);
+        else if (parameter==GL_QUERY_RESULT) *value=sNative->queries->result(id);
+        else throw std::runtime_error("Invalid query result parameter");
+        return;
+    }
+#endif
+    glGetQueryObjectui64v(id,parameter,value);
+}
+void getRenderQuery32(std::uint32_t id, std::uint32_t parameter, std::uint32_t* value)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative)
+    {
+        unsigned long long wide=0; getRenderQuery64(id,parameter,&wide);
+        *value=static_cast<std::uint32_t>(std::min(wide,static_cast<unsigned long long>(UINT32_MAX))); return;
+    }
+#endif
+    glGetQueryObjectuiv(id,parameter,value);
+}

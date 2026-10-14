@@ -1,0 +1,74 @@
+PID=16768 TID=30812 samples=200
+VALID=200 TOTAL_SUSPEND_MS=332.805 FOREGROUND_SAMPLES=41
+LEAF
+  72  36.00% ZwDelayExecution
+   9   4.50% NtGdiDdDDIFreeGpuVirtualAddress
+   6   3.00% ZwWaitForMultipleObjects
+   5   2.50% vk_icdGetInstanceProcAddrSG
+   4   2.00% RtlFreeHeap
+   4   2.00% NtGdiDdDDIWaitForSynchronizationObjectFromCpu
+   3   1.50% std::map<unsigned int,VulkanTextureBackend::Tex,std::less<unsigned int>,std::allocator<std::pair<unsigned int const ,VulkanTextureBackend::Tex> > >::operator[]
+   3   1.50% longest_match_avx2
+   3   1.50% RtlCreateUnicodeString
+   3   1.50% LLKeyframeMotion::RotationCurve::getValue
+   3   1.50% LLJoint::touch
+   3   1.50% LLAvatarJoint::updateLOD
+   2   1.00% vkResetEvent
+   2   1.00% std140pack::writeMatrices
+   2   1.00% memmove
+   2   1.00% free
+   2   1.00% ZwWriteFile
+   2   1.00% VulkanQueryBackend::object
+   2   1.00% NtGdiDdDDILock2
+   2   1.00% LLXformMatrix::updateMatrix
+   2   1.00% LLWatchdogTimeout::start
+   2   1.00% LLSkinningUtil::initSkinningMatrixPalette
+   2   1.00% LLPoseBlender::addMotion
+   2   1.00% LLPipeline::markNotCulled
+   2   1.00% LLOcclusionCullingGroup::checkOcclusion
+   1   0.50% vkCmdBindPipeline
+   1   0.50% std::_Hash<std::_Uset_traits<LLVOVolume *,std::_Uhash_compare<LLVOVolume *,std::hash<LLVOVolume *>,std::equal_to<LLVOVolume *> >,std::allocator<LLVOVolume *>,0> >::find
+   1   0.50% operator*
+   1   0.50% operator delete
+   1   0.50% compress_block
+   1   0.50% XXH_INLINE_XXH3_64bits_reset
+   1   0.50% VulkanVertexBufferBackend::recordCommon
+   1   0.50% VulkanTextureBackend::unitDescriptor
+   1   0.50% VulkanQueryBackend::read
+   1   0.50% VulkanQueryBackend::end
+INCLUSIVE
+ 193  96.50% wWinMain
+ 193  96.50% __scrt_common_main_seh
+ 190  95.00% RtlUserThreadStart
+ 190  95.00% LLAppViewer::frame
+ 190  95.00% LLAppViewer::doFrame
+ 190  95.00% BaseThreadInitThunk
+  72  36.00% ZwDelayExecution
+  72  36.00% SleepEx
+  72  36.00% RtlDelayExecution
+  57  28.50% display
+  50  25.00% LLAppViewer::idle
+  33  16.50% vk_icdGetInstanceProcAddrSG
+  33  16.50% LLPipeline::renderGeomDeferred
+  28  14.00% vkResetEvent
+  25  12.50% VulkanVertexBufferBackend::drawIndexed
+  25  12.50% LLVertexBuffer::drawRange
+  24  12.00% LLViewerObjectList::update
+  23  11.50% LLVOAvatar::idleUpdate
+  22  11.00% IcdPresentBuffers
+  21  10.50% VulkanVertexBufferBackend::recordCommon
+  21  10.50% LLViewerWindow::saveSnapshot
+  21  10.50% LLAppViewer::saveFinalSnapshot
+  21  10.50% LLAppViewer::idleShutdown
+  18   9.00% LLVOAvatar::updateCharacter
+  17   8.50% LLViewerWindow::rawSnapshot
+  17   8.50% LLDrawPoolMaterials::renderDeferred
+  16   8.00% VulkanFramebufferBackend::readPixels
+  13   6.50% VkProgram::prepareDraw
+  12   6.00% LLPipeline::renderDeferredLighting
+  10   5.00% LLPipeline::renderGeomPostDeferred
+   9   4.50% NtGdiDdDDIFreeGpuVirtualAddress
+   8   4.00% beginRenderBackendFrame
+   8   4.00% VkContext::beginFrame
+   8   4.00% LLPipeline::doOcclusion
+   8   4.00% LLMotionController::updateMotionsByType

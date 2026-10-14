@@ -24,6 +24,7 @@
  * $/LicenseInfo$
  */
 
+#include "llrenderbackend.h"
 #include "linden_common.h"
 #include "llwindowheadless.h"
 
@@ -420,6 +421,11 @@ LLWindow* LLWindowManager::createWindow(
     F32 max_gl_version,
     bool useLegacyCursors) // <FS:LO> Legacy cursor setting from main program
 {
+    if (use_gl && isVulkanRenderBackendActive())
+    {
+        LL_WARNS("RenderInit") << "A native Vulkan renderer already owns the graphics window" << LL_ENDL;
+        return nullptr;
+    }
     LLWindow* new_window;
 
     if (use_gl)

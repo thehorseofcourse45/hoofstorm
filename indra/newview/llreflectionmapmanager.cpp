@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llrenderbackend.h"
 #include "lltexturebackend.h"
 
 #include "llreflectionmapmanager.h"
@@ -579,7 +580,7 @@ GLuint LLReflectionMapManager::allocateQuery()
     if (mQueryPool.empty())
     {
         GLuint query;
-        glGenQueries(1, &query);
+        generateRenderQueries(1, &query);
         return query;
     }
 
@@ -1315,14 +1316,12 @@ void LLReflectionMapManager::updateUniforms()
     //copy mProbeData into uniform buffer object
     if (mUBO == 0)
     {
-        glGenBuffers(1, &mUBO);
+        mUBO = createRenderUniformBuffer();
     }
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("rmmsu - update buffer");
-        glBindBuffer(GL_UNIFORM_BUFFER, mUBO);
-        glBufferData(GL_UNIFORM_BUFFER, sizeof(ReflectionProbeData), &mProbeData, GL_STREAM_DRAW);
-        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+        uploadRenderUniformBuffer(mUBO, &mProbeData, sizeof(ReflectionProbeData));
     }
 
 #if 0
@@ -1352,7 +1351,7 @@ void LLReflectionMapManager::setUniforms()
     {
         updateUniforms();
     }
-    glBindBufferBase(GL_UNIFORM_BUFFER, LLGLSLShader::UB_REFLECTION_PROBES, mUBO);
+    bindRenderUniformBuffer(LLGLSLShader::UB_REFLECTION_PROBES, mUBO);
 }
 
 
@@ -1628,7 +1627,7 @@ void LLReflectionMapManager::cleanup()
     mDefaultProbe = nullptr;
     mUpdatingProbe = nullptr;
 
-    glDeleteBuffers(1, &mUBO);
+    deleteRenderUniformBuffer(mUBO);
     mUBO = 0;
 
     cleanupQueryPool();
@@ -1643,7 +1642,7 @@ void LLReflectionMapManager::cleanupQueryPool()
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("cleanup query pool");
         std::vector<GLuint> queries(mQueryPool.begin(), mQueryPool.end());
-        glDeleteQueries(static_cast<GLsizei>(queries.size()), queries.data());
+        deleteRenderQueries(static_cast<GLsizei>(queries.size()), queries.data());
         mQueryPool.clear();
     }
 }

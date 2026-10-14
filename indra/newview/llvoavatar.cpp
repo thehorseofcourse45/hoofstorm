@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llrenderbackend.h"
 
 #include "llvoavatar.h"
 
@@ -911,6 +912,7 @@ void LLVOAvatar::debugAvatarRezTime(std::string notification_name, std::string c
 //------------------------------------------------------------------------
 LLVOAvatar::~LLVOAvatar()
 {
+    if (mGPUTimerQuery) deleteRenderQueries(1, &mGPUTimerQuery);
     sInstances.remove(this);
 
     if (!mFullyLoaded)
@@ -5822,7 +5824,17 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     else
     {
         // Might be better to do HIDDEN_UPDATE if cloud
-        updateMotions(LLCharacter::NORMAL_UPDATE);
+        // Far away avatars of other residents animate every Nth frame. The motion controller measures elapsed time since
+        // its last update, so a skipped frame costs pose smoothness, not animation speed.
+        static LLCachedControl<U32> far_period(gSavedSettings, "FSDistantAvatarAnimPeriod", 3);
+        static LLCachedControl<F32> far_distance(gSavedSettings, "FSDistantAvatarAnimDistance", 32.f);
+        const bool far_skip = far_period > 1 && !isSelf() && !isControlAvatar() && !mIsDummy && mDrawable.notNull()
+            && mDrawable->mDistanceWRTCamera > far_distance
+            && ((LLDrawable::getCurrentFrame() + mID.mData[0]) % far_period) != 0;
+        if (!far_skip)
+        {
+            updateMotions(LLCharacter::NORMAL_UPDATE);
+        }
     }
 
     // Special handling for sitting on ground.
@@ -13471,29 +13483,31 @@ bool LLVOAvatar::isTextureVisible(LLAvatarAppearanceDefines::ETextureIndex type,
 
 void LLVOAvatar::placeProfileQuery()
 {
+    if (!renderQuerySupported(GL_TIME_ELAPSED)) return;
     if (mGPUTimerQuery == 0)
     {
-        glGenQueries(1, &mGPUTimerQuery);
+        generateRenderQueries(1, &mGPUTimerQuery);
     }
 
-    glBeginQuery(GL_TIME_ELAPSED, mGPUTimerQuery);
+    beginRenderQuery(GL_TIME_ELAPSED, mGPUTimerQuery);
 }
 
 void LLVOAvatar::readProfileQuery(S32 retries)
 {
+    if (!renderQuerySupported(GL_TIME_ELAPSED)) { mGPUProfilePending=false; return; }
     if (!mGPUProfilePending)
     {
-        glEndQuery(GL_TIME_ELAPSED);
+        endRenderQuery(GL_TIME_ELAPSED);
         mGPUProfilePending = true;
     }
 
     GLuint64 result = 0;
-    glGetQueryObjectui64v(mGPUTimerQuery, GL_QUERY_RESULT_AVAILABLE, &result);
+    getRenderQuery64(mGPUTimerQuery, GL_QUERY_RESULT_AVAILABLE, &result);
 
     if (result == GL_TRUE || --retries <= 0)
     { // query available, readback result
         GLuint64 time_elapsed = 0;
-        glGetQueryObjectui64v(mGPUTimerQuery, GL_QUERY_RESULT, &time_elapsed);
+        getRenderQuery64(mGPUTimerQuery, GL_QUERY_RESULT, &time_elapsed);
         mGPURenderTime = time_elapsed / 1000000.f;
         mGPUProfilePending = false;
 

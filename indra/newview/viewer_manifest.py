@@ -745,6 +745,10 @@ class Windows_x86_64_Manifest(ViewerManifest):
             # </FS:ND>
 
         self.path(src="licenses-win32.txt", dst="licenses.txt")
+        compiler_licenses = os.path.join(self.args['build'], os.pardir, "shader-compiler-licenses", "glslang")
+        if os.path.isdir(compiler_licenses):
+            self.path(src=compiler_licenses, dst="LICENSES/glslang")
+
         self.path("featuretable.txt")
         self.path("cube.dae")
 

@@ -25,6 +25,7 @@
  */
 
 #include "linden_common.h"
+#include "llframebufferbackend.h"
 #include "lltexturebackend.h"
 
 #include "llpostprocess.h"
@@ -308,8 +309,8 @@ void LLPostProcess::doEffects(void)
     }
 
     /// Clear the frame buffer.
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    getFramebufferBackend().setClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    getFramebufferBackend().clear(GL_COLOR_BUFFER_BIT);
 
     /// Change to an orthogonal view
     viewOrthogonal(screenW, screenH);

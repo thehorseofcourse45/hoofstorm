@@ -1,0 +1,74 @@
+PID=27636 TID=25884 samples=300
+VALID=300 TOTAL_SUSPEND_MS=453.062 FOREGROUND_SAMPLES=287
+LEAF
+  14   4.67% vk_icdGetInstanceProcAddrSG
+  10   3.33% memmove
+   8   2.67% std::_Hash<std::_Uset_traits<LLVOVolume *,std::_Uhash_compare<LLVOVolume *,std::hash<LLVOVolume *>,std::equal_to<LLVOVolume *> >,std::allocator<LLVOVolume *>,0> >::find
+   6   2.00% ZwDelayExecution
+   6   2.00% RtlCreateUnicodeString
+   6   2.00% NtGdiDdDDIWaitForSynchronizationObjectFromCpu
+   6   2.00% LLVOAvatar::idleUpdateMisc
+   6   2.00% LLKeyframeMotion::RotationCurve::getValue
+   5   1.67% NtGdiDdDDILock2
+   5   1.67% LLFace::setSize
+   4   1.33% VulkanFramebufferBackend::imageOf
+   4   1.33% NtGdiDdDDIUnlock2
+   4   1.33% LLXformMatrix::updateMatrix
+   4   1.33% LLTreeNode<LLViewerOctreeEntry>::getListener
+   4   1.33% LLSpatialPartition::calcDistance
+   4   1.33% LLSkinningUtil::initSkinningMatrixPalette
+   4   1.33% LLPipeline::postSort
+   4   1.33% LLJoint::touch
+   3   1.00% std::_Tree_const_iterator<std::_Tree_val<std::_Tree_simple_types<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,LLSD> > > >::operator++
+   3   1.00% std140pack::writeMatrices
+   3   1.00% NtGdiDdDDIFreeGpuVirtualAddress
+   3   1.00% LLViewerOctreeEntryData::getGroup
+   3   1.00% LLVertexBuffer::setBuffer
+   3   1.00% LLVOPartGroup::getGeometry
+   3   1.00% LLPipeline::stateSort
+   3   1.00% LLOcclusionCullingGroup::checkOcclusion
+   3   1.00% LLMatrix4::initAll
+   3   1.00% LLJoint::updateWorldMatrixChildren
+   3   1.00% LLDrawPoolAlpha::renderAlpha
+   3   1.00% LLAvatarJoint::updateLOD
+   2   0.67% vk_icdNegotiateLoaderICDInterfaceVersion
+   2   0.67% std::_Tree_val<std::_Tree_simple_types<std::pair<LLFormatMapString const ,LLFormatMapString> > >::_Insert_node
+   2   0.67% std::_Hash<std::_Umap_traits<unsigned int,unsigned int,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,unsigned int> >,0> >::find
+   2   0.67% std::_Hash<std::_Umap_traits<unsigned int,VulkanTextureBackend::Tex,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,VulkanTextureBackend::Tex> >,0> >::_Try_emplace<unsigned int const &>
+   2   0.67% nlerp
+INCLUSIVE
+ 276  92.00% LLAppViewer::doFrame
+ 275  91.67% LLAppViewer::frame
+ 274  91.33% wWinMain
+ 270  90.00% __scrt_common_main_seh
+ 268  89.33% BaseThreadInitThunk
+ 264  88.00% RtlUserThreadStart
+ 179  59.67% display
+  77  25.67% LLAppViewer::idle
+  61  20.33% LLPipeline::renderGeomDeferred
+  56  18.67% LLViewerObjectList::update
+  55  18.33% LLVOAvatar::idleUpdate
+  41  13.67% LLVertexBuffer::drawRange
+  41  13.67% LLVOAvatar::updateCharacter
+  40  13.33% VulkanVertexBufferBackend::drawIndexed
+  39  13.00% vkResetEvent
+  38  12.67% VulkanVertexBufferBackend::recordCommon
+  37  12.33% vk_icdGetInstanceProcAddrSG
+  33  11.00% LLPipeline::renderDeferredLighting
+  29   9.67% LLPipeline::renderGeomPostDeferred
+  25   8.33% LLMotionController::updateMotions
+  24   8.00% LLPipeline::stateSort
+  24   8.00% LLDrawPoolMaterials::renderDeferred
+  23   7.67% LLViewerTextureList::updateImages
+  22   7.33% LLMotionController::updateMotionsByType
+  22   7.33% IcdPresentBuffers
+  21   7.00% LLDrawPoolAlpha::renderPostDeferred
+  20   6.67% render_ui
+  20   6.67% LLDrawPoolAlpha::renderAlpha
+  18   6.00% VkProgram::prepareDraw
+  14   4.67% LLView::drawChildren
+  14   4.67% LLRenderPass::pushBatch
+  14   4.67% LLPanel::draw
+  13   4.33% LLView::drawChild
+  13   4.33% LLReflectionMapManager::doOcclusion
+  13   4.33% LLPipeline::doOcclusion

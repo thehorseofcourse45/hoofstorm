@@ -25,6 +25,8 @@
  */
 
 #include "linden_common.h"
+#include "llrenderbackend.h"
+#include "llframebufferbackend.h"
 #include "lltexturebackend.h"
 
 #include "llrendertarget.h"
@@ -38,7 +40,7 @@ void check_framebuffer_status()
 {
     if (gDebugGL)
     {
-        GLenum status = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+        GLenum status = getFramebufferBackend().checkStatus();
         switch (status)
         {
         case GL_FRAMEBUFFER_COMPLETE:
@@ -52,7 +54,6 @@ void check_framebuffer_status()
 }
 
 bool LLRenderTarget::sUseFBO = false;
-U32 LLRenderTarget::sCurFBO = 0;
 
 
 extern S32 gGLViewport[4];
@@ -105,6 +106,7 @@ void LLRenderTarget::resize(U32 resx, U32 resy)
 
 bool LLRenderTarget::allocate(U32 resx, U32 resy, U32 color_fmt, bool depth, LLTexUnit::eTextureType usage, LLTexUnit::eTextureMipGeneration generateMipMaps)
 {
+    const U32 previousFramebuffer = getFramebufferBackend().getBound();
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
     llassert(usage == LLTexUnit::TT_TEXTURE);
     llassert(!isBoundInStack());
@@ -140,15 +142,15 @@ bool LLRenderTarget::allocate(U32 resx, U32 resy, U32 color_fmt, bool depth, LLT
         }
     }
 
-    glGenFramebuffers(1, (GLuint *) &mFBO);
+    mFBO = getFramebufferBackend().createFramebuffer();
 
     if (mDepth)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, mFBO);
+        getFramebufferBackend().bind(mFBO);
 
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, LLTexUnit::getInternalType(mUsage), mDepth, 0);
+        getFramebufferBackend().attach(mFBO, GL_DEPTH_ATTACHMENT, LLTexUnit::getInternalType(mUsage), mDepth, 0);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, sCurFBO);
+        getFramebufferBackend().bind(previousFramebuffer);
     }
 
     return addColorAttachment(color_fmt);
@@ -156,6 +158,7 @@ bool LLRenderTarget::allocate(U32 resx, U32 resy, U32 color_fmt, bool depth, LLT
 
 void LLRenderTarget::setColorAttachment(LLImageGL* img, LLGLuint use_name)
 {
+    const U32 previousFramebuffer = getFramebufferBackend().getBound();
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     llassert(img != nullptr); // img must not be null
     llassert(sUseFBO); // FBO support must be enabled
@@ -165,7 +168,7 @@ void LLRenderTarget::setColorAttachment(LLImageGL* img, LLGLuint use_name)
 
     if (mFBO == 0)
     {
-        glGenFramebuffers(1, (GLuint*)&mFBO);
+        mFBO = getFramebufferBackend().createFramebuffer();
     }
 
     mResX = img->getWidth();
@@ -179,32 +182,34 @@ void LLRenderTarget::setColorAttachment(LLImageGL* img, LLGLuint use_name)
 
     mTex.push_back(use_name);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, mFBO);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+    getFramebufferBackend().bind(mFBO);
+    getFramebufferBackend().attach(mFBO, GL_COLOR_ATTACHMENT0,
             LLTexUnit::getInternalType(mUsage), use_name, 0);
         stop_glerror();
 
     check_framebuffer_status();
 
-    glBindFramebuffer(GL_FRAMEBUFFER, sCurFBO);
+    getFramebufferBackend().bind(previousFramebuffer);
 }
 
 void LLRenderTarget::releaseColorAttachment()
 {
+    const U32 previousFramebuffer = getFramebufferBackend().getBound();
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     llassert(!isBoundInStack());
     llassert(mTex.size() == 1); //cannot use releaseColorAttachment with LLRenderTarget managed color targets
     llassert(mFBO != 0);  // mFBO must be valid
 
-    glBindFramebuffer(GL_FRAMEBUFFER, mFBO);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, LLTexUnit::getInternalType(mUsage), 0, 0);
-    glBindFramebuffer(GL_FRAMEBUFFER, sCurFBO);
+    getFramebufferBackend().bind(mFBO);
+    getFramebufferBackend().attach(mFBO, GL_COLOR_ATTACHMENT0, LLTexUnit::getInternalType(mUsage), 0, 0);
+    getFramebufferBackend().bind(previousFramebuffer);
 
     mTex.clear();
 }
 
 bool LLRenderTarget::addColorAttachment(U32 color_fmt)
 {
+    const U32 previousFramebuffer = getFramebufferBackend().getBound();
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
     llassert(!isBoundInStack());
 
@@ -237,7 +242,7 @@ bool LLRenderTarget::addColorAttachment(U32 color_fmt)
     {
         clear_glerror();
         LLImageGL::setManualImage(LLTexUnit::getInternalType(mUsage), 0, color_fmt, mResX, mResY, GL_RGBA, GL_UNSIGNED_BYTE, NULL, false);
-        if (glGetError() != GL_NO_ERROR)
+        if (!isVulkanRenderBackendActive() && glGetError() != GL_NO_ERROR)
         {
             LL_WARNS() << "Could not allocate color buffer for render target." << LL_ENDL;
             return false;
@@ -274,13 +279,13 @@ bool LLRenderTarget::addColorAttachment(U32 color_fmt)
 
     if (mFBO)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, mFBO);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0+offset,
+        getFramebufferBackend().bind(mFBO);
+        getFramebufferBackend().attach(mFBO, GL_COLOR_ATTACHMENT0+offset,
             LLTexUnit::getInternalType(mUsage), tex, 0);
 
         check_framebuffer_status();
 
-        glBindFramebuffer(GL_FRAMEBUFFER, sCurFBO);
+        getFramebufferBackend().bind(previousFramebuffer);
     }
 
     mTex.push_back(tex);
@@ -310,7 +315,7 @@ bool LLRenderTarget::allocateDepth()
 
     sBytesAllocated += mResX*mResY*4;
 
-    if (glGetError() != GL_NO_ERROR)
+    if (!isVulkanRenderBackendActive() && glGetError() != GL_NO_ERROR)
     {
         LL_WARNS() << "Unable to allocate depth buffer for render target." << LL_ENDL;
         return false;
@@ -321,6 +326,7 @@ bool LLRenderTarget::allocateDepth()
 
 void LLRenderTarget::shareDepthBuffer(LLRenderTarget& target)
 {
+    const U32 previousFramebuffer = getFramebufferBackend().getBound();
     llassert(!isBoundInStack());
 
     if (!mFBO || !target.mFBO)
@@ -340,13 +346,13 @@ void LLRenderTarget::shareDepthBuffer(LLRenderTarget& target)
 
     if (mDepth)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, target.mFBO);
+        getFramebufferBackend().bind(target.mFBO);
 
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, LLTexUnit::getInternalType(mUsage), mDepth, 0);
+        getFramebufferBackend().attach(target.mFBO, GL_DEPTH_ATTACHMENT, LLTexUnit::getInternalType(mUsage), mDepth, 0);
 
         check_framebuffer_status();
 
-        glBindFramebuffer(GL_FRAMEBUFFER, sCurFBO);
+        getFramebufferBackend().bind(previousFramebuffer);
 
         target.mUseDepth = true;
     }
@@ -354,6 +360,7 @@ void LLRenderTarget::shareDepthBuffer(LLRenderTarget& target)
 
 void LLRenderTarget::release()
 {
+    const U32 previousFramebuffer = getFramebufferBackend().getBound();
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
     llassert(!isBoundInStack());
 
@@ -368,41 +375,40 @@ void LLRenderTarget::release()
     // else if (mFBO)
     if (mFBO)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, mFBO);
+        getFramebufferBackend().bind(mFBO);
 
         if (mUseDepth)
         { //detach shared depth buffer
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, LLTexUnit::getInternalType(mUsage), 0, 0);
+            getFramebufferBackend().attach(mFBO, GL_DEPTH_ATTACHMENT, LLTexUnit::getInternalType(mUsage), 0, 0);
             mUseDepth = false;
         }
 
-        glBindFramebuffer(GL_FRAMEBUFFER, sCurFBO);
+        getFramebufferBackend().bind(previousFramebuffer);
     }
 
     // Detach any extra color buffers (e.g. SRGB spec buffers)
     //
     if (mFBO && (mTex.size() > 1))
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, mFBO);
+        getFramebufferBackend().bind(mFBO);
         size_t z;
         for (z = mTex.size() - 1; z >= 1; z--)
         {
             sBytesAllocated -= mResX*mResY*4;
-            glFramebufferTexture2D(GL_FRAMEBUFFER, static_cast<GLenum>(GL_COLOR_ATTACHMENT0+z), LLTexUnit::getInternalType(mUsage), 0, 0);
+            getFramebufferBackend().attach(mFBO, static_cast<GLenum>(GL_COLOR_ATTACHMENT0+z), LLTexUnit::getInternalType(mUsage), 0, 0);
             LLImageGL::deleteTextures(1, &mTex[z]);
         }
-        glBindFramebuffer(GL_FRAMEBUFFER, sCurFBO);
+        getFramebufferBackend().bind(previousFramebuffer);
     }
 
     if (mFBO)
     {
-        if (mFBO == sCurFBO)
+        if (mFBO == getFramebufferBackend().getBound())
         {
-            sCurFBO = 0;
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            getFramebufferBackend().bind(0);
         }
 
-        glDeleteFramebuffers(1, (GLuint *) &mFBO);
+        getFramebufferBackend().destroyFramebuffer(mFBO);
         mFBO = 0;
     }
 
@@ -424,24 +430,19 @@ void LLRenderTarget::bindTarget()
     llassert(mFBO);
     llassert(!isBoundInStack());
 
-    glBindFramebuffer(GL_FRAMEBUFFER, mFBO);
-    sCurFBO = mFBO;
+    getFramebufferBackend().bind(mFBO);
 
     //setup multiple render targets
-    GLenum drawbuffers[] = {GL_COLOR_ATTACHMENT0,
-                            GL_COLOR_ATTACHMENT1,
-                            GL_COLOR_ATTACHMENT2,
-                            GL_COLOR_ATTACHMENT3};
 
     if (mTex.empty())
     { //no color buffer to draw to
-        glDrawBuffer(GL_NONE);
-        glReadBuffer(GL_NONE);
+        getFramebufferBackend().setDrawBufferNone();
+        getFramebufferBackend().setReadBuffer(GL_NONE);
     }
     else
     {
-        glDrawBuffers(static_cast<GLsizei>(mTex.size()), drawbuffers);
-        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        getFramebufferBackend().setDrawBuffers(static_cast<U32>(mTex.size()));
+        getFramebufferBackend().setReadBuffer(GL_COLOR_ATTACHMENT0);
     }
     check_framebuffer_status();
 
@@ -467,7 +468,7 @@ void LLRenderTarget::clear(U32 mask_in)
     {
         check_framebuffer_status();
         stop_glerror();
-        glClear(mask & mask_in);
+        getFramebufferBackend().clear(mask & mask_in);
         stop_glerror();
     }
     else
@@ -475,7 +476,7 @@ void LLRenderTarget::clear(U32 mask_in)
         LLGLEnable scissor(GL_SCISSOR_TEST);
         gGL.setScissor(0, 0, mResX, mResY);
         stop_glerror();
-        glClear(mask & mask_in);
+        getFramebufferBackend().clear(mask & mask_in);
     }
 }
 
@@ -506,7 +507,7 @@ void LLRenderTarget::flush()
     LL_PROFILE_GPU_ZONE("rt flush");
     gGL.flush();
     llassert(mFBO);
-    llassert(sCurFBO == mFBO);
+    llassert(getFramebufferBackend().getBound() == mFBO);
     llassert(sBoundTarget == this);
 
     if (mGenerateMipMaps == LLTexUnit::TMG_AUTO)
@@ -526,13 +527,12 @@ void LLRenderTarget::flush()
     else
     {
         sBoundTarget = nullptr;
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        sCurFBO = 0;
+        getFramebufferBackend().bind(0);
         gGL.setViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
         sCurResX = gGLViewport[2];
         sCurResY = gGLViewport[3];
-        glReadBuffer(GL_BACK);
-        glDrawBuffer(GL_BACK);
+        getFramebufferBackend().setReadBuffer(GL_BACK);
+        getFramebufferBackend().setDrawBufferBack();
     }
 }
 
@@ -568,8 +568,8 @@ void LLRenderTarget::swapFBORefs(LLRenderTarget& other)
 
     // Must be unbound
     // *NOTE: mPreviousRT can be non-null even if this target is unbound - presumably for debugging purposes?
-    llassert(sCurFBO != mFBO);
-    llassert(sCurFBO != other.mFBO);
+    llassert(getFramebufferBackend().getBound() != mFBO);
+    llassert(getFramebufferBackend().getBound() != other.mFBO);
     llassert(!isBoundInStack());
     llassert(!other.isBoundInStack());
 

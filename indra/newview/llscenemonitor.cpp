@@ -25,6 +25,8 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llrenderbackend.h"
+#include "llframebufferbackend.h"
 #include "lltexturebackend.h"
 #include "llrendertarget.h"
 #include "llscenemonitor.h"
@@ -312,16 +314,15 @@ void LLSceneMonitor::capture()
 
         LLRenderTarget& cur_target = getCaptureTarget();
 
-        U32 old_FBO = LLRenderTarget::sCurFBO;
+        U32 old_FBO = getFramebufferBackend().getBound();
 
         gGL.getTexUnit(0)->bind(&cur_target);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0); //point to the main frame buffer.
+        getFramebufferBackend().bindRead(0); //point to the main frame buffer.
 
         getTextureBackend().copyFromFramebuffer2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, cur_target.getWidth(), cur_target.getHeight()); //copy the content
 
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-        glBindFramebuffer(GL_FRAMEBUFFER, old_FBO);
+        getFramebufferBackend().bindRead(0);
+        getFramebufferBackend().bind(old_FBO);
 
         mDiffState = NEED_DIFF;
     }
@@ -338,6 +339,7 @@ static LLStaticHashedString sDitherScaleT("dither_scale_t");
 
 void LLSceneMonitor::compare()
 {
+    if (!renderQuerySupported(GL_SAMPLES_PASSED) || (isVulkanRenderBackendActive() && LLGLSLShader::sProfileEnabled)) return;
 #ifdef LL_WINDOWS
     if(mDiffState != NEED_DIFF)
     {
@@ -419,6 +421,7 @@ static LLStaticHashedString sTolerance("tolerance");
 //calculate Diff aggregate information in GPU, and enable gl occlusion query to capture it.
 void LLSceneMonitor::calcDiffAggregate()
 {
+    if (!renderQuerySupported(GL_SAMPLES_PASSED) || (isVulkanRenderBackendActive() && LLGLSLShader::sProfileEnabled)) return;
 #ifdef LL_WINDOWS
 
     if(mDiffState != EXECUTE_DIFF && !mDebugViewerVisible)
@@ -445,14 +448,14 @@ void LLSceneMonitor::calcDiffAggregate()
 
     if(mDiffState == EXECUTE_DIFF)
     {
-        glBeginQuery(GL_SAMPLES_PASSED, mQueryObject);
+        beginRenderQuery(GL_SAMPLES_PASSED, mQueryObject);
     }
 
     gl_draw_scaled_target(0, 0, S32(mDiff->getWidth() * mDiffPixelRatio), S32(mDiff->getHeight() * mDiffPixelRatio), mDiff);
 
     if(mDiffState == EXECUTE_DIFF)
     {
-        glEndQuery(GL_SAMPLES_PASSED);
+        endRenderQuery(GL_SAMPLES_PASSED);
         mDiffState = WAIT_ON_RESULT;
     }
 
@@ -473,6 +476,7 @@ void LLSceneMonitor::calcDiffAggregate()
 static LLTrace::EventStatHandle<> sFramePixelDiff("FramePixelDifference");
 void LLSceneMonitor::fetchQueryResult()
 {
+    if (!renderQuerySupported(GL_SAMPLES_PASSED) || (isVulkanRenderBackendActive() && LLGLSLShader::sProfileEnabled)) return;
     // also throttle timing here, to avoid going below sample time due to phasing with frame capture
     static LLCachedControl<F32>  scene_load_sample_time_control(gSavedSettings, "SceneLoadingMonitorSampleTime");
     F32Seconds scene_load_sample_time = (F32Seconds)scene_load_sample_time_control();
@@ -483,11 +487,11 @@ void LLSceneMonitor::fetchQueryResult()
         mDiffState = WAITING_FOR_NEXT_DIFF;
 
         GLuint available = 0;
-        glGetQueryObjectuiv(mQueryObject, GL_QUERY_RESULT_AVAILABLE, &available);
+        getRenderQuery32(mQueryObject, GL_QUERY_RESULT_AVAILABLE, &available);
         if(available)
         {
             GLuint count = 0;
-            glGetQueryObjectuiv(mQueryObject, GL_QUERY_RESULT, &count);
+            getRenderQuery32(mQueryObject, GL_QUERY_RESULT, &count);
 
             mDiffResult = sqrtf(count * 0.5f / (mDiff->getWidth() * mDiff->getHeight() * mDiffPixelRatio * mDiffPixelRatio)); //0.5 -> (front face + back face)
 

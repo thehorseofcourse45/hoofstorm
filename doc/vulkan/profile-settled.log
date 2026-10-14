@@ -1,0 +1,74 @@
+PID=23368 TID=6956 samples=200
+VALID=200 TOTAL_SUSPEND_MS=376.513 FOREGROUND_SAMPLES=186
+LEAF
+  55  27.50% ZwWaitForMultipleObjects
+  15   7.50% memmove
+  13   6.50% VulkanTextureBackend::convertForUpload
+   9   4.50% VulkanFramebufferBackend::imageOf
+   7   3.50% RtlCreateUnicodeString
+   6   3.00% ZwDelayExecution
+   6   3.00% NtGdiDdDDIFreeGpuVirtualAddress
+   4   2.00% vk_icdGetInstanceProcAddrSG
+   4   2.00% LLKeyframeMotion::RotationCurve::getValue
+   3   1.50% std::_Hash<std::_Uset_traits<LLVOVolume *,std::_Uhash_compare<LLVOVolume *,std::hash<LLVOVolume *>,std::equal_to<LLVOVolume *> >,std::allocator<LLVOVolume *>,0> >::find
+   3   1.50% VulkanVertexBufferBackend::getPipeline
+   3   1.50% VulkanTextureBackend::viewOf
+   3   1.50% LLVOAvatar::updateSkinInfoMatrixPalette
+   3   1.50% LLTexUnit::bindFast
+   3   1.50% LLKeyframeMotion::PositionCurve::getValue
+   2   1.00% std::_Hash<std::_Umap_traits<unsigned int,unsigned int,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,unsigned int> >,0> >::find
+   2   1.00% RtlFreeHeap
+   2   1.00% NtGdiDdDDIWaitForSynchronizationObjectFromCpu
+   2   1.00% LLViewerOctreeGroup::isVisible
+   2   1.00% LLVOAvatar::isTextureDefined
+   2   1.00% LLTreeNode<LLViewerOctreeEntry>::getListener
+   1   0.50% std::basic_string<char,std::char_traits<char>,std::allocator<char> >::_Construct<1,char const *>
+   1   0.50% std::_Uhash_compare<LLUUID,std::hash<LLUUID>,std::equal_to<LLUUID> >::operator()<LLUUID>
+   1   0.50% std140pack::writeMatrices
+   1   0.50% std140pack::elemOf
+   1   0.50% noise2
+   1   0.50% boost::serialization::singleton<boost::serialization::extended_type_info_typeid<SC_INPUT> >::singleton<boost::serialization::extended_type_info_typeid<SC_INPUT> >
+   1   0.50% VulkanVertexBufferBackend::drawIndexed
+   1   0.50% VulkanTextureBackend::unitDescriptor
+   1   0.50% VulkanQueryBackend::begin
+   1   0.50% VulkanFramebufferBackend::prepareSample
+   1   0.50% RtlAllocateHeap
+   1   0.50% RlvActions::hasBehaviour
+   1   0.50% NtGdiDdDDIUnlock2
+   1   0.50% NtGdiDdDDILock2
+INCLUSIVE
+ 195  97.50% LLAppViewer::doFrame
+ 194  97.00% LLAppViewer::frame
+ 193  96.50% wWinMain
+ 193  96.50% __scrt_common_main_seh
+ 193  96.50% RtlUserThreadStart
+ 193  96.50% BaseThreadInitThunk
+  95  47.50% display
+  70  35.00% vk_icdGetInstanceProcAddrSG
+  65  32.50% vkResetEvent
+  61  30.50% beginRenderBackendFrame
+  61  30.50% VkContext::beginFrame
+  55  27.50% ZwWaitForMultipleObjects
+  55  27.50% WaitForMultipleObjectsEx
+  55  27.50% WaitForMultipleObjects
+  55  27.50% 0x7ffa7229cc77
+  46  23.00% LLPipeline::renderGeomDeferred
+  44  22.00% LLVertexBuffer::drawRange
+  43  21.50% VulkanVertexBufferBackend::drawIndexed
+  39  19.50% VulkanVertexBufferBackend::recordCommon
+  29  14.50% LLAppViewer::idle
+  28  14.00% LLDrawPoolMaterials::renderDeferred
+  22  11.00% VkProgram::prepareDraw
+  21  10.50% LLViewerObjectList::update
+  21  10.50% LLVOAvatar::idleUpdate
+  18   9.00% LLPipeline::renderDeferredLighting
+  17   8.50% LLPipeline::renderGeomPostDeferred
+  16   8.00% LLImageGL::setImage
+  15   7.50% memmove
+  15   7.50% LLImageGL::setManualImage
+  15   7.50% LLDrawPoolAlpha::renderPostDeferred
+  15   7.50% LLDrawPoolAlpha::renderAlpha
+  14   7.00% LLViewerTextureList::updateImages
+  13   6.50% sub_image_lines
+  13   6.50% VulkanTextureBackend::subImage2D
+  13   6.50% VulkanTextureBackend::convertForUpload

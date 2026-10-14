@@ -1,0 +1,74 @@
+PID=4664 TID=27364 samples=300
+VALID=300 TOTAL_SUSPEND_MS=485.461 FOREGROUND_SAMPLES=249
+LEAF
+  21   7.00% ZwDelayExecution
+  14   4.67% vk_icdGetInstanceProcAddrSG
+  11   3.67% LLJoint::touch
+  10   3.33% std::_Hash<std::_Uset_traits<LLVOVolume *,std::_Uhash_compare<LLVOVolume *,std::hash<LLVOVolume *>,std::equal_to<LLVOVolume *> >,std::allocator<LLVOVolume *>,0> >::find
+  10   3.33% memmove
+   6   2.00% NtGdiDdDDILock2
+   5   1.67% VulkanFramebufferBackend::imageOf
+   5   1.67% LLXformMatrix::updateMatrix
+   5   1.67% LLAvatarJoint::updateLOD
+   4   1.33% std::_Tree_const_iterator<std::_Tree_val<std::_Tree_simple_types<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> > const ,LLSD> > > >::operator++
+   4   1.33% LLFace::updateCenterAgent
+   4   1.33% LLDrawable::getFace
+   4   1.33% 0x7ff9cbcca655
+   3   1.00% _CxxUnregisterExceptionObject
+   3   1.00% VulkanVertexBufferBackend::recordCommon
+   3   1.00% VulkanTextureBackend::unitDescriptor
+   3   1.00% VulkanTextureBackend::convertForUpload
+   3   1.00% VulkanFramebufferBackend::prepareSample
+   3   1.00% RtlFreeHeap
+   3   1.00% RtlCreateUnicodeString
+   3   1.00% LLVOAvatar::idleUpdateMisc
+   3   1.00% LLPipeline::postSort
+   3   1.00% LLKeyframeMotion::applyKeyframes
+   3   1.00% LLKeyframeMotion::RotationCurve::getValue
+   3   1.00% LLImageGL::analyzeAlpha
+   3   1.00% LLFace::setSize
+   2   0.67% std::_Hash<std::_Umap_traits<unsigned int,VulkanTextureBackend::Tex,std::_Uhash_compare<unsigned int,std::hash<unsigned int>,std::equal_to<unsigned int> >,std::allocator<std::pair<unsigned int const ,VulkanTextureBackend::Tex> >,0> >::_Try_emplace<unsigned int const &>
+   2   0.67% operator new
+   2   0.67% free
+   2   0.67% __security_check_cookie
+   2   0.67% VulkanVertexBufferBackend::getPipeline
+   2   0.67% RtlEnterCriticalSection
+   2   0.67% LLViewerTextureList::updateImageDecodePriority
+   2   0.67% LLViewerOctreeEntryData::isVisible
+   2   0.67% LLViewerOctreeCull::traverse
+INCLUSIVE
+ 290  96.67% LLAppViewer::frame
+ 290  96.67% LLAppViewer::doFrame
+ 288  96.00% wWinMain
+ 284  94.67% __scrt_common_main_seh
+ 278  92.67% BaseThreadInitThunk
+ 272  90.67% RtlUserThreadStart
+ 138  46.00% display
+  93  31.00% LLAppViewer::idle
+  75  25.00% LLViewerObjectList::update
+  72  24.00% LLVOAvatar::idleUpdate
+  58  19.33% LLPipeline::renderGeomDeferred
+  57  19.00% LLVertexBuffer::drawRange
+  56  18.67% VulkanVertexBufferBackend::drawIndexed
+  46  15.33% LLVOAvatar::updateCharacter
+  43  14.33% VulkanVertexBufferBackend::recordCommon
+  36  12.00% LLPipeline::renderGeomPostDeferred
+  36  12.00% LLPipeline::renderDeferredLighting
+  34  11.33% `LLAppViewer::doFrame'::`68'::<lambda_1>::operator()
+  34  11.33% LLViewerWindow::cubeSnapshot
+  34  11.33% LLReflectionMapManager::updateProbeFace
+  34  11.33% LLReflectionMapManager::update
+  34  11.33% LLReflectionMapManager::doProbeUpdate
+  34  11.33% LLReflectionMap::update
+  34  11.33% LLDrawPoolMaterials::renderDeferred
+  32  10.67% vkResetEvent
+  31  10.33% display_cube_face
+  26   8.67% vk_icdGetInstanceProcAddrSG
+  24   8.00% LLMotionController::updateMotions
+  22   7.33% LLDrawPoolAlpha::renderPostDeferred
+  22   7.33% LLDrawPoolAlpha::renderAlpha
+  21   7.00% ZwDelayExecution
+  21   7.00% SleepEx
+  21   7.00% RtlDelayExecution
+  21   7.00% LLDrawPoolAlpha::forwardRender
+  20   6.67% LLViewerTextureList::updateImages

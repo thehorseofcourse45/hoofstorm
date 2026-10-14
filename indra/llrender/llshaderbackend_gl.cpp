@@ -311,9 +311,3 @@ LLShaderBackend* createGLShaderBackend()
 {
     return new LLGLShaderBackend();
 }
-
-LLShaderBackend& getShaderBackend()
-{
-    static LLShaderBackend* sBackend = createGLShaderBackend();
-    return *sBackend;
-}

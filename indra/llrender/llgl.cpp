@@ -36,6 +36,7 @@
 #include "llsys.h"
 
 #include "llgl.h"
+#include "llrenderbackend.h"
 #include "llglstates.h"
 #include "llrender.h"
 
@@ -1075,6 +1076,13 @@ void LLGLManager::initWGL()
 // return false if unable (or unwilling due to old drivers) to init GL
 bool LLGLManager::initGL()
 {
+    if (isVulkanRenderBackendActive())
+    {
+        if (!initializeVulkanCapabilities(*this)) return false;
+        initGLStates();
+        LL_INFOS("RenderInit") << mGLVersionString << ": " << mGLRenderer << LL_ENDL;
+        return true;
+    }
     LL_INFOS("RenderInit") << "Initializing OpenGL" << LL_ENDL; // <FS:Beq/> Extra logging to confirm usage on Linux
     if (mInited)
     {
@@ -1313,6 +1321,11 @@ bool LLGLManager::initGL()
 
 void LLGLManager::getGLInfo(LLSD& info)
 {
+    if (isVulkanRenderBackendActive()) {         info["GLInfo"]["GLVendor"]=mGLVendor;
+        info["GLInfo"]["GLRenderer"]=mGLRenderer;
+        info["GLInfo"]["GLVersion"]=mGLVersionString;
+        info["GLInfo"]["API"]="Vulkan";
+        return; }
     if (gHeadlessClient)
     {
         info["GLInfo"]["GLVendor"] = HEADLESS_VENDOR_STRING;
@@ -1340,6 +1353,7 @@ void LLGLManager::getGLInfo(LLSD& info)
 
 std::string LLGLManager::getGLInfoString()
 {
+    if (isVulkanRenderBackendActive()) { return mGLVendor + "\n" + mGLRenderer + "\n" + mGLVersionString; }
     std::string info_str;
 
     if (gHeadlessClient)
@@ -1366,6 +1380,7 @@ std::string LLGLManager::getGLInfoString()
 
 void LLGLManager::printGLInfoString()
 {
+    if (isVulkanRenderBackendActive()) { LL_INFOS("RenderInit") << getGLInfoString() << LL_ENDL; return; }
     if (gHeadlessClient)
     {
         LL_INFOS("RenderInit") << "GL_VENDOR:     " << HEADLESS_VENDOR_STRING << LL_ENDL;
@@ -1388,6 +1403,7 @@ void LLGLManager::printGLInfoString()
 
 std::string LLGLManager::getRawGLString()
 {
+    if (isVulkanRenderBackendActive()) { return mGLVendor + " " + mGLRenderer; }
     std::string gl_string;
     if (gHeadlessClient)
     {
@@ -1432,7 +1448,7 @@ void LLGLManager::shutdownGL()
 {
     if (mInited)
     {
-        glFinish();
+        waitRenderBackendIdle();
         stop_glerror();
         mInited = false;
     }
@@ -2347,12 +2363,14 @@ void rotate_quat(LLQuaternion& rotation)
 
 void flush_glerror()
 {
+    if (isVulkanRenderBackendActive()) return;
     glGetError();
 }
 
 //this function outputs gl error to the log file, does not crash the code.
 void log_glerror()
 {
+    if (isVulkanRenderBackendActive()) return;
     if (LL_UNLIKELY(!gGLManager.mInited))
     {
         return ;
@@ -2425,6 +2443,7 @@ void do_assert_glerror()
 
 void assert_glerror()
 {
+    if (isVulkanRenderBackendActive()) return;
 /*  if (!gGLActive)
     {
         //LL_WARNS() << "GL used while not active!" << LL_ENDL;
@@ -2449,6 +2468,7 @@ void assert_glerror()
 
 void clear_glerror()
 {
+    if (isVulkanRenderBackendActive()) return;
     glGetError();
     glGetError();
 }
@@ -2487,6 +2507,7 @@ void LLGLState::restoreGL()
 // Really shouldn't be needed, but seems we sometimes do.
 void LLGLState::resetTextureStates()
 {
+    if (isVulkanRenderBackendActive()) return;
     gGL.flush();
     GLint maxTextureUnits;
 
@@ -2511,6 +2532,7 @@ void LLGLState::dumpStates()
 
 void LLGLState::checkStates(GLboolean writeAlpha)
 {
+    if (isVulkanRenderBackendActive()) return;
     if (!gDebugGL)
     {
         return;
@@ -2958,6 +2980,8 @@ LLGLSyncFence::~LLGLSyncFence()
 
 void LLGLSyncFence::placeFence()
 {
+    // shortcut: native fences block until submitted work completes; replace with asynchronous fences when profiling requires it.
+    if (isVulkanRenderBackendActive()) { waitRenderBackendIdle(); return; }
     if (mSync)
     {
         glDeleteSync(mSync);

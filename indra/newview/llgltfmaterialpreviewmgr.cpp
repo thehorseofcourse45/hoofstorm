@@ -24,6 +24,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llframebufferbackend.h"
 
 #include "llgltfmaterialpreviewmgr.h"
 
@@ -425,8 +426,8 @@ bool LLGLTFPreviewTexture::render()
 
     if (!mShouldRender) { return false; }
 
-    glClearColor(0, 0, 0, 0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    getFramebufferBackend().setClearColor(0, 0, 0, 0);
+    getFramebufferBackend().clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     LLGLDepthTest(GL_FALSE);
     LLGLDisable stencil(GL_STENCIL_TEST);
@@ -500,7 +501,7 @@ bool LLGLTFPreviewTexture::render()
         // Alpha blend rendering
 
         screen.bindTarget();
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        getFramebufferBackend().clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         LLGLSLShader& shader = gDeferredPBRAlphaProgram;
 

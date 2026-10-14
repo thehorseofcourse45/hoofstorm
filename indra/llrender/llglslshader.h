@@ -320,6 +320,8 @@ public:
     bool mUsingBinaryProgram = false;
 
     //statistics for profiling shader performance
+    bool mProfileActive = false;
+    bool mProfileRuntime = false;
     bool mProfilePending = false;
     U32 mTimerQuery;
     U32 mSamplesQuery;

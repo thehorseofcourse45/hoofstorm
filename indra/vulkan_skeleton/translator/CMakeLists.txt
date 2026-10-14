@@ -15,16 +15,9 @@ project(translator_test CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-if(NOT DEFINED ENV{VULKAN_SDK})
-    message(FATAL_ERROR "Set VULKAN_SDK (glslang and SPIRV-Tools come from the Vulkan SDK)")
-endif()
-set(SDK "$ENV{VULKAN_SDK}")
-
-add_executable(translator_test translator_test.cpp llshadertranslator.cpp llshadercompiler.cpp)
-target_include_directories(translator_test PRIVATE "${SDK}/Include" "${SDK}/Include/glslang")
+set(TRANSLATOR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../llrender/vulkan/translator")
+add_executable(translator_test translator_test.cpp "${TRANSLATOR_DIR}/llshadertranslator.cpp" "${TRANSLATOR_DIR}/llshadercompiler.cpp")
+target_include_directories(translator_test PRIVATE "${TRANSLATOR_DIR}")
 target_compile_definitions(translator_test PRIVATE _CRT_SECURE_NO_WARNINGS)
-foreach(lib glslang SPIRV MachineIndependent GenericCodeGen OSDependent glslang-default-resource-limits SPIRV-Tools-opt SPIRV-Tools)
-    target_link_libraries(translator_test PRIVATE
-        optimized "${SDK}/Lib/${lib}.lib"
-        debug "${SDK}/Lib/${lib}d.lib")
-endforeach()
+include("${TRANSLATOR_DIR}/../third_party/glslang/Glslang.cmake")
+target_link_libraries(translator_test PRIVATE ll::glslang)

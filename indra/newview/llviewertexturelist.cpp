@@ -25,6 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
+#include "llrenderbackend.h"
 
 #include <sys/stat.h>
 
@@ -1167,7 +1168,7 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
         }
     }
 
-    if (!mDownScaleQueue.empty() && gPipeline.mDownResMap.isComplete())
+    if (isRenderBackendFrameActive() && !mDownScaleQueue.empty() && gPipeline.mDownResMap.isComplete())
     {
         LLGLDisable blend(GL_BLEND);
         gGL.setColorMask(true, true);

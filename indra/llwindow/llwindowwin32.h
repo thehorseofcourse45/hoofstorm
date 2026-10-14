@@ -203,6 +203,8 @@ protected:
     WCHAR       *mWindowClassName;
 
     HWND        mWindowHandle = 0;  // window handle
+    bool finishContextSetup(bool auto_show);
+    bool mWantsVulkan = false, mVulkanWindow = false;
     HGLRC       mhRC = 0;           // OpenGL rendering context
     HDC         mhDC = 0;           // Windows Device context handle
     HINSTANCE   mhInstance;     // handle to application instance
