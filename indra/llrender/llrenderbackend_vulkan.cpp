@@ -293,6 +293,11 @@ bool activateVulkanRenderBackend(void* instance, void* window, bool validation, 
 #endif
 }
 
+void setRenderBackendVsync(bool enable)
+{
+    VkContext::sVsync = enable;
+}
+
 bool isVulkanRenderBackendActive()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE

@@ -1414,6 +1414,7 @@ bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bo
     if (mWantsVulkan)
     {
         std::string error;
+        setRenderBackendVsync(enable_vsync); // the swapchain is created during activation
         mVulkanWindow = activateVulkanRenderBackend(mhInstance, mWindowHandle, gDebugGL, error);
         if (!mVulkanWindow)
         {
@@ -2062,7 +2063,8 @@ void LLWindowWin32::toggleVSync(bool enable_vsync)
 {
     if (mVulkanWindow)
     {
-        LL_INFOS("RenderInit") << "Vulkan swapchain uses FIFO presentation" << LL_ENDL;
+        LL_INFOS("RenderInit") << "Vulkan vsync " << (enable_vsync ? "on (FIFO)" : "off (immediate/mailbox)") << LL_ENDL;
+        setRenderBackendVsync(enable_vsync);
         return;
     }
     if (wglSwapIntervalEXT == nullptr)

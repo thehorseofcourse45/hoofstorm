@@ -33,6 +33,7 @@
 constexpr unsigned LL_WINDOW_VULKAN = 1u;
 bool activateVulkanRenderBackend(void* instance, void* window, bool validation, std::string& error);
 bool isVulkanRenderBackendActive();
+void setRenderBackendVsync(bool enable); // Vulkan presentation mode: FIFO when on, MAILBOX/IMMEDIATE when off
 bool beginRenderBackendFrame(const float clear[4]);
 bool isRenderBackendFrameActive();
 void endRenderBackendFrame();

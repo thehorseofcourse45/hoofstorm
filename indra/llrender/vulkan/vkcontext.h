@@ -14,6 +14,7 @@
 #include <windows.h>
 #include <vulkan/vulkan.h>
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -69,6 +70,8 @@ struct VkContext
     HWND window = nullptr;
     bool headless = false;
     bool swapchainDirty = false;
+    static std::atomic<bool> sVsync; // wanted presentation mode, set from the main thread
+    bool activeVsync = true;         // mode the current swapchain was created with
     uint32_t swapchainGeneration = 0;
     bool createWindowResources();
     void destroyWindowResources();

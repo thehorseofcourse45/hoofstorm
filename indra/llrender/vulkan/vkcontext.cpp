@@ -27,6 +27,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverity
     return VK_FALSE;
 }
 
+std::atomic<bool> VkContext::sVsync{true};
+
 uint32_t VkContext::findMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props) const
 {
     for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i)
@@ -467,7 +469,19 @@ bool VkContext::createWindowResources()
     sc.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     sc.preTransform = caps.currentTransform;
     sc.compositeAlpha = (VkCompositeAlphaFlagBitsKHR) (caps.supportedCompositeAlpha & (~caps.supportedCompositeAlpha + 1));
-    sc.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    sc.presentMode = VK_PRESENT_MODE_FIFO_KHR; // always supported
+    activeVsync = sVsync;
+    if (!activeVsync)
+    {
+        uint32_t pn = 0;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(phys, surface, &pn, nullptr);
+        std::vector<VkPresentModeKHR> modes(pn);
+        if (pn) vkGetPhysicalDeviceSurfacePresentModesKHR(phys, surface, &pn, modes.data());
+        bool mailbox = false, immediate = false;
+        for (auto m : modes) { mailbox |= m == VK_PRESENT_MODE_MAILBOX_KHR; immediate |= m == VK_PRESENT_MODE_IMMEDIATE_KHR; }
+        if (mailbox) sc.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+        else if (immediate) sc.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+    }
     sc.clipped = VK_TRUE;
     VK_CHECK(vkCreateSwapchainKHR(device, &sc, nullptr, &swapchain));
 
@@ -617,7 +631,7 @@ bool VkContext::beginFrame(const float clear[4])
         RECT client{};
         if (!IsWindow(window) || !GetClientRect(window, &client)) return false;
         if (IsIconic(window) || client.right <= client.left || client.bottom <= client.top) return false;
-        if (!swapchain || swapchainDirty || (uint32_t) (client.right-client.left) != extent.width ||
+        if (!swapchain || swapchainDirty || activeVsync != sVsync || (uint32_t) (client.right-client.left) != extent.width ||
             (uint32_t) (client.bottom-client.top) != extent.height)
             if (!recreateSwapchain()) return false;
     }
