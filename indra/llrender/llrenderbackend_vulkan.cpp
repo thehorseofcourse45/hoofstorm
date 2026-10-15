@@ -155,15 +155,22 @@ struct NativeRenderer
         if (context.queries && !context.queries->passTimes.empty())     // FS_VK_PASS_TIMING=1
         {
             std::vector<std::pair<double, std::pair<std::array<uint32_t, 4>, uint64_t>>> byTime;
-            double total = 0;
-            for (const auto& e : context.queries->passTimes) { byTime.push_back({e.second.ms, {e.first, e.second.count}}); total += e.second.ms; }
+            std::map<std::array<uint32_t, 4>, double> gaps;
+            double total = 0, totalGap = 0;
+            for (const auto& e : context.queries->passTimes)
+            {
+                byTime.push_back({e.second.ms, {e.first, e.second.count}}); total += e.second.ms;
+                gaps[e.first] = e.second.gapMs; totalGap += e.second.gapMs;
+            }
             std::sort(byTime.rbegin(), byTime.rend());
-            LL_INFOS("VulkanPacing") << "pass GPU ms/frame total=" << total / 300.0 << " (sum of render pass bodies)" << LL_ENDL;
+            LL_INFOS("VulkanPacing") << "pass GPU ms/frame total=" << total / 300.0 << " (sum of render pass bodies); gap before passes="
+                << totalGap / 300.0 << " (barriers, transitions, idle between passes)" << LL_ENDL;
             for (size_t i = 0; i < std::min<size_t>(byTime.size(), 14); ++i)
             {
                 const auto& key = byTime[i].second.first;
                 LL_INFOS("VulkanPacing") << "pass GPU fb=" << key[0] << " " << key[1] << "x" << key[2] << " colors=" << key[3]
-                    << ": ms/frame=" << byTime[i].first / 300.0 << " passes/frame=" << byTime[i].second.second / 300.0 << LL_ENDL;
+                    << ": ms/frame=" << byTime[i].first / 300.0 << " gap before ms/frame=" << gaps[key] / 300.0
+                    << " passes/frame=" << byTime[i].second.second / 300.0 << LL_ENDL;
             }
             context.queries->passTimes.clear();
         }

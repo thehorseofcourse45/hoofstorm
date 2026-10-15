@@ -254,7 +254,9 @@ void VulkanQueryBackend::passBegin(const std::array<uint32_t, 4>& key)
     std::lock_guard<std::recursive_mutex> lock(mLock);
     auto slot = allocate(VK_QUERY_TYPE_TIMESTAMP, 2);
     mPasses[mCtx->currentSlot].push_back({key, slot});
-    vkCmdWriteTimestamp(mCtx->slot().cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, slot.page->pool, slot.index);
+    // BOTTOM_OF_PIPE: records when everything before the pass (including its barriers) has finished, so the
+    // time since the previous pass ended is the gap and the begin-to-end time is the pass alone.
+    vkCmdWriteTimestamp(mCtx->slot().cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, slot.page->pool, slot.index);
     mPassOpen = true;
 }
 void VulkanQueryBackend::passEnd()
@@ -271,6 +273,7 @@ void VulkanQueryBackend::beginFrame()
     if (mPassTiming && mCtx->currentSlot < 2)
     {
         auto& passes = mPasses[mCtx->currentSlot];      // recorded two frames ago, so its fence has signalled
+        uint64_t previousEnd = 0;
         for (auto& pass : passes)
         {
             uint64_t v[4]{};    // timestamp, availability, timestamp, availability
@@ -280,6 +283,8 @@ void VulkanQueryBackend::beginFrame()
             {
                 auto& total = passTimes[pass.key];
                 total.ms += double(elapsed(v[0], v[2], mCtx->timestampBits, mCtx->timestampPeriod)) / 1e6;
+                if (previousEnd) total.gapMs += double(elapsed(previousEnd, v[0], mCtx->timestampBits, mCtx->timestampPeriod)) / 1e6;
+                previousEnd = v[2];
                 ++total.count;
             }
         }

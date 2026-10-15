@@ -29,7 +29,7 @@ public:
     // passTimes until the pacing log drains them.
     void passBegin(const std::array<uint32_t, 4>& key);
     void passEnd();
-    struct PassTime { double ms = 0; uint64_t count = 0; };
+    struct PassTime { double ms = 0, gapMs = 0; uint64_t count = 0; };   // gapMs: idle/transition time before the pass
     std::map<std::array<uint32_t, 4>, PassTime> passTimes;
     size_t poolCount() const { return mPages.size(); }
     static uint64_t elapsed(uint64_t start, uint64_t end, uint32_t bits, double period);
