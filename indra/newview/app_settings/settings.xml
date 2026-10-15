@@ -260,13 +260,13 @@
   <key>FSParallelAvatarMotion</key>
   <map>
     <key>Comment</key>
-    <string>Animate other residents' avatars on worker threads. Off by default: avatars can look jittery with it on.</string>
+    <string>Animate other residents' avatars on worker threads. Turn off if avatars twitch or freeze.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
     <string>Boolean</string>
     <key>Value</key>
-    <integer>0</integer>
+    <integer>1</integer>
   </map>
 
   <key>FSFarAvatarAnimPeriod</key>
