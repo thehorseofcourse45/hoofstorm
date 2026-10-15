@@ -1156,8 +1156,13 @@ void LLVOAvatarSelf::idleUpdateAppearanceAnimation()
     //gAgentWearables.animateAllWearableParams(calcMorphAmount());
     gAgentWearables.animateAllWearableParams(calcMorphAmount(), false);
 
-    // Apply wearable visual params to avatar
-    writeWearablesToAvatar();
+    // Apply wearable visual params to avatar. Editors call writeToAvatar
+    // themselves, so outside morph animation a periodic refresh is enough.
+    static U32 sWriteFrame = 0;
+    if (getIsAppearanceAnimating() || (++sWriteFrame % 10) == 0)
+    {
+        writeWearablesToAvatar();
+    }
 
     //allow avatar to process updates
     LLVOAvatar::idleUpdateAppearanceAnimation();
