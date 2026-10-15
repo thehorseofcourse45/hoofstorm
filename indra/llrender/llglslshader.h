@@ -302,8 +302,23 @@ public:
     U32 mAttributeMask;  //mask of which reserved attributes are set (lines up with LLVertexBuffer::getTypeMask())
     std::vector<GLint> mUniform;   //lookup table of uniform enum to uniform location
     LLStaticStringTable<GLint> mUniformMap; //lookup map of uniform name to uniform location
-    typedef std::unordered_map<GLint, LLVector4> uniform_value_map_t;
-    uniform_value_map_t mValue; //lookup map of uniform location to last known value
+    // Last known value per uniform location. Locations are small non-negative ints, so a flat array replaces the
+    // hash map (about 4% of main thread time in the hash lookups); find/end/operator[]/clear keep the map interface.
+    struct uniform_value_map_t
+    {
+        struct Entry { LLVector4 second; bool valid = false; };
+        Entry* find(GLint location) { return (location >= 0 && (size_t) location < mEntries.size() && mEntries[location].valid) ? &mEntries[location] : nullptr; }
+        Entry* end() { return nullptr; }
+        LLVector4& operator[](GLint location)
+        {
+            if ((size_t) location >= mEntries.size()) mEntries.resize((size_t) location + 1);
+            mEntries[location].valid = true;
+            return mEntries[location].second;
+        }
+        void clear() { mEntries.clear(); }
+        std::vector<Entry> mEntries;
+    };
+    uniform_value_map_t mValue; //last known value of each uniform location
     std::vector<GLint> mTexture;
     S32 mTotalUniformSize;
     S32 mActiveTextureChannels;
