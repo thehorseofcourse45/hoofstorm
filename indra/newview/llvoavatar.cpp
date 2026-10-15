@@ -5820,7 +5820,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // --------------------------------------------------------------------
     // Far away avatars of other residents animate every Nth frame. The motion controller measures elapsed time since
     // its last update, so a skipped frame costs pose smoothness, not animation speed.
-    static LLCachedControl<U32> far_period(gSavedSettings, "FSDistantAvatarAnimPeriod", 3);
+    static LLCachedControl<U32> far_period(gSavedSettings, "FSDistantAvatarAnimPeriod", 1);
     static LLCachedControl<F32> far_skip_distance(gSavedSettings, "FSDistantAvatarAnimDistance", 10.f);
     static LLCachedControl<U32> farther_period(gSavedSettings, "FSFarAvatarAnimPeriod", 6);
     static LLCachedControl<F32> farther_distance(gSavedSettings, "FSFarAvatarAnimDistance", 25.f);
@@ -5833,12 +5833,9 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         far_skip = ((LLDrawable::getCurrentFrame() + mID.mData[0]) % period) != 0;
     }
 
-    // The root position (ground height lookup, orientation) is also redone only on the frames that animate. Standing and
-    // walking avatars only: sitting and ground-sit state change the root through other paths and always update.
-    if (!(far_skip && mTimeLast != 0.f && !getParent() && !isSitting() && !was_sit_ground_constrained))
-    {
-        updateRootPositionAndRotation(agent, speed, was_sit_ground_constrained);
-    }
+    // The root position runs every frame, even when the animation update is skipped: skipping it left distant avatars
+    // visibly jittery while they moved.
+    updateRootPositionAndRotation(agent, speed, was_sit_ground_constrained);
 
     //-------------------------------------------------------------------------
     // Update character motions

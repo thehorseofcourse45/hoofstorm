@@ -236,13 +236,13 @@
   <key>FSDistantAvatarAnimPeriod</key>
   <map>
     <key>Comment</key>
-    <string>Avatars of other residents farther than FSDistantAvatarAnimDistance run their animation update only every Nth frame (animation speed is kept, the pose just updates less often). 1 disables.</string>
+    <string>Avatars of other residents farther than FSDistantAvatarAnimDistance run their animation update only every Nth frame (animation speed is kept, the pose just updates less often). 1 disables; off by default because distant avatars looked jittery.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
     <string>U32</string>
     <key>Value</key>
-    <integer>3</integer>
+    <integer>1</integer>
   </map>
 
   <key>FSDistantAvatarAnimDistance</key>
