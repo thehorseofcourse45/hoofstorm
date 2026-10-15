@@ -5867,7 +5867,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
             // Other residents' avatars update their motion and skeleton on worker threads after the idle loop. Not for: yourself
             // (turn-around and animation triggers rely on running in order), animesh, previews, motions still loading (asset
             // fetch) and paused controllers.
-            static LLCachedControl<bool> parallel_motion(gSavedSettings, "FSParallelAvatarMotion", true);
+            static LLCachedControl<bool> parallel_motion(gSavedSettings, "FSParallelAvatarMotion", false);
             if (parallel_motion && !isSelf() && !isControlAvatar() && !mIsDummy && mSpecialRenderMode != 1
                 && !mMotionController.hasLoadingMotions() && !mMotionController.isPaused())
             {
