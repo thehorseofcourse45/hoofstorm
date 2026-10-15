@@ -5869,6 +5869,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
                 && !mMotionController.hasLoadingMotions() && !mMotionController.isPaused())
             {
                 mMotionDeferred = true;
+                mMotionController.sampleTimer();
                 sDeferredMotion.emplace_back(this);
             }
             else

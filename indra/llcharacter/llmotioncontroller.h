@@ -130,6 +130,9 @@ public:
     // activates sequenced motions
     // deactivates terminated motions`
     void updateMotions(bool force_update = false);
+    // Read the clock now; the next updateMotions() uses this reading instead of its own. A deferred update that runs on a
+    // worker thread would otherwise take its time step from whenever the worker starts, which varies from frame to frame.
+    void sampleTimer() { mSampledTimer = mTimer.getElapsedTimeF32(); mHasSampledTimer = true; }
 
     // minimal update (e.g. while hidden)
     void updateMotionsMinimal();
@@ -222,6 +225,8 @@ protected:
 
     LLFrameTimer        mTimer;
     F32                 mPrevTimerElapsed;
+    F32                 mSampledTimer = 0.f;
+    bool                mHasSampledTimer = false;
     F32                 mAnimTime;
     F32                 mLastTime;
     bool                mHasRunOnce;

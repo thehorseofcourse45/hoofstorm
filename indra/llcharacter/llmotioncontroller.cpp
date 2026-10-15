@@ -828,7 +828,8 @@ void LLMotionController::updateMotions(bool force_update)
     bool use_quantum = (mTimeStep != 0.f);
 
     // Always update mPrevTimerElapsed
-    F32 cur_time = mTimer.getElapsedTimeF32();
+    F32 cur_time = mHasSampledTimer ? mSampledTimer : mTimer.getElapsedTimeF32();
+    mHasSampledTimer = false;
     F32 delta_time = cur_time - mPrevTimerElapsed;
     mPrevTimerElapsed = cur_time;
     mLastTime = mAnimTime;
