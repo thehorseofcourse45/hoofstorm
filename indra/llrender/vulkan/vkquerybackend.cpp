@@ -2,6 +2,7 @@
 #include "vkframebufferbackend.h"
 #include "vkprogram.h"
 #include <algorithm>
+#include <cstdlib>
 
 namespace
 {
@@ -9,7 +10,7 @@ constexpr uint32_t TIME=0x88BF, SAMPLES=0x8914, ANY=0x8C2F, CONSERVATIVE=0x8D6A,
 constexpr uint32_t CAPACITY=256;
 bool occlusion(uint32_t target) { return target==SAMPLES || target==ANY || target==CONSERVATIVE; }
 }
-VulkanQueryBackend::VulkanQueryBackend(VkContext* ctx) : mCtx(ctx)
+VulkanQueryBackend::VulkanQueryBackend(VkContext* ctx) : mCtx(ctx), mPassTiming(getenv("FS_VK_PASS_TIMING") != nullptr)
 {
     if (supported(TIME)) for (auto& timer:mFrameTimers) generate(1,&timer);
     ctx->queries=this;
@@ -247,9 +248,44 @@ uint64_t VulkanQueryBackend::result(uint32_t id)
     if (!read(query,true)) throw std::runtime_error("Reading unfinished Vulkan query");
     return query.value;
 }
+void VulkanQueryBackend::passBegin(const std::array<uint32_t, 4>& key)
+{
+    if (!mPassTiming || mCtx->timestampBits == 0 || mCtx->currentSlot >= 2) return;
+    std::lock_guard<std::recursive_mutex> lock(mLock);
+    auto slot = allocate(VK_QUERY_TYPE_TIMESTAMP, 2);
+    mPasses[mCtx->currentSlot].push_back({key, slot});
+    vkCmdWriteTimestamp(mCtx->slot().cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, slot.page->pool, slot.index);
+    mPassOpen = true;
+}
+void VulkanQueryBackend::passEnd()
+{
+    if (!mPassTiming || !mPassOpen) return;
+    std::lock_guard<std::recursive_mutex> lock(mLock);
+    const Slot& slot = mPasses[mCtx->currentSlot].back().slot;
+    vkCmdWriteTimestamp(mCtx->slot().cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, slot.page->pool, slot.index + 1);
+    mPassOpen = false;
+}
 void VulkanQueryBackend::beginFrame()
 {
     std::lock_guard<std::recursive_mutex> lock(mLock);
+    if (mPassTiming && mCtx->currentSlot < 2)
+    {
+        auto& passes = mPasses[mCtx->currentSlot];      // recorded two frames ago, so its fence has signalled
+        for (auto& pass : passes)
+        {
+            uint64_t v[4]{};    // timestamp, availability, timestamp, availability
+            const VkResult status = vkGetQueryPoolResults(mCtx->device, pass.slot.page->pool, pass.slot.index, 2, sizeof(v), v,
+                2 * sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+            if (status == VK_SUCCESS && v[1] && v[3])
+            {
+                auto& total = passTimes[pass.key];
+                total.ms += double(elapsed(v[0], v[2], mCtx->timestampBits, mCtx->timestampPeriod)) / 1e6;
+                ++total.count;
+            }
+        }
+        passes.clear();     // drops the page references so the pools can be recycled
+        mPassOpen = false;
+    }
     const uint32_t timer=mFrameTimers[mCtx->currentSlot];   // last used two frames ago with two slots, so it has finished
     if (!timer) return;
     auto& query=object(timer);

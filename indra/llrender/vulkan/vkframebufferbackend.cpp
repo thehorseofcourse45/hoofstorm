@@ -196,7 +196,7 @@ void VulkanFramebufferBackend::endRendering()
 {
     if (mRendering)
     {
-        if (mCtx->queries) mCtx->queries->endRendering();
+        if (mCtx->queries) { mCtx->queries->endRendering(); mCtx->queries->passEnd(); }
         vkCmdEndRendering(mCtx->slot().cmd); mRendering = false;
     }
 }
@@ -240,7 +240,7 @@ void VulkanFramebufferBackend::beginRendering(U32 clearMask)
     ++mCtx->statRenderPasses;
     ++mCtx->statPassDraws[{mDraw, info.renderArea.extent.width, info.renderArea.extent.height, colorCount()}].second;
     vkCmdBeginRendering(mCtx->slot().cmd, &info);
-    if (mCtx->queries) mCtx->queries->beginRendering();
+    if (mCtx->queries) { mCtx->queries->passBegin({mDraw, info.renderArea.extent.width, info.renderArea.extent.height, colorCount()}); mCtx->queries->beginRendering(); }
     mRendering = true;
     mRenderingDepthLayout = depthLayout;
 }

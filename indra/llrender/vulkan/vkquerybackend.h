@@ -1,6 +1,8 @@
 // Native query results survive render-target switches and remain asynchronous until explicitly read.
 #pragma once
 #include "vkcontext.h"
+#include <array>
+#include <map>
 #include <memory>
 #include <mutex>
 
@@ -23,6 +25,12 @@ public:
     void endFrame();
     void beginRecording();
     void endRecording();
+    // Per-render-pass GPU time, enabled by FS_VK_PASS_TIMING=1. Results arrive two frames late and accumulate in
+    // passTimes until the pacing log drains them.
+    void passBegin(const std::array<uint32_t, 4>& key);
+    void passEnd();
+    struct PassTime { double ms = 0; uint64_t count = 0; };
+    std::map<std::array<uint32_t, 4>, PassTime> passTimes;
     size_t poolCount() const { return mPages.size(); }
     static uint64_t elapsed(uint64_t start, uint64_t end, uint32_t bits, double period);
 private:
@@ -48,5 +56,9 @@ private:
     std::map<uint32_t, Query> mQueries;
     std::map<uint32_t, uint32_t> mActive;
     Slot mOcclusion{}, mStatistics{};
+    struct Pass { std::array<uint32_t, 4> key; Slot slot; };
+    std::vector<Pass> mPasses[2];           // indexed by frame slot; read back when the slot is reused
+    const bool mPassTiming;
+    bool mPassOpen = false;
     uint32_t mNext=0, mFrameTimers[2]={};
 };
