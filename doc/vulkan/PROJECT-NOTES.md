@@ -1,5 +1,20 @@
 # Vulkan project notes
 
+## Current status: main-thread trim, GPU pass timing, upstream merge, 2026-10-15
+
+In-world about 170-185 FPS after the vsync fix (swapchain honors `RenderVSyncEnable`). Main-thread profile (800 samples, viewer focused) shows the main thread waiting on the render thread (`endRenderBackendFrame`, about 14%): in this scene the GPU, not the CPU, sets the frame rate.
+- Done and pushed (`master` = `vulkan-framebuffer`):
+  - `LLToolPie::handleHover` ran `pickImmediate` twice with identical arguments; the second now reuses `mHoverPick` (hover pick 6-7% -> 3.5%).
+  - `LLVOAvatarSelf::idleUpdateAppearanceAnimation` wrote every wearable param each frame; now every 10th frame unless the appearance is morphing (editors call `writeToAvatar` themselves). 3.2% -> under 1%.
+  - Threaded avatar motion jitter fixed: `LLMotionController::sampleTimer()` gives the worker the main-thread clock sample. `FSParallelAvatarMotion` is back to default on. Confirmed smooth in-world.
+  - Upstream `FirestormViewer/phoenix-firestorm` master merged (8 commits, no conflicts).
+  - `v0.1.0` pre-release republished from `e15ef02434` (zip made with `C:/Windows/System32/tar.exe -a`; Git's tar writes a non-zip). Not tested from a clean folder.
+- Done and committed: per-render-pass GPU timing. `FS_VK_PASS_TIMING=1` writes two timestamps around each render pass; the 300-frame `VulkanPacing` log lists the 14 most expensive targets (`pass GPU fb=... ms/frame=... passes/frame=...`). Off by default. Code: `VulkanQueryBackend::passBegin/passEnd`, read back in `beginFrame`. Activation test 45/45 with it on and off, both thread modes. Note `viewer_vulkan_activation_test` is its own target; build it separately or it is stale.
+- Findings (steady state, 1920x1017): GPU 4.0-4.2 ms/frame; render pass bodies 3.5-3.7 ms, so 0.5-2 ms is between passes. G-buffer pass about 250 draws, 2.25 ms (60% of pass time). Lighting/post chain about 0.75 ms in 5 passes, roughly fixed per pass (barely changed at half window size). Reflection probe passes about 0.15 ms total. With the user's settings (CAS, DoF, SSR, shadows off) only tonemap, glow combine, FXAA and the final present are full-screen post passes, about 0.15 ms each.
+- Looked at, nothing to gain: own-avatar `updateCharacter` (keyframe `std::map::lower_bound`, about 1% at best), reflection probe update (0.9-4% CPU, scene render), UI draw (13.6%, no hot leaf).
+
+Next steps: (1) the 1-2 ms between passes (layout transitions, barriers, clears); (2) G-buffer pass by shader program (needs per-program timing); (3) merging `combineGlow` into tonemap or FXAA into the present saves about 0.15 ms each (about 7% together), shader rewrites; (4) re-test the release zip from a clean folder.
+
 ## Current status: CPU latency work and render thread, 2026-10-14
 
 Main-thread profiling of the heavy region (300 samples, viewer focused) drove this round. Done and built, all measured only in-world and only with indicative scene parity (draw counts differ run to run, 2,350 to 3,085):
