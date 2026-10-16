@@ -32,6 +32,8 @@
 #include "lltexturebackend.h"
 #include "llframebufferbackend.h"
 #include "llvertexbufferbackend.h"
+#include <map>
+#include <mutex>
 
 static bool sObjectsCreated = false;
 bool renderBackendObjectsCreated() { return sObjectsCreated; }
@@ -44,6 +46,20 @@ LLRenderStateBackend& getRenderStateBackend()
     if (auto* backend = activeVulkanRenderStateBackend()) return *backend;
     static LLRenderStateBackend* backend = createGLRenderStateBackend();
     return *backend;
+}
+
+static std::mutex sShaderNamesMutex;
+static std::map<U32, std::string> sShaderNames;
+void setShaderDebugName(U32 program, const std::string& name)
+{
+    std::lock_guard<std::mutex> lock(sShaderNamesMutex);
+    sShaderNames[program] = name;
+}
+std::string getShaderDebugName(U32 program)
+{
+    std::lock_guard<std::mutex> lock(sShaderNamesMutex);
+    auto it = sShaderNames.find(program);
+    return it == sShaderNames.end() ? std::string() : it->second;
 }
 
 LLShaderBackend& getShaderBackend()

@@ -10,7 +10,7 @@ constexpr uint32_t TIME=0x88BF, SAMPLES=0x8914, ANY=0x8C2F, CONSERVATIVE=0x8D6A,
 constexpr uint32_t CAPACITY=256;
 bool occlusion(uint32_t target) { return target==SAMPLES || target==ANY || target==CONSERVATIVE; }
 }
-VulkanQueryBackend::VulkanQueryBackend(VkContext* ctx) : mCtx(ctx), mPassTiming(getenv("FS_VK_PASS_TIMING") != nullptr)
+VulkanQueryBackend::VulkanQueryBackend(VkContext* ctx) : mCtx(ctx), mPassTiming(!getenv("FS_VK_PASS_TIMING") || *getenv("FS_VK_PASS_TIMING") != '0')
 {
     if (supported(TIME)) for (auto& timer:mFrameTimers) generate(1,&timer);
     ctx->queries=this;
@@ -259,6 +259,20 @@ void VulkanQueryBackend::passBegin(const std::array<uint32_t, 4>& key)
     vkCmdWriteTimestamp(mCtx->slot().cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, slot.page->pool, slot.index);
     mPassOpen = true;
 }
+void VulkanQueryBackend::passDraw(uint32_t program)
+{
+    if (!mPassTiming || !mPassOpen) return;
+    std::lock_guard<std::recursive_mutex> lock(mLock);
+    Pass& pass = mPasses[mCtx->currentSlot].back();
+    if (pass.key[3] != 4 || pass.key[1] < 1000) return;     // the full-size G-buffer pass, not probe faces
+    if (pass.segments.empty() || pass.segments.back().program != program)
+    {
+        auto slot = allocate(VK_QUERY_TYPE_TIMESTAMP, 1);
+        pass.segments.push_back({program, slot, 0});
+        vkCmdWriteTimestamp(mCtx->slot().cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, slot.page->pool, slot.index);
+    }
+    ++pass.segments.back().draws;
+}
 void VulkanQueryBackend::passEnd()
 {
     if (!mPassTiming || !mPassOpen) return;
@@ -286,6 +300,28 @@ void VulkanQueryBackend::beginFrame()
                 if (previousEnd) total.gapMs += double(elapsed(previousEnd, v[0], mCtx->timestampBits, mCtx->timestampPeriod)) / 1e6;
                 previousEnd = v[2];
                 ++total.count;
+                // Shader stretches: each lasts until the next one's timestamp, the last until the pass end.
+                for (size_t i = 0; i < pass.segments.size(); ++i)
+                {
+                    uint64_t s[4]{};     // this stretch's timestamp and availability
+                    const auto& seg = pass.segments[i];
+                    if (vkGetQueryPoolResults(mCtx->device, seg.slot.page->pool, seg.slot.index, 1, sizeof(s), s,
+                        2 * sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT) != VK_SUCCESS || !s[1]) break;
+                    uint64_t next = v[2];
+                    if (i + 1 < pass.segments.size())
+                    {
+                        uint64_t n[2]{};
+                        const auto& following = pass.segments[i + 1];
+                        if (vkGetQueryPoolResults(mCtx->device, following.slot.page->pool, following.slot.index, 1, sizeof(n), n,
+                            2 * sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT) != VK_SUCCESS || !n[1]) break;
+                        next = n[0];
+                    }
+                    if (i == 0) programSetupMs += double(elapsed(v[0], s[0], mCtx->timestampBits, mCtx->timestampPeriod)) / 1e6;
+                    auto& program = programTimes[seg.program];
+                    program.ms += double(elapsed(s[0], next, mCtx->timestampBits, mCtx->timestampPeriod)) / 1e6;
+                    program.draws += seg.draws;
+                    ++program.stretches;
+                }
             }
         }
         passes.clear();     // drops the page references so the pools can be recycled

@@ -61,6 +61,10 @@ public:
     /*virtual*/ bool isFacePool() { return false; }
     /*virtual*/ void resetDrawOrders();
 
+    // True while the sky is drawn after the opaque pools: it must not write depth or clear it, so the geometry depth
+    // survives and the sky pixels stay unwritten (the haze shaders use that as a mask).
+    static bool sDrawnLast;
+
     static void cleanupGL();
     static void restoreGL();
 private:

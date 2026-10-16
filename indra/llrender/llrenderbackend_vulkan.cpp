@@ -152,7 +152,7 @@ struct NativeRenderer
                     << " passes/frame=" << byDraws[i].first.second / 300.0 << LL_ENDL;
             context.statPassDraws.clear();
         }
-        if (context.queries && !context.queries->passTimes.empty())     // FS_VK_PASS_TIMING=1
+        if (context.queries && !context.queries->passTimes.empty())     // on unless FS_VK_PASS_TIMING=0
         {
             std::vector<std::pair<double, std::pair<std::array<uint32_t, 4>, uint64_t>>> byTime;
             std::map<std::array<uint32_t, 4>, double> gaps;
@@ -173,6 +173,21 @@ struct NativeRenderer
                     << " passes/frame=" << byTime[i].second.second / 300.0 << LL_ENDL;
             }
             context.queries->passTimes.clear();
+            if (!context.queries->programTimes.empty())
+            {
+                std::vector<std::pair<double, uint32_t>> byProgram;
+                for (const auto& e : context.queries->programTimes) byProgram.push_back({e.second.ms, e.first});
+                std::sort(byProgram.rbegin(), byProgram.rend());
+                LL_INFOS("VulkanPacing") << "G-buffer pass by shader: setup before first draw ms/frame=" << context.queries->programSetupMs / 300.0 << LL_ENDL;
+                for (size_t i = 0; i < std::min<size_t>(byProgram.size(), 14); ++i)
+                {
+                    const auto& t = context.queries->programTimes[byProgram[i].second];
+                    LL_INFOS("VulkanPacing") << "G-buffer shader " << getShaderDebugName(byProgram[i].second) << " #" << byProgram[i].second
+                        << ": ms/frame=" << t.ms / 300.0 << " draws/frame=" << t.draws / 300.0 << " stretches/frame=" << t.stretches / 300.0 << LL_ENDL;
+                }
+                context.queries->programTimes.clear();
+                context.queries->programSetupMs = 0;
+            }
         }
         if (thread)
         {

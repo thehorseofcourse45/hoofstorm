@@ -306,6 +306,7 @@ void VulkanShaderBackend::use(U32 program)
 {
     if (mCtx->queries && mCtx->queries->statisticsActive()) mCtx->framebuffers->endRendering();
     mCtx->program = program ? vkProgram(program) : nullptr;
+    mCtx->programHandle = program;
 }
 
 // ----------------------------------------------------------------------------------------------------------------

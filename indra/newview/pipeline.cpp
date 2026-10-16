@@ -64,6 +64,7 @@
 #include "lldrawpoolbump.h"
 #include "lldrawpooltree.h"
 #include "lldrawpoolwater.h"
+#include "lldrawpoolwlsky.h"
 #include "llface.h"
 #include "llfeaturemanager.h"
 #include "llfloatertelehub.h"
@@ -4281,6 +4282,10 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 
         pool_set_t::iterator iter1 = mPools.begin();
 
+        // The sky is squashed to the far clip and tested LEQUAL, so drawing it after the opaque pools shades only the
+        // pixels geometry has not covered. It was the most expensive part of this pass when drawn first.
+        pool_set_t::iterator sky_begin = mPools.end();
+
         while ( iter1 != mPools.end() )
         {
             LLDrawPool *poolp = *iter1;
@@ -4297,7 +4302,18 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
             }
 
             pool_set_t::iterator iter2 = iter1;
-            if (hasRenderType(poolp->getType()) && poolp->getNumDeferredPasses() > 0)
+            if (cur_type == LLDrawPool::POOL_WL_SKY && sky_begin == mPools.end())
+            {
+                sky_begin = iter1;     // drawn after the loop
+                for (iter2 = iter1; iter2 != mPools.end(); iter2++)
+                {
+                    if ((*iter2)->getType() != cur_type)
+                    {
+                        break;
+                    }
+                }
+            }
+            else if (hasRenderType(poolp->getType()) && poolp->getNumDeferredPasses() > 0)
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("deferred pool render");
 
@@ -4338,6 +4354,31 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
             }
             iter1 = iter2;
             stop_glerror();
+        }
+
+        if (sky_begin != mPools.end() && hasRenderType((*sky_begin)->getType()) && (*sky_begin)->getNumDeferredPasses() > 0)
+        {
+            LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("deferred sky render");
+
+            gGLLastMatrix = NULL;
+            gGL.loadMatrix(gGLModelView);
+
+            LLDrawPool* poolp = *sky_begin;
+            LLDrawPoolWLSky::sDrawnLast = true;
+            for (S32 i = 0; i < poolp->getNumDeferredPasses(); i++)
+            {
+                LLVertexBuffer::unbind();
+                poolp->beginDeferredPass(i);
+                for (pool_set_t::iterator iter2 = sky_begin; iter2 != mPools.end() && (*iter2)->getType() == poolp->getType(); iter2++)
+                {
+                    if (!(*iter2)->getSkipRenderFlag()) { (*iter2)->renderDeferred(i); }
+                }
+                poolp->endDeferredPass(i);
+                LLVertexBuffer::unbind();
+
+                LLGLState::checkStates();
+            }
+            LLDrawPoolWLSky::sDrawnLast = false;
         }
 
         gGLLastMatrix = NULL;

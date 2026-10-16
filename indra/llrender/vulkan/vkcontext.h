@@ -107,6 +107,7 @@ struct VkContext
     // the "current program". The GL interfaces have no such concept (it is global GL state, owned by LLGLSLShader);
     // a Vulkan pipeline and its descriptor sets need it. In the viewer LLShaderBackend::use() sets it.
     struct VkProgram* program = nullptr;
+    uint32_t programHandle = 0;                          // backend handle of "program", for the pass timing log
 
     // Texture units. A program samples unit samplerUnit[binding]; the texture backend knows what is bound to each unit
     // (LLTexUnit::bind) and turns it into an image view and a sampler when a draw needs it.

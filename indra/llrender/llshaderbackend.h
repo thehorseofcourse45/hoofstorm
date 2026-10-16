@@ -31,6 +31,10 @@
 #include <string>
 #include <vector>
 
+// Debug names for program handles, shown by the Vulkan pass timing log. Thread safe.
+void setShaderDebugName(U32 program, const std::string& name);
+std::string getShaderDebugName(U32 program);
+
 // Everything LLShaderMgr and LLGLSLShader need from the graphics API to create, link, bind and feed shaders.
 // See doc/vulkan/shader-layer-design.md. LLGLSLShader keeps its public API, the CPU-side value cache and the
 // reserved attribute/uniform tables; the backend owns the API objects.

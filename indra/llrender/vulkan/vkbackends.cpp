@@ -1,6 +1,7 @@
 #include "vkbackends.h"
 #include "vkprogram.h"
 #include "vkframebufferbackend.h"
+#include "vkquerybackend.h"
 
 #include <GL/gl.h> // GL constants only: the viewer's state vocabulary is GL values, so a backend has to know them
 #include <cstring>
@@ -768,6 +769,7 @@ bool VulkanVertexBufferBackend::recordCommon(U32 mode, bool indexed, bool vertex
     dc.viewportSet = true;
 
     ++mCtx->statDraws;
+    if (mCtx->queries) mCtx->queries->passDraw(mCtx->programHandle);
     ++mCtx->statPassDraws[{mCtx->framebuffers->getBound(), renderExtent.width, renderExtent.height, mCtx->framebuffers->colorCount()}].first;
     if (!vertexInput) { ++drawCalls; return true; }
     VkBuffer vb = resolve(mCurVB, mCurVBp).buffer;

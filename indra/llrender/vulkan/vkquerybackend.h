@@ -25,10 +25,14 @@ public:
     void endFrame();
     void beginRecording();
     void endRecording();
-    // Per-render-pass GPU time, enabled by FS_VK_PASS_TIMING=1. Results arrive two frames late and accumulate in
+    // Per-render-pass GPU time, on by default, FS_VK_PASS_TIMING=0 disables. Results arrive two frames late and accumulate in
     // passTimes until the pacing log drains them.
     void passBegin(const std::array<uint32_t, 4>& key);
     void passEnd();
+    void passDraw(uint32_t program);      // main G-buffer pass only: time the stretches between shader changes
+    struct ProgramTime { double ms = 0; uint64_t draws = 0, stretches = 0; };
+    std::map<uint32_t, ProgramTime> programTimes;
+    double programSetupMs = 0;            // from pass start to the first draw (clears, load ops)
     struct PassTime { double ms = 0, gapMs = 0; uint64_t count = 0; };   // gapMs: idle/transition time before the pass
     std::map<std::array<uint32_t, 4>, PassTime> passTimes;
     size_t poolCount() const { return mPages.size(); }
@@ -56,7 +60,8 @@ private:
     std::map<uint32_t, Query> mQueries;
     std::map<uint32_t, uint32_t> mActive;
     Slot mOcclusion{}, mStatistics{};
-    struct Pass { std::array<uint32_t, 4> key; Slot slot; };
+    struct Segment { uint32_t program; Slot slot; uint32_t draws; };
+    struct Pass { std::array<uint32_t, 4> key; Slot slot; std::vector<Segment> segments; };
     std::vector<Pass> mPasses[2];           // indexed by frame slot; read back when the slot is reused
     const bool mPassTiming;
     bool mPassOpen = false;

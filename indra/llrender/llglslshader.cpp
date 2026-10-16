@@ -442,6 +442,7 @@ bool LLGLSLShader::createShader()
 
     // Create program
     mProgramObject = getShaderBackend().createProgram();
+    if (mProgramObject != 0) setShaderDebugName(mProgramObject, mName);
     if (mProgramObject == 0)
     {
         // Shouldn't happen if shader related extensions, like ARB_vertex_shader, exist.

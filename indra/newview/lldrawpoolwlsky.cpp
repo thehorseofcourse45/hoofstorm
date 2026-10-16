@@ -72,6 +72,8 @@ LLViewerTexture *LLDrawPoolWLSky::getDebugTexture()
     return NULL;
 }
 
+bool LLDrawPoolWLSky::sDrawnLast = false;
+
 void LLDrawPoolWLSky::beginDeferredPass(S32 pass)
 {
     sky_shader = &gDeferredWLSkyProgram;
@@ -90,7 +92,11 @@ void LLDrawPoolWLSky::endDeferredPass(S32 pass)
     moon_shader  = nullptr;
 
     // clear the depth buffer so haze shaders can use unwritten depth as a mask
-    getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT);
+    // (not when drawn last: the sky never wrote depth, and the clear would wipe the geometry)
+    if (!sDrawnLast)
+    {
+        getFramebufferBackend().clear(GL_DEPTH_BUFFER_BIT);
+    }
 }
 
 void LLDrawPoolWLSky::renderDome(const LLVector3& camPosLocal, F32 camHeightLocal, LLGLSLShader * shader) const
@@ -179,7 +185,7 @@ void LLDrawPoolWLSky::renderSkyHazeDeferred(const LLVector3& camPosLocal, F32 ca
             sky_shader->bind();
         }
 
-        LLGLSPipelineDepthTestSkyBox sky(true, true);
+        LLGLSPipelineDepthTestSkyBox sky(true, !sDrawnLast);
 
         sky_shader->uniform1i(LLShaderMgr::CUBE_SNAPSHOT, gCubeSnapshot ? 1 : 0);
 
@@ -299,7 +305,7 @@ void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 
     {
         LLSettingsSky::ptr_t psky = LLEnvironment::instance().getCurrentSky();
 
-        LLGLSPipelineBlendSkyBox pipeline(true, true);
+        LLGLSPipelineBlendSkyBox pipeline(true, !sDrawnLast);
 
         cloudshader->bind();
 
@@ -356,7 +362,7 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
 {
     if (!gSky.mVOSkyp || use_hdri_sky()) return;
 
-    LLGLSPipelineBlendSkyBox gls_skybox(true, true); // SL-14113 we need moon to write to depth to clip stars behind
+    LLGLSPipelineBlendSkyBox gls_skybox(true, !sDrawnLast); // SL-14113 we need moon to write to depth to clip stars behind (drawn last: stars come first instead)
 
     LLVector3 const & origin = LLViewerCamera::getInstance()->getOrigin();
     gGL.pushMatrix();
@@ -487,8 +493,12 @@ void LLDrawPoolWLSky::renderDeferred(S32 pass)
     if (gPipeline.canUseWindLightShaders())
     {
         renderSkyHazeDeferred(origin, camHeightLocal);
+        if (sDrawnLast && !gCubeSnapshot)
+        {
+            renderStarsDeferred(origin);    // no depth writes here, so the moon has to cover the stars by being drawn after them
+        }
         renderHeavenlyBodies();
-        if (!gCubeSnapshot)
+        if (!sDrawnLast && !gCubeSnapshot)
         {
             renderStarsDeferred(origin);
         }

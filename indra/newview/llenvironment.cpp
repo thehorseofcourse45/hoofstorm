@@ -1017,7 +1017,7 @@ LLSettingsSky::ptr_t LLEnvironment::getCurrentSky() const
     {
         for (int idx = 0; idx < ENV_END; ++idx)
         {
-            if (mEnvironments[idx]->getSky())
+            if (mEnvironments[idx] && mEnvironments[idx]->getSky())
             {
                 psky = mEnvironments[idx]->getSky();
                 break;
@@ -1035,7 +1035,7 @@ LLSettingsWater::ptr_t LLEnvironment::getCurrentWater() const
     {
         for (int idx = 0; idx < ENV_END; ++idx)
         {
-            if (mEnvironments[idx]->getWater())
+            if (mEnvironments[idx] && mEnvironments[idx]->getWater())
             {
                 pwater = mEnvironments[idx]->getWater();
                 break;

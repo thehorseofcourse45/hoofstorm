@@ -3273,8 +3273,13 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     // animate the character
     // store off last frame's root position to be consistent with camera position
     mLastRootPos = mRoot->getWorldPosition();
-    // On frames where a distant avatar's motions were skipped, its attachments, lip sync and effects need no refresh either.
+    const LLQuaternion root_rot_before = mRoot->getWorldRotation();
     bool detailed_update = updateCharacter(agent) && !mFarAnimSkipped;
+    // On frames where a distant avatar's motions were skipped, lip sync and effects need no refresh, but the root still
+    // moves every frame, so attachments have to follow it or they lag the body and jump when the next full update runs.
+    const bool root_moved = (mRoot->getWorldPosition() - mLastRootPos).lengthSquared() > 1.0e-8f
+        || dot(root_rot_before, mRoot->getWorldRotation()) < 0.999999f;
+    const bool refresh_attachments = detailed_update || (mFarAnimSkipped && root_moved);
 
     static LLUICachedControl<bool> visualizers_in_calls("ShowVoiceVisualizersInCalls", false);
     bool voice_enabled = (visualizers_in_calls || LLVoiceClient::getInstance()->inProximalChannel()) &&
@@ -3283,7 +3288,7 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     LLVector3 hud_name_pos = idleCalcNameTagPosition(mLastRootPos);
 
     idleUpdateVoiceVisualizer(voice_enabled, hud_name_pos);
-    idleUpdateMisc( detailed_update );
+    idleUpdateMisc( refresh_attachments );
     idleUpdateAppearanceAnimation();
     if (detailed_update)
     {
