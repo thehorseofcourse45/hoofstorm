@@ -1,5 +1,19 @@
 # Vulkan project notes
 
+## Current status: vertex data in VRAM, restore crash fix, 2026-10-16 (later)
+
+- Big win: vertex and index buffers lived in the first HOST_VISIBLE|HOST_COHERENT memory type, which on the RX 6700 XT (no Resizable BAR; the device-local host-visible heap is only 256 MB) is system RAM. Every vertex fetch crossed PCIe. Skinned avatars cost about 4.9 us per 1K vertex shader invocations.
+  - `VulkanVertexBufferBackend::promote`: a buffer drawn after 60 frames without an upload gets a DEVICE_LOCAL copy, recorded into the upload batch (submitted ahead of the frame) with a TRANSFER -> VERTEX_INPUT barrier; draws bind `Buf::drawBuffer()`. Any upload or free drops the copy (`dropDeviceCopy`, deferred release). Budget `kDeviceCap` 2 GB; allocation failure keeps the host copy. Host storage now has TRANSFER_SRC usage.
+  - Result, 15+ avatar crowd: skinned shader 4.9 -> 0.7 us per 1K vertex invocations; G-buffer 9.0-9.3 -> 3.85 ms; GPU 12.3 -> 9.7 ms avg with more avatars in view; CPU recording unchanged (about 10.5 ms).
+  - A 2-frame threshold made about 5 copies/frame that were dropped again by the next upload and doubled CPU recording time; 60 frames brought it to about 70 copies per 300 frames. Log: `VRAM buffer copies made/dropped (total)=... holding MB=...`.
+  - Ceiling: one `vkAllocateMemory` per promoted buffer. Suballocate from large blocks if allocation count or time shows up.
+- Pass timing: per-shader stretches for every full-size pass (`screen pass fb=... shader ...`), and for the G-buffer pass a pipeline statistics query per stretch (`Kverts/frame`, `Kvs/frame`, `Kfrags/frame`). Closed early if a viewer GL primitive query starts.
+- Crash fix: `VulkanFramebufferBackend::clear` now begins the frame like a draw does (keeping the bound framebuffer; nothing while minimized). After a restore from minimized, a frame starting with a clear aborted with "draw outside frame or incomplete framebuffer". The two cases now have separate messages; incomplete also prints the framebuffer and status.
+- Measurement gotcha: `BackgroundYieldTime` (40 ms) sleeps every frame while the viewer is not focused, so FPS read then is about 16-20. Only use focused samples.
+- Lighting/post chain (main screen target, 5 passes, about 2.5 ms) is spread across Soften, point lights, alpha, MultiLight, Haze; nothing dominant.
+
+Next steps: (1) `Copy Depth Shader` runs 4 times a frame (0.3 ms); (2) a few more focused FPS samples in the crowd; (3) fewer small passes.
+
 ## Current status: masked draw order, barrier batching, 2026-10-16
 
 GPU: AMD Radeon RX 6700 XT (no lazily allocated memory type, so transient attachments buy nothing; skipped).

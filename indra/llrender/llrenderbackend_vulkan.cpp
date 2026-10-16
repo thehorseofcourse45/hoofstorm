@@ -127,6 +127,8 @@ struct NativeRenderer
             << "; GPU avg/max ms=" << gpuTotal/300 << "/" << gpuMax
             << "; blocking submits=" << context.blockingSubmissions-previousBlocking
             << "; buffer versions=" << context.bufferRenames-previousRenames
+            << "; VRAM buffer copies made/dropped (total)=" << context.bufferPromotions << "/" << context.bufferDemotions
+            << " holding MB=" << context.bufferVramBytes / 1048576.0
             << "; pipelines=" << context.pipelinesCreated-previousPipelines
             << "; draws skipped for pending pipelines=" << context.pipelineDrawsSkipped-previousSkipped
             << "; feedback substitutions=" << context.feedbackSubstitutions
@@ -185,7 +187,9 @@ struct NativeRenderer
                 {
                     const auto& t = context.queries->programTimes[byProgram[i].second];
                     LL_INFOS("VulkanPacing") << "G-buffer shader " << getShaderDebugName(byProgram[i].second) << " #" << byProgram[i].second
-                        << ": ms/frame=" << t.ms / 300.0 << " draws/frame=" << t.draws / 300.0 << " stretches/frame=" << t.stretches / 300.0 << LL_ENDL;
+                        << ": ms/frame=" << t.ms / 300.0 << " draws/frame=" << t.draws / 300.0 << " stretches/frame=" << t.stretches / 300.0
+                        << " Kverts/frame=" << t.vertices / 300e3 << " Kvs/frame=" << t.vsInvocations / 300e3
+                        << " Kfrags/frame=" << t.fragments / 300e3 << LL_ENDL;
                 }
                 context.queries->programTimes.clear();
                 context.queries->programSetupMs = 0;
@@ -196,6 +200,17 @@ struct NativeRenderer
                     LL_INFOS("VulkanPacing") << "G-buffer draw #" << byDraw[i].second << " of studied shader: ms/frame=" << byDraw[i].first / 300.0 << LL_ENDL;
                 context.queries->drawTimes.clear();
             }
+            std::vector<std::pair<double, std::pair<uint32_t, uint32_t>>> byScreen;
+            for (const auto& e : context.queries->screenProgramTimes) byScreen.push_back({e.second.ms, e.first});
+            std::sort(byScreen.rbegin(), byScreen.rend());
+            for (size_t i = 0; i < std::min<size_t>(byScreen.size(), 16); ++i)
+            {
+                const auto& t = context.queries->screenProgramTimes[byScreen[i].second];
+                LL_INFOS("VulkanPacing") << "screen pass fb=" << byScreen[i].second.first << " shader " << getShaderDebugName(byScreen[i].second.second)
+                    << " #" << byScreen[i].second.second << ": ms/frame=" << t.ms / 300.0 << " draws/frame=" << t.draws / 300.0
+                    << " stretches/frame=" << t.stretches / 300.0 << LL_ENDL;
+            }
+            context.queries->screenProgramTimes.clear();
         }
         if (thread)
         {

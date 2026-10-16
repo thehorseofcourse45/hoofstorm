@@ -14,6 +14,16 @@ VulkanQueryBackend::VulkanQueryBackend(VkContext* ctx) : mCtx(ctx), mPassTiming(
     mDrawTimingProgram(getenv("FS_VK_DRAW_TIMING") ? (uint32_t) atoi(getenv("FS_VK_DRAW_TIMING")) : 0)
 {
     if (supported(TIME)) for (auto& timer:mFrameTimers) generate(1,&timer);
+    if (mPassTiming && supported(PRIMITIVES))
+    {
+        VkQueryPoolCreateInfo info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        info.queryType=VK_QUERY_TYPE_PIPELINE_STATISTICS; info.queryCount=2*STATS_PER_SLOT;
+        // results come back in bit order: input-assembly vertices, vertex shader invocations, fragment shader invocations
+        info.pipelineStatistics=VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT | VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT |
+            VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT;
+        VK_CHECK(vkCreateQueryPool(mCtx->device,&info,nullptr,&mStatsPool));
+        vkResetQueryPool(mCtx->device,mStatsPool,0,2*STATS_PER_SLOT);
+    }
     ctx->queries=this;
 }
 VulkanQueryBackend::~VulkanQueryBackend()
@@ -23,6 +33,11 @@ VulkanQueryBackend::~VulkanQueryBackend()
     for (auto& page:mPages)
     {
         auto device=mCtx->device; auto pool=page->pool;
+        mCtx->deferRelease([device,pool]{vkDestroyQueryPool(device,pool,nullptr);});
+    }
+    if (mStatsPool)
+    {
+        auto device=mCtx->device; auto pool=mStatsPool;
         mCtx->deferRelease([device,pool]{vkDestroyQueryPool(device,pool,nullptr);});
     }
 }
@@ -175,6 +190,7 @@ void VulkanQueryBackend::startOcclusion()
 }
 void VulkanQueryBackend::startStatistics()
 {
+    closeStretchStats();    // only one pipeline statistics query may be active
     mStatistics=allocate(VK_QUERY_TYPE_PIPELINE_STATISTICS);
     mStatistics.geometry=mCtx->program && mCtx->program->gs;
     vkCmdBeginQuery(mCtx->slot().cmd,mStatistics.page->pool,mStatistics.index,0);
@@ -265,22 +281,37 @@ void VulkanQueryBackend::passDraw(uint32_t program)
     if (!mPassTiming || !mPassOpen) return;
     std::lock_guard<std::recursive_mutex> lock(mLock);
     Pass& pass = mPasses[mCtx->currentSlot].back();
-    if (pass.key[3] != 4 || pass.key[1] < 1000) return;     // the full-size G-buffer pass, not probe faces
+    if (pass.key[1] < 1000) return;     // full-size passes only, not probe faces or shadow maps
     if (pass.segments.empty()) mDrawOrdinal = 0;
-    const bool split = program == mDrawTimingProgram;      // one stretch per draw for the program under study
+    const bool split = program == mDrawTimingProgram && pass.key[3] == 4;  // one stretch per draw for the G-buffer program under study
     if (split) ++mDrawOrdinal;
     if (pass.segments.empty() || pass.segments.back().program != program || split)
     {
+        closeStretchStats();
         auto slot = allocate(VK_QUERY_TYPE_TIMESTAMP, 1);
         pass.segments.push_back({program, slot, 0, split ? mDrawOrdinal : 0});
         vkCmdWriteTimestamp(mCtx->slot().cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, slot.page->pool, slot.index);
+        auto& used = mStatsUsed[mCtx->currentSlot];
+        if (mStatsPool && pass.key[3] == 4 && !mStatistics.page && used < STATS_PER_SLOT)
+        {
+            mStatsOpen = (int32_t) (mCtx->currentSlot * STATS_PER_SLOT + used++);
+            vkCmdBeginQuery(mCtx->slot().cmd, mStatsPool, (uint32_t) mStatsOpen, 0);
+            pass.segments.back().stats = mStatsOpen;
+        }
     }
     ++pass.segments.back().draws;
+}
+void VulkanQueryBackend::closeStretchStats()
+{
+    if (mStatsOpen < 0) return;
+    vkCmdEndQuery(mCtx->slot().cmd, mStatsPool, (uint32_t) mStatsOpen);
+    mStatsOpen = -1;
 }
 void VulkanQueryBackend::passEnd()
 {
     if (!mPassTiming || !mPassOpen) return;
     std::lock_guard<std::recursive_mutex> lock(mLock);
+    closeStretchStats();
     const Slot& slot = mPasses[mCtx->currentSlot].back().slot;
     vkCmdWriteTimestamp(mCtx->slot().cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, slot.page->pool, slot.index + 1);
     mPassOpen = false;
@@ -320,18 +351,30 @@ void VulkanQueryBackend::beginFrame()
                             2 * sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT) != VK_SUCCESS || !n[1]) break;
                         next = n[0];
                     }
-                    if (i == 0) programSetupMs += double(elapsed(v[0], s[0], mCtx->timestampBits, mCtx->timestampPeriod)) / 1e6;
-                    auto& program = programTimes[seg.program];
+                    const bool gbuffer = pass.key[3] == 4;
+                    if (i == 0 && gbuffer) programSetupMs += double(elapsed(v[0], s[0], mCtx->timestampBits, mCtx->timestampPeriod)) / 1e6;
+                    auto& program = gbuffer ? programTimes[seg.program] : screenProgramTimes[{pass.key[0], seg.program}];
                     const double ms = double(elapsed(s[0], next, mCtx->timestampBits, mCtx->timestampPeriod)) / 1e6;
                     program.ms += ms;
                     if (seg.ordinal) drawTimes[seg.ordinal] += ms;
                     program.draws += seg.draws;
                     ++program.stretches;
+                    uint64_t st[4]{};    // vertices, vertex invocations, fragment invocations, availability
+                    if (seg.stats >= 0 && vkGetQueryPoolResults(mCtx->device, mStatsPool, (uint32_t) seg.stats, 1, sizeof(st), st, sizeof(st),
+                        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT) == VK_SUCCESS && st[3])
+                    {
+                        program.vertices += st[0]; program.vsInvocations += st[1]; program.fragments += st[2];
+                    }
                 }
             }
         }
         passes.clear();     // drops the page references so the pools can be recycled
         mPassOpen = false;
+        if (mStatsPool && mStatsUsed[mCtx->currentSlot])
+        {
+            vkResetQueryPool(mCtx->device, mStatsPool, (uint32_t) mCtx->currentSlot * STATS_PER_SLOT, mStatsUsed[mCtx->currentSlot]);
+            mStatsUsed[mCtx->currentSlot] = 0;
+        }
     }
     const uint32_t timer=mFrameTimers[mCtx->currentSlot];   // last used two frames ago with two slots, so it has finished
     if (!timer) return;

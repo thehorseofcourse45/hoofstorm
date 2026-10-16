@@ -118,7 +118,17 @@ private:
         BufferKind kind = BufferKind::Vertex;
         std::vector<BufferStorage> retired;
         std::vector<U8> shadow; // last uploaded bytes; avoids reading uncached GPU-visible memory when renaming
+        // Host-visible storage on a discrete GPU is system RAM, read over PCIe on every vertex fetch. Buffers that stop
+        // changing get a VRAM copy for drawing; an upload drops it again.
+        VkBuffer device = VK_NULL_HANDLE;
+        VkDeviceMemory deviceMemory = VK_NULL_HANDLE;
+        uint64_t uploadFrame = 0;
+        VkBuffer drawBuffer() const { return device ? device : buffer; }
     };
+    void promote(Buf& b);
+    void dropDeviceCopy(Buf& b);
+    U64 mDeviceBytes = 0;
+    static constexpr U64 kDeviceCap = 2048ull << 20;     // ponytail: fixed VRAM budget for vertex data, size it from the heap if it binds
     BufferStorage createStorage(BufferKind kind, U32 size);
     static void destroyStorage(VkDevice device, const BufferStorage& storage);
     void recycleStorage(BufferKind kind, const BufferStorage& storage);

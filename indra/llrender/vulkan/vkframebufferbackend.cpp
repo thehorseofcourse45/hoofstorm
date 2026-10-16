@@ -206,7 +206,12 @@ void VulkanFramebufferBackend::beginRendering(U32 clearMask)
         VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
     if (mRendering && depthLayout != mRenderingDepthLayout) endRendering();
     if (mRendering) return;
-    if (!mCtx->recording || checkStatus() != COMPLETE) fail("draw outside frame or incomplete framebuffer");
+    if (!mCtx->recording) fail("draw outside frame");
+    if (const U32 status = checkStatus(); status != COMPLETE)
+    {
+        fprintf(stderr, "Vulkan framebuffer %u incomplete, status 0x%x\n", mDraw, status);
+        fail("incomplete framebuffer");
+    }
     const U32 requestedClear = clearMask;
     const bool initialWindowClear = !mDraw && mDefaultClear;
     if (initialWindowClear) { clearMask |= COLOR_BIT | DEPTH_BIT; mDefaultClear = false; }
@@ -251,6 +256,15 @@ void VulkanFramebufferBackend::clear(U32 mask)
     prepareDraw();
     if (mask & ~(COLOR_BIT | DEPTH_BIT)) fail("stencil clears need a stencil attachment");
     if (!mask) return;
+    // A frame can start with a clear (after a restore from minimized, before any draw); begin it like a draw does.
+    // While minimized there is no frame and nothing to clear.
+    if (!mCtx->recording)
+    {
+        const U32 draw = mDraw, read = mRead;      // beginFrame resets the bindings to the window
+        const float black[4] = {0, 0, 0, 1};
+        if (!mCtx->beginFrame(black)) return;
+        mDraw = draw; mRead = read;
+    }
     const auto& s = mState->s;
     assert(!(mask & COLOR_BIT) || (s.colorMask[0] && s.colorMask[1] && s.colorMask[2] && s.colorMask[3]));
     assert(!(mask & DEPTH_BIT) || s.depthWrite);

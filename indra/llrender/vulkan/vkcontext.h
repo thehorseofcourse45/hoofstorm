@@ -234,6 +234,7 @@ struct VkContext
     double lastFenceWaitMs = 0, lastAcquireWaitMs = 0, lastRecordingMs = 0, lastPresentMs = 0;
     double pipelineCreationMs = 0;
     uint64_t bufferRenames = 0, pipelinesCreated = 0, pipelineCacheHits = 0;
+    uint64_t bufferPromotions = 0, bufferDemotions = 0, bufferVramBytes = 0;   // vertex/index copies kept in VRAM
     // A draw whose pipeline is missing is skipped while a worker compiles it, instead of stalling the frame. Off unless the owner
     // enables it; syncPipelineScopes > 0 forces synchronous builds (benchmarks, tests that need every draw).
     bool asyncPipelines = false;

@@ -162,6 +162,8 @@ VulkanVertexBufferBackend::~VulkanVertexBufferBackend()
     {
         destroyStorage(mCtx->device, kv.second);
         for (const auto& retired : kv.second.retired) destroyStorage(mCtx->device, retired);
+        vkDestroyBuffer(mCtx->device, kv.second.device, nullptr);
+        vkFreeMemory(mCtx->device, kv.second.deviceMemory, nullptr);
     }
 }
 
@@ -222,7 +224,7 @@ VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createStorag
 
     VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bci.size = capacity;
-    bci.usage = kind == BufferKind::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    bci.usage = (kind == BufferKind::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT) | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     VK_CHECK(vkCreateBuffer(mCtx->device, &bci, nullptr, &b.buffer));
     ++mCtx->bufferAllocations;
     VkMemoryRequirements req;
@@ -245,6 +247,7 @@ void VulkanVertexBufferBackend::allocateWithId(BufferKind kind, U32 size, U64 id
     static_cast<BufferStorage&>(b) = createStorage(kind, size);
     b.size = size;
     b.kind = kind;
+    b.uploadFrame = mCtx->frameCounter;
     mNextId = id + 1;
     mBytes += b.allocationBytes;
     Buf& stored = mBuffers[id] = std::move(b);
@@ -273,6 +276,7 @@ void VulkanVertexBufferBackend::free(BufferKind, U32 size, BufferHandle handle, 
     {
         return;
     }
+    dropDeviceCopy(it->second);
     const BufferStorage storage = it->second;
     auto retired = std::move(it->second.retired);
     mBytes -= storage.allocationBytes;
@@ -324,6 +328,8 @@ void VulkanVertexBufferBackend::upload(BufferKind kind, BufferHandle handle, U32
         abort();
     }
     auto& buffer = it->second;
+    dropDeviceCopy(buffer);
+    buffer.uploadFrame = mCtx->frameCounter;
     memcpy(buffer.shadow.data() + start, data, (size_t)end - start + 1);
     mCtx->refreshCompleted();
     auto safe = [&](const BufferStorage& storage) {
@@ -704,7 +710,56 @@ VulkanVertexBufferBackend::Buf& VulkanVertexBufferBackend::resolve(BufferHandle 
         }
     }
     cache->usedFrame = mCtx->frameCounter;
+    // Only buffers left alone for about a second: earlier, most copies were dropped again by the next upload.
+    if (!cache->device && cache->size && cache->uploadFrame + 60 < mCtx->frameCounter && mDeviceBytes + cache->size <= kDeviceCap) promote(*cache);
     return *cache;
+}
+
+void VulkanVertexBufferBackend::promote(Buf& b)
+{
+    VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bci.size = b.size;
+    bci.usage = (b.kind == BufferKind::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT) | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VK_CHECK(vkCreateBuffer(mCtx->device, &bci, nullptr, &b.device));
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(mCtx->device, b.device, &req);
+    VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(mCtx->device, &mai, nullptr, &b.deviceMemory) != VK_SUCCESS)
+    {
+        vkDestroyBuffer(mCtx->device, b.device, nullptr);     // VRAM full: keep drawing from host memory
+        b.device = VK_NULL_HANDLE;
+        b.uploadFrame = mCtx->frameCounter;                 // and do not retry every draw
+        return;
+    }
+    VK_CHECK(vkBindBufferMemory(mCtx->device, b.device, b.deviceMemory, 0));
+    mDeviceBytes += b.size;
+    ++mCtx->bufferPromotions;
+    mCtx->bufferVramBytes = mDeviceBytes;
+    // The batch is submitted ahead of the frame commands that hold this draw, and the barrier orders the copy before their reads.
+    VkCommandBuffer cmd = mCtx->batchCommands();
+    const VkBufferCopy region{0, 0, b.size};
+    vkCmdCopyBuffer(cmd, b.buffer, b.device, 1, &region);
+    VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = b.kind == BufferKind::Vertex ? VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT : VK_ACCESS_INDEX_READ_BIT;
+    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = b.device;
+    barrier.size = VK_WHOLE_SIZE;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
+}
+
+void VulkanVertexBufferBackend::dropDeviceCopy(Buf& b)
+{
+    if (!b.device) return;
+    auto device = mCtx->device; auto buffer = b.device; auto memory = b.deviceMemory;
+    mCtx->deferRelease([device, buffer, memory] { vkDestroyBuffer(device, buffer, nullptr); vkFreeMemory(device, memory, nullptr); });
+    mDeviceBytes -= b.size;
+    ++mCtx->bufferDemotions;
+    mCtx->bufferVramBytes = mDeviceBytes;
+    b.device = VK_NULL_HANDLE;
+    b.deviceMemory = VK_NULL_HANDLE;
 }
 
 bool VulkanVertexBufferBackend::recordCommon(U32 mode, bool indexed, bool vertexInput)
@@ -772,7 +827,7 @@ bool VulkanVertexBufferBackend::recordCommon(U32 mode, bool indexed, bool vertex
     if (mCtx->queries) mCtx->queries->passDraw(mCtx->programHandle);
     ++mCtx->statPassDraws[{mCtx->framebuffers->getBound(), renderExtent.width, renderExtent.height, mCtx->framebuffers->colorCount()}].first;
     if (!vertexInput) { ++drawCalls; return true; }
-    VkBuffer vb = resolve(mCurVB, mCurVBp).buffer;
+    VkBuffer vb = resolve(mCurVB, mCurVBp).drawBuffer();
     for (int t = 0; t < TYPE_MAX; ++t)
     {
         if (mAttribMask & (1u << t))
@@ -802,10 +857,10 @@ void VulkanVertexBufferBackend::drawIndexed(U32 mode, U32 start, U32 end, U32 co
     Buf& ib = resolve(mCurIB, mCurIBp);
     const VkIndexType indexType = type == IndexType::U32 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
     auto& dc = mCtx->drawCache;
-    if (dc.indexBuffer != ib.buffer || dc.indexType != indexType)
+    if (dc.indexBuffer != ib.drawBuffer() || dc.indexType != indexType)
     {
-        vkCmdBindIndexBuffer(mCtx->slot().cmd, ib.buffer, 0, indexType);
-        dc.indexBuffer = ib.buffer;
+        vkCmdBindIndexBuffer(mCtx->slot().cmd, ib.drawBuffer(), 0, indexType);
+        dc.indexBuffer = ib.drawBuffer();
         dc.indexType = indexType;
     }
     vkCmdDrawIndexed(mCtx->slot().cmd, count, 1, indexByteOffset / indexSize, 0, 0);
