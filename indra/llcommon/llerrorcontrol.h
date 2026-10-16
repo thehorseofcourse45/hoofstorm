@@ -218,6 +218,7 @@ namespace LLError
 
     LL_COMMON_API void logToFile(const std::string& filename);
     LL_COMMON_API void logToStderr();
+    LL_COMMON_API void stopLoggingToStderr();
     LL_COMMON_API void logToFixedBuffer(LLLineBuffer*);
         // Utilities to add recorders for logging to a file or a fixed buffer
         // A second call to the same function will remove the logger added

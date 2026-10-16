@@ -55,6 +55,8 @@ public:
         LLVertexBuffer::MAP_TANGENT
     };
 
+    static constexpr S32 FIRST_MASKED_PASS = 16;    // deferred passes from here on are alpha-masked (see drawOrder)
+
     U32 getVertexDataMask() override { return VERTEX_DATA_MASK; }
 
     void render(S32 pass = 0) override { }

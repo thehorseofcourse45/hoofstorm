@@ -1168,6 +1168,11 @@ namespace LLError
         }
     }
 
+    void stopLoggingToStderr()
+    {
+        removeRecorder<RecordToStderr>();
+    }
+
     void logToFixedBuffer(LLLineBuffer* fixedBuffer)
     {
         // remove any previous Recorder filling this role

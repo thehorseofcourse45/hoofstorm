@@ -26,6 +26,8 @@
 
 #include "linden_common.h"
 #include "llrenderbackend.h"
+#include "llerrorcontrol.h"
+#include <io.h>
 #include <memory>
 #include <exception>
 #include "llgl.h"
@@ -187,6 +189,12 @@ struct NativeRenderer
                 }
                 context.queries->programTimes.clear();
                 context.queries->programSetupMs = 0;
+                std::vector<std::pair<double, uint32_t>> byDraw;
+                for (const auto& e : context.queries->drawTimes) byDraw.push_back({e.second, e.first});
+                std::sort(byDraw.rbegin(), byDraw.rend());
+                for (size_t i = 0; i < std::min<size_t>(byDraw.size(), 12); ++i)
+                    LL_INFOS("VulkanPacing") << "G-buffer draw #" << byDraw[i].second << " of studied shader: ms/frame=" << byDraw[i].first / 300.0 << LL_ENDL;
+                context.queries->drawTimes.clear();
             }
         }
         if (thread)
@@ -266,6 +274,13 @@ bool activateVulkanRenderBackend(void* instance, void* window, bool validation, 
     {
         error = "Vulkan activation requires a valid native instance and window";
         return false;
+    }
+    // The GUI viewer has no stderr, so the backend's FATAL abort messages would vanish; keep them in the log folder.
+    if (_fileno(stderr) < 0)
+    {
+        const char* appdata = std::getenv("APPDATA");
+        std::string path = std::string(appdata ? appdata : ".") + "/Firestorm_x64/logs/vulkan_fatal.log";
+        if (freopen(path.c_str(), "w", stderr)) LLError::stopLoggingToStderr();     // Firestorm.log already has the viewer log
     }
     try
     {

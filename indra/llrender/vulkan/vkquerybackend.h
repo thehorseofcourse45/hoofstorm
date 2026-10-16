@@ -33,6 +33,7 @@ public:
     struct ProgramTime { double ms = 0; uint64_t draws = 0, stretches = 0; };
     std::map<uint32_t, ProgramTime> programTimes;
     double programSetupMs = 0;            // from pass start to the first draw (clears, load ops)
+    std::map<uint32_t, double> drawTimes; // FS_VK_DRAW_TIMING=<program>: ms per draw of that program, keyed by its order in the pass
     struct PassTime { double ms = 0, gapMs = 0; uint64_t count = 0; };   // gapMs: idle/transition time before the pass
     std::map<std::array<uint32_t, 4>, PassTime> passTimes;
     size_t poolCount() const { return mPages.size(); }
@@ -60,10 +61,12 @@ private:
     std::map<uint32_t, Query> mQueries;
     std::map<uint32_t, uint32_t> mActive;
     Slot mOcclusion{}, mStatistics{};
-    struct Segment { uint32_t program; Slot slot; uint32_t draws; };
+    struct Segment { uint32_t program; Slot slot; uint32_t draws; uint32_t ordinal = 0; };
     struct Pass { std::array<uint32_t, 4> key; Slot slot; std::vector<Segment> segments; };
     std::vector<Pass> mPasses[2];           // indexed by frame slot; read back when the slot is reused
     const bool mPassTiming;
+    const uint32_t mDrawTimingProgram;
+    uint32_t mDrawOrdinal = 0;
     bool mPassOpen = false;
     uint32_t mNext=0, mFrameTimers[2]={};
 };

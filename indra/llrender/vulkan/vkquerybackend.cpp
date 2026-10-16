@@ -10,7 +10,8 @@ constexpr uint32_t TIME=0x88BF, SAMPLES=0x8914, ANY=0x8C2F, CONSERVATIVE=0x8D6A,
 constexpr uint32_t CAPACITY=256;
 bool occlusion(uint32_t target) { return target==SAMPLES || target==ANY || target==CONSERVATIVE; }
 }
-VulkanQueryBackend::VulkanQueryBackend(VkContext* ctx) : mCtx(ctx), mPassTiming(!getenv("FS_VK_PASS_TIMING") || *getenv("FS_VK_PASS_TIMING") != '0')
+VulkanQueryBackend::VulkanQueryBackend(VkContext* ctx) : mCtx(ctx), mPassTiming(!getenv("FS_VK_PASS_TIMING") || *getenv("FS_VK_PASS_TIMING") != '0'),
+    mDrawTimingProgram(getenv("FS_VK_DRAW_TIMING") ? (uint32_t) atoi(getenv("FS_VK_DRAW_TIMING")) : 0)
 {
     if (supported(TIME)) for (auto& timer:mFrameTimers) generate(1,&timer);
     ctx->queries=this;
@@ -265,10 +266,13 @@ void VulkanQueryBackend::passDraw(uint32_t program)
     std::lock_guard<std::recursive_mutex> lock(mLock);
     Pass& pass = mPasses[mCtx->currentSlot].back();
     if (pass.key[3] != 4 || pass.key[1] < 1000) return;     // the full-size G-buffer pass, not probe faces
-    if (pass.segments.empty() || pass.segments.back().program != program)
+    if (pass.segments.empty()) mDrawOrdinal = 0;
+    const bool split = program == mDrawTimingProgram;      // one stretch per draw for the program under study
+    if (split) ++mDrawOrdinal;
+    if (pass.segments.empty() || pass.segments.back().program != program || split)
     {
         auto slot = allocate(VK_QUERY_TYPE_TIMESTAMP, 1);
-        pass.segments.push_back({program, slot, 0});
+        pass.segments.push_back({program, slot, 0, split ? mDrawOrdinal : 0});
         vkCmdWriteTimestamp(mCtx->slot().cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, slot.page->pool, slot.index);
     }
     ++pass.segments.back().draws;
@@ -318,7 +322,9 @@ void VulkanQueryBackend::beginFrame()
                     }
                     if (i == 0) programSetupMs += double(elapsed(v[0], s[0], mCtx->timestampBits, mCtx->timestampPeriod)) / 1e6;
                     auto& program = programTimes[seg.program];
-                    program.ms += double(elapsed(s[0], next, mCtx->timestampBits, mCtx->timestampPeriod)) / 1e6;
+                    const double ms = double(elapsed(s[0], next, mCtx->timestampBits, mCtx->timestampPeriod)) / 1e6;
+                    program.ms += ms;
+                    if (seg.ordinal) drawTimes[seg.ordinal] += ms;
                     program.draws += seg.draws;
                     ++program.stretches;
                 }

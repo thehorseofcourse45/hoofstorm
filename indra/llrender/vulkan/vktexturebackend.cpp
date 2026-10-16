@@ -346,8 +346,8 @@ static VkPipelineStageFlags stagesOf(VkImageLayout layout)
     }
 }
 
-static void barrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect, VkImageLayout from, VkImageLayout to,
-                    VkAccessFlags srcAccess, VkAccessFlags dstAccess, uint32_t baseLevel, uint32_t levelCount, uint32_t layers)
+static VkImageMemoryBarrier makeBarrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout from, VkImageLayout to,
+                                        VkAccessFlags srcAccess, VkAccessFlags dstAccess, uint32_t baseLevel, uint32_t levelCount, uint32_t layers)
 {
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     b.srcAccessMask = srcAccess;
@@ -358,6 +358,13 @@ static void barrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspec
     b.image = image;
     b.subresourceRange = {aspect, baseLevel, levelCount, 0, layers};
     ++g_barrierCount;
+    return b;
+}
+
+static void barrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect, VkImageLayout from, VkImageLayout to,
+                    VkAccessFlags srcAccess, VkAccessFlags dstAccess, uint32_t baseLevel, uint32_t levelCount, uint32_t layers)
+{
+    VkImageMemoryBarrier b = makeBarrier(image, aspect, from, to, srcAccess, dstAccess, baseLevel, levelCount, layers);
     vkCmdPipelineBarrier(cmd, stagesOf(from), stagesOf(to), 0, 0, nullptr, 0, nullptr, 1, &b);
 }
 
@@ -1310,11 +1317,34 @@ void VulkanTextureBackend::transition(Tex& t, VkCommandBuffer cmd, VkImageLayout
 {
     if (t.layout == layout && (layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ||
         layout == VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL)) return;
-    barrier(cmd, t.image, aspectOf(t.info.format), t.layout, layout,
+    VkImageMemoryBarrier b = makeBarrier(t.image, aspectOf(t.info.format), t.layout, layout,
             t.layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
             layout == VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT :
                 VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, 0, t.levels, t.layers);
+    if (mBatchDepth > 0 && cmd == mCtx->slot().cmd)
+    {
+        // Transitions of one image inside a single barrier call are unordered, so a second one emits the batch first.
+        for (const auto& p : mPendingBarriers) if (p.image == t.image)
+        {
+            vkCmdPipelineBarrier(cmd, mPendingSrc, mPendingDst, 0, 0, nullptr, 0, nullptr, (uint32_t) mPendingBarriers.size(), mPendingBarriers.data());
+            mPendingBarriers.clear();
+            mPendingSrc = mPendingDst = 0;
+            break;
+        }
+        mPendingBarriers.push_back(b);
+        mPendingSrc |= stagesOf(t.layout);
+        mPendingDst |= stagesOf(layout);
+    }
+    else vkCmdPipelineBarrier(cmd, stagesOf(t.layout), stagesOf(layout), 0, 0, nullptr, 0, nullptr, 1, &b);
     t.layout = layout;
+}
+
+void VulkanTextureBackend::flushBarriers(VkCommandBuffer cmd)
+{
+    if (--mBatchDepth > 0 || mPendingBarriers.empty()) return;
+    vkCmdPipelineBarrier(cmd, mPendingSrc, mPendingDst, 0, 0, nullptr, 0, nullptr, (uint32_t) mPendingBarriers.size(), mPendingBarriers.data());
+    mPendingBarriers.clear();
+    mPendingSrc = mPendingDst = 0;
 }
 
 void VulkanTextureBackend::copyFromFramebuffer2D(U32 target, S32 level, S32 xo, S32 yo, S32 x, S32 y, S32 w, S32 h)

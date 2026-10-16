@@ -36,6 +36,10 @@ public:
     // Same, with the sampler kind already decoded by the caller (0 = 2D, 1 = cube, 2 = cube array): no string work per draw.
     static int samplerKind(const std::string& samplerType) { return samplerType == "samplerCubeArray" ? 2 : samplerType == "samplerCube" ? 1 : 0; }
     void unitDescriptor(uint32_t unit, int kind, const std::string& samplerType, VkDescriptorImageInfo& info);
+    // Layout transitions between these two calls go out as one vkCmdPipelineBarrier, so the GPU drains once, not per image.
+    // Nothing else may be recorded into the command buffer in between that touches those images.
+    void beginBarrierBatch() { ++mBatchDepth; }
+    void flushBarriers(VkCommandBuffer cmd);
 
     // statistics for the tests
     uint32_t imagesCreated = 0;
@@ -137,6 +141,9 @@ private:
     void ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t layers, U32 glInternal, bool cube, bool cubeArray, bool rect);
     void destroyImage(Tex& t);
     void transition(Tex& t, VkCommandBuffer cmd, VkImageLayout layout);
+    std::vector<VkImageMemoryBarrier> mPendingBarriers;
+    VkPipelineStageFlags mPendingSrc = 0, mPendingDst = 0;
+    int mBatchDepth = 0;
     void submitNow(const std::function<void(VkCommandBuffer)>& record, bool waitForReadback = false);
     void upload(Tex& t, uint32_t level, uint32_t layer, uint32_t layerCount, int32_t x, int32_t y, uint32_t w, uint32_t h,
                 const std::vector<uint8_t>& texels);

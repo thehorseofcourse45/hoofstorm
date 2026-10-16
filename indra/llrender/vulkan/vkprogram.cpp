@@ -184,10 +184,12 @@ void VkProgram::prepareDraw()
         }
         auto& infos = infoScratch;
         infos.resize(samplerNames.size());
+        ctx->textures->beginBarrierBatch();
         for (size_t i = 0; i < samplerNames.size(); ++i)
         {
             ctx->textures->unitDescriptor((uint32_t) samplerUnit[i], samplerKinds[i], samplerTypes[i], infos[i]);
         }
+        ctx->textures->flushBarriers(ctx->slot().cmd);
         bool changed = false;
         for (size_t i = 0; i < infos.size(); ++i)
         {

@@ -211,6 +211,7 @@ void VulkanFramebufferBackend::beginRendering(U32 clearMask)
     const bool initialWindowClear = !mDraw && mDefaultClear;
     if (initialWindowClear) { clearMask |= COLOR_BIT | DEPTH_BIT; mDefaultClear = false; }
     VkRenderingAttachmentInfo colors[4]{};
+    mCtx->textures->beginBarrierBatch();
     for (U32 i = 0; i < colorCount(); ++i)
     {
         Image image = colorImage(mDraw, COLOR0 + i);
@@ -225,6 +226,7 @@ void VulkanFramebufferBackend::beginRendering(U32 clearMask)
     }
     Image image = depthImage(mDraw);
     transition(image, depthLayout);
+    mCtx->textures->flushBarriers(mCtx->slot().cmd);
     VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     depth.imageView = image.view;
     depth.imageLayout = depthLayout;

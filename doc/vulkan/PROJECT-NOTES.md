@@ -1,5 +1,18 @@
 # Vulkan project notes
 
+## Current status: masked draw order, barrier batching, 2026-10-16
+
+GPU: AMD Radeon RX 6700 XT (no lazily allocated memory type, so transient attachments buy nothing; skipped).
+- `Material Shader 2` (legacy alpha-mask material, diffuse only) was the largest G-buffer cost, up to 5-6 ms in a stadium view. The shader is one fetch plus `discard`; the cost was fill, mostly 8 large faces. `discard` stops early depth rejection, so masked draws now go after opaque ones:
+  - `LLDrawPoolMaterials` runs its 24 deferred passes in `drawOrder` (opaque static, opaque rigged, then the 8 masked passes; `FIRST_MASKED_PASS = 16`).
+  - `renderGeomDeferred` draws the materials pool's masked passes later, just before `POOL_GRASS` (the first masked pool, also where occlusion runs), so opaque PBR and terrain lay depth first. The pass loop and the sky-last block share one `render_passes` helper.
+  - Same view measured about 5.2 -> 1.0 ms for that shader (view noise not fully excluded). The second step (after PBR/terrain) had no measurable effect in that scene; kept.
+- `FS_VK_DRAW_TIMING=<program id>` (opt-in): one timestamp stretch per draw of that program in the G-buffer pass; the log lists its 12 slowest draws by order in the pass (`G-buffer draw #N of studied shader`).
+- Texture layout barriers recorded back to back now go out as one `vkCmdPipelineBarrier` (`VulkanTextureBackend::beginBarrierBatch/flushBarriers`): the draw's sampler loop (`vkprogram.cpp`) and `beginRendering`'s attachment transitions. A second transition of an image already in the batch flushes first. Gap between passes in a busy scene about 1.32 -> 1.07 ms/frame (noisy). Activation test 45/45 both thread modes.
+- `vulkan_fatal.log` (in the logs folder): the GUI viewer has no stderr, so the renderer reopens stderr there for the backend's `FATAL:` abort messages and calls `LLError::stopLoggingToStderr()` so the viewer log is not duplicated into it.
+
+Next steps: (1) `fb=222` (5 full-size single-color passes, about 2 ms): identify and merge or halve; (2) fewer small passes (probe faces, 128x128); (3) depth pre-pass for masked geometry only if a scene still shows masked draws dominating with nothing opaque in front.
+
 ## Current status: main-thread trim, GPU pass timing, upstream merge, 2026-10-15
 
 In-world about 170-185 FPS after the vsync fix (swapchain honors `RenderVSyncEnable`). Main-thread profile (800 samples, viewer focused) shows the main thread waiting on the render thread (`endRenderBackendFrame`, about 14%): in this scene the GPU, not the CPU, sets the frame rate.

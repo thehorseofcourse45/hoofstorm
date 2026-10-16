@@ -34,6 +34,18 @@
 #include "llglcommonfunc.h"
 #include "llvoavatar.h"
 
+namespace
+{
+// Alpha-masked passes discard, so the GPU can't reject their hidden pixels before shading. Draw every opaque pass
+// (static, then rigged) first so the masked ones are depth-tested against it.
+S32 drawOrder(S32 pass)
+{
+    static const S32 order[] = { 0, 2, 3, 5, 6, 8, 9, 11,   12, 14, 15, 17, 18, 20, 21, 23,
+                                 1, 4, 7, 10,               13, 16, 19, 22 };
+    return order[pass];
+}
+}
+
 LLDrawPoolMaterials::LLDrawPoolMaterials()
 :  LLRenderPass(LLDrawPool::POOL_MATERIALS)
 {
@@ -55,6 +67,7 @@ void LLDrawPoolMaterials::beginDeferredPass(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_MATERIAL;
 
+    pass = drawOrder(pass);
     bool rigged = false;
     if (pass >= 12)
     {
@@ -126,6 +139,7 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
         LLRenderPass::PASS_NORMSPEC_EMISSIVE,
     };
 
+    pass = drawOrder(pass);
     bool rigged = false;
     if (pass >= 12)
     {

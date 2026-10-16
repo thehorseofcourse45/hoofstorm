@@ -65,6 +65,7 @@
 #include "lldrawpooltree.h"
 #include "lldrawpoolwater.h"
 #include "lldrawpoolwlsky.h"
+#include "lldrawpoolmaterials.h"
 #include "llface.h"
 #include "llfeaturemanager.h"
 #include "llfloatertelehub.h"
@@ -4286,11 +4287,41 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
         // pixels geometry has not covered. It was the most expensive part of this pass when drawn first.
         pool_set_t::iterator sky_begin = mPools.end();
 
+        auto render_passes = [&](pool_set_t::iterator first, S32 begin, S32 end)
+        {
+            LLDrawPool* poolp = *first;
+            gGLLastMatrix = NULL;
+            gGL.loadMatrix(gGLModelView);
+            for (S32 i = begin; i < end; i++)
+            {
+                LLVertexBuffer::unbind();
+                poolp->beginDeferredPass(i);
+                for (pool_set_t::iterator it = first; it != mPools.end() && (*it)->getType() == poolp->getType(); it++)
+                {
+                    if (!(*it)->getSkipRenderFlag()) { (*it)->renderDeferred(i); }
+                }
+                poolp->endDeferredPass(i);
+                LLVertexBuffer::unbind();
+
+                LLGLState::checkStates();
+            }
+        };
+
+        // The materials pool's alpha-masked passes discard, so they wait until the opaque PBR and terrain pools have
+        // laid down depth, joining the other masked pools.
+        pool_set_t::iterator materials_masked = mPools.end();
+
         while ( iter1 != mPools.end() )
         {
             LLDrawPool *poolp = *iter1;
 
             cur_type = poolp->getType();
+
+            if (materials_masked != mPools.end() && cur_type >= LLDrawPool::POOL_GRASS)
+            {
+                render_passes(materials_masked, LLDrawPoolMaterials::FIRST_MASKED_PASS, (*materials_masked)->getNumDeferredPasses());
+                materials_masked = mPools.end();
+            }
 
             if (occlude && cur_type >= LLDrawPool::POOL_GRASS)
             {
@@ -4317,28 +4348,14 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("deferred pool render");
 
-                gGLLastMatrix = NULL;
-                gGL.loadMatrix(gGLModelView);
-
-                for( S32 i = 0; i < poolp->getNumDeferredPasses(); i++ )
+                S32 end = poolp->getNumDeferredPasses();
+                if (cur_type == LLDrawPool::POOL_MATERIALS)
                 {
-                    LLVertexBuffer::unbind();
-                    poolp->beginDeferredPass(i);
-                    for (iter2 = iter1; iter2 != mPools.end(); iter2++)
-                    {
-                        LLDrawPool *p = *iter2;
-                        if (p->getType() != cur_type)
-                        {
-                            break;
-                        }
-
-                        if ( !p->getSkipRenderFlag() ) { p->renderDeferred(i); }
-                    }
-                    poolp->endDeferredPass(i);
-                    LLVertexBuffer::unbind();
-
-                    LLGLState::checkStates();
+                    materials_masked = iter1;
+                    end = LLDrawPoolMaterials::FIRST_MASKED_PASS;
                 }
+                render_passes(iter1, 0, end);
+                for (iter2 = iter1; iter2 != mPools.end() && (*iter2)->getType() == cur_type; iter2++) {}
             }
             else
             {
@@ -4356,28 +4373,17 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
             stop_glerror();
         }
 
+        if (materials_masked != mPools.end())   // no later pool came along to trigger them
+        {
+            render_passes(materials_masked, LLDrawPoolMaterials::FIRST_MASKED_PASS, (*materials_masked)->getNumDeferredPasses());
+        }
+
         if (sky_begin != mPools.end() && hasRenderType((*sky_begin)->getType()) && (*sky_begin)->getNumDeferredPasses() > 0)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("deferred sky render");
 
-            gGLLastMatrix = NULL;
-            gGL.loadMatrix(gGLModelView);
-
-            LLDrawPool* poolp = *sky_begin;
             LLDrawPoolWLSky::sDrawnLast = true;
-            for (S32 i = 0; i < poolp->getNumDeferredPasses(); i++)
-            {
-                LLVertexBuffer::unbind();
-                poolp->beginDeferredPass(i);
-                for (pool_set_t::iterator iter2 = sky_begin; iter2 != mPools.end() && (*iter2)->getType() == poolp->getType(); iter2++)
-                {
-                    if (!(*iter2)->getSkipRenderFlag()) { (*iter2)->renderDeferred(i); }
-                }
-                poolp->endDeferredPass(i);
-                LLVertexBuffer::unbind();
-
-                LLGLState::checkStates();
-            }
+            render_passes(sky_begin, 0, (*sky_begin)->getNumDeferredPasses());
             LLDrawPoolWLSky::sDrawnLast = false;
         }
 
