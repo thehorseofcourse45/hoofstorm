@@ -267,8 +267,9 @@ uint64_t VulkanQueryBackend::result(uint32_t id)
 }
 void VulkanQueryBackend::passBegin(const std::array<uint32_t, 4>& key)
 {
+    // Pass timing state (mPasses, mPages, the stats pool) belongs to the recording thread; the main thread only polls
+    // viewer queries through mQueries. Taking mLock here, per draw, made those polls wait.
     if (!mPassTiming || mCtx->timestampBits == 0 || mCtx->currentSlot >= 2) return;
-    std::lock_guard<std::recursive_mutex> lock(mLock);
     auto slot = allocate(VK_QUERY_TYPE_TIMESTAMP, 2);
     mPasses[mCtx->currentSlot].push_back({key, slot});
     // BOTTOM_OF_PIPE: records when everything before the pass (including its barriers) has finished, so the
@@ -279,7 +280,6 @@ void VulkanQueryBackend::passBegin(const std::array<uint32_t, 4>& key)
 void VulkanQueryBackend::passDraw(uint32_t program)
 {
     if (!mPassTiming || !mPassOpen) return;
-    std::lock_guard<std::recursive_mutex> lock(mLock);
     Pass& pass = mPasses[mCtx->currentSlot].back();
     if (pass.key[1] < 1000) return;     // full-size passes only, not probe faces or shadow maps
     if (pass.segments.empty()) mDrawOrdinal = 0;
@@ -310,7 +310,6 @@ void VulkanQueryBackend::closeStretchStats()
 void VulkanQueryBackend::passEnd()
 {
     if (!mPassTiming || !mPassOpen) return;
-    std::lock_guard<std::recursive_mutex> lock(mLock);
     closeStretchStats();
     const Slot& slot = mPasses[mCtx->currentSlot].back().slot;
     vkCmdWriteTimestamp(mCtx->slot().cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, slot.page->pool, slot.index + 1);
@@ -318,8 +317,7 @@ void VulkanQueryBackend::passEnd()
 }
 void VulkanQueryBackend::beginFrame()
 {
-    std::lock_guard<std::recursive_mutex> lock(mLock);
-    if (mPassTiming && mCtx->currentSlot < 2)
+    if (mPassTiming && mCtx->currentSlot < 2)       // recording-thread state, no lock (see passBegin)
     {
         auto& passes = mPasses[mCtx->currentSlot];      // recorded two frames ago, so its fence has signalled
         uint64_t previousEnd = 0;
@@ -376,6 +374,7 @@ void VulkanQueryBackend::beginFrame()
             mStatsUsed[mCtx->currentSlot] = 0;
         }
     }
+    std::lock_guard<std::recursive_mutex> lock(mLock);
     const uint32_t timer=mFrameTimers[mCtx->currentSlot];   // last used two frames ago with two slots, so it has finished
     if (!timer) return;
     auto& query=object(timer);

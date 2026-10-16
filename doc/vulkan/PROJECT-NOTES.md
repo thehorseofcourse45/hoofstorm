@@ -14,7 +14,14 @@
 
 - Done: `doAtmospherics` / `doWaterHaze` no longer copy the scene depth into `mWaterDis` on Vulkan (`Copy Depth Shader`, 4 passes, about 0.52 ms plus gaps). The haze shaders sample `mRT->deferredScreen` depth directly; the backend puts it in the read-only depth layout because the haze pass has depth test and writes off. GL keeps the copy (feedback loop there). Fog and water haze checked above and below water.
 
-Next steps: (1) a few more focused FPS samples in the crowd; (2) fewer small passes (probe faces, 128x128); (3) suballocate promoted vertex buffers if allocation cost shows up.
+- Main-thread profiler: `doc/vulkan/tools/mainprof.py <pid> <samples> <interval_ms>` suspends the viewer's main thread, walks it with dbghelp (symbols from `firestorm-bin.pdb`) and prints inclusive and self shares. It only samples while the viewer is the foreground window. Run with `python -I`.
+- Fixed: pass timing took `VulkanQueryBackend::mLock` on every draw and for the whole timestamp readback, so the main thread's reflection-probe occlusion polls (`getRenderQuery32` -> `available`) waited on it: 6.8% of main-thread samples. Pass timing state is recording-thread only (the main thread only calls generate/available/result, which use `mQueries`), so it no longer locks. After: not in the top 70, crowd FPS about 48 -> 52-58.
+- Main thread in a 15-avatar crowd after the fix: display about 52%, idle 42% (avatar idleUpdate about 24%: skeleton, joints, motions, name tags), UI about 11%. No Vulkan-side item stands out.
+- Tried and reverted: copying probe mips into the cube array with a one-subresource transition instead of the whole image. No change in the gaps (fb=67 0.10 ms); the gaps are dependent-pass drains. Rendering straight into cube layers would need per-subresource layout tracking; not worth about 0.3 ms.
+- The disk pipeline cache already exists (`vulkan-pipelines.bin` in the shader cache folder, `vkpipelinecache.cpp`), with async compile on workers.
+- Upstream `FirestormViewer/phoenix-firestorm` master merged again 2026-10-16 (4 commits, no conflicts).
+
+Next steps: (1) main-thread avatar update cost (upstream code) if crowds matter most; (2) suballocate promoted vertex buffers if allocation cost shows up; (3) multithreaded recording only once the main thread stops being the limit (throttle wait several ms).
 
 ## Current status: masked draw order, barrier batching, 2026-10-16
 
