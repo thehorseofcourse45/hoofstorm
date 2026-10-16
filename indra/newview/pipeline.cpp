@@ -9958,6 +9958,10 @@ void LLPipeline::doAtmospherics()
 
     if (RenderDeferredAtmospheric)
     {
+        // Vulkan samples the scene depth directly while the haze pass leaves depth untouched (read-only depth layout);
+        // GL would read the attached depth buffer as a feedback loop, so it works from a copy.
+        const bool sample_depth_directly = isVulkanRenderBackendActive();
+        if (!sample_depth_directly)
         {
             // copy depth buffer for use in haze shader (use water displacement map as temp storage)
             LLGLDepthTest depth(GL_TRUE, GL_TRUE, GL_ALWAYS);
@@ -9992,7 +9996,7 @@ void LLPipeline::doAtmospherics()
         LLGLSLShader& haze_shader = gHazeProgram;
 
         LL_PROFILE_GPU_ZONE("haze");
-        bindDeferredShader(haze_shader, nullptr, &mWaterDis);
+        bindDeferredShader(haze_shader, nullptr, sample_depth_directly ? nullptr : &mWaterDis);
 
         LLEnvironment& environment = LLEnvironment::instance();
         haze_shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
@@ -10022,7 +10026,9 @@ void LLPipeline::doWaterHaze()
 
     if (RenderDeferredAtmospheric)
     {
+        const bool sample_depth_directly = isVulkanRenderBackendActive();    // see doAtmospherics
         // copy depth buffer for use in haze shader (use water displacement map as temp storage)
+        if (!sample_depth_directly)
         {
             LLGLDepthTest depth(GL_TRUE, GL_TRUE, GL_ALWAYS);
 
@@ -10057,7 +10063,7 @@ void LLPipeline::doWaterHaze()
         LLGLSLShader& haze_shader = gHazeWaterProgram;
 
         LL_PROFILE_GPU_ZONE("haze");
-        bindDeferredShader(haze_shader, nullptr, &mWaterDis);
+        bindDeferredShader(haze_shader, nullptr, sample_depth_directly ? nullptr : &mWaterDis);
 
         haze_shader.uniform4fv(LLShaderMgr::WATER_WATERPLANE, 1, LLDrawPoolAlpha::sWaterPlane.mV);
 

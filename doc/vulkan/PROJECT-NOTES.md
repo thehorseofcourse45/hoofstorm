@@ -12,7 +12,9 @@
 - Measurement gotcha: `BackgroundYieldTime` (40 ms) sleeps every frame while the viewer is not focused, so FPS read then is about 16-20. Only use focused samples.
 - Lighting/post chain (main screen target, 5 passes, about 2.5 ms) is spread across Soften, point lights, alpha, MultiLight, Haze; nothing dominant.
 
-Next steps: (1) `Copy Depth Shader` runs 4 times a frame (0.3 ms); (2) a few more focused FPS samples in the crowd; (3) fewer small passes.
+- Done: `doAtmospherics` / `doWaterHaze` no longer copy the scene depth into `mWaterDis` on Vulkan (`Copy Depth Shader`, 4 passes, about 0.52 ms plus gaps). The haze shaders sample `mRT->deferredScreen` depth directly; the backend puts it in the read-only depth layout because the haze pass has depth test and writes off. GL keeps the copy (feedback loop there). Fog and water haze checked above and below water.
+
+Next steps: (1) a few more focused FPS samples in the crowd; (2) fewer small passes (probe faces, 128x128); (3) suballocate promoted vertex buffers if allocation cost shows up.
 
 ## Current status: masked draw order, barrier batching, 2026-10-16
 
