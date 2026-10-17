@@ -525,7 +525,7 @@ void VulkanTextureBackend::upload(Tex& t, uint32_t level, uint32_t layer, uint32
     });
     if (useBatch)
     {
-        if (mCtx->batch.bytes > VkContext::kBatchLimit) mCtx->flushBatchBlocking();   // no frame may be coming (minimized)
+        if (mCtx->batch.bytes > mCtx->batchLimit) mCtx->flushBatch();   // no frame may be coming (minimized)
     }
     else if (!useRing)
     {

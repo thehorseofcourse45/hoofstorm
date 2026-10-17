@@ -32,11 +32,11 @@ int main(int argc,char** argv)
             if(!baseline)check(ctx.textureUploadAllocations==allocated && ctx.textureRingUploads-ring==15360,"ordinary recorded texture updates allocate no staging buffers");
             check(ctx.blockingSubmissions==waits,"bounded ordinary upload workload adds no partial submits");
             BufferHandle vertices;U8* shadow=nullptr;vb.allocate(BufferKind::Vertex,96,vertices,shadow);const float positions[]={-.7f,-.3f,.5f,1,-.3f,-.3f,.5f,1,-.5f,.3f,.5f,1,.3f,-.3f,.5f,1,.7f,-.3f,.5f,1,.5f,.3f,.5f,1};U32 offsets[14]{};vb.upload(BufferKind::Vertex,vertices,0,95,positions);vb.setBuffers(vertices,{},1,offsets);
-            const auto capacity=ctx.ringSize;ctx.ringSize=4096;check(ctx.beginFrame(clear),"overflow frame acquired");auto before=ctx.blockingSubmissions;
+            const auto capacity=ctx.ringSize;ctx.ringSize=4096;check(ctx.beginFrame(clear),"overflow frame acquired");auto before=ctx.stallCounts[size_t(VkContext::Stall::Upload)];auto allocationsBefore=ctx.textureUploadAllocations;
             upload(false);vb.drawArrays(0,0,3);for(int i=0;i<40;++i)upload(true);vb.drawArrays(0,3,3);
             U8 left[4]{},right[4]{};fb.readPixels(200,300,1,1,glc::RGBA,glc::UNSIGNED_BYTE,left);fb.readPixels(600,300,1,1,glc::RGBA,glc::UNSIGNED_BYTE,right);
             check(left[0]==255 && left[1]==0 && right[0]==0 && right[1]==255,"ring reuse preserves early and late texture draws plus uniform snapshots");
-            if(!baseline)check(ctx.blockingSubmissions>before && ctx.stallCounts[size_t(VkContext::Stall::Upload)]>0,"ring capacity fences reuse with upload stall attribution");ctx.endFrame(false);
+            if(!baseline)check(ctx.stallCounts[size_t(VkContext::Stall::Upload)]==before && ctx.textureUploadAllocations>allocationsBefore,"texture uploads that do not fit the ring take transient staging instead of an upload stall");ctx.endFrame(false);
             ctx.ringSize=256;check(ctx.beginFrame(clear),"oversized fallback frame acquired");before=ctx.textureUploadAllocations;upload(false);vb.drawArrays(0,0,3);fb.readPixels(200,300,1,1,glc::RGBA,glc::UNSIGNED_BYTE,left);check(left[0]==255 && ctx.textureUploadAllocations==before+1,"uploads larger than the ring retain transient staging fallback");ctx.endFrame(false);ctx.ringSize=capacity;
             VK_CHECK(vkDeviceWaitIdle(ctx.device));before=ctx.textureUploadAllocations;auto ringBefore=ctx.textureRingUploads;auto blockingBefore=ctx.blockingSubmissions;auto batchedBefore=ctx.batchedUploads;upload(true);
             check(ctx.blockingSubmissions==blockingBefore && ctx.batchedUploads>batchedBefore && ctx.textureRingUploads==ringBefore && ctx.batch.cmd,"inactive-frame uploads join the batch without waiting for the GPU");
@@ -47,6 +47,14 @@ int main(int argc,char** argv)
             check(left[0]==255 && left[1]==0,"batched uploads execute before the next frame draws");
             for(int i=0;i<3;++i){upload(i&1);}{U32 transient;textures.generate(1,&transient);textures.bind(glc::TEXTURE_2D,transient);textures.image2D(glc::TEXTURE_2D,0,glc::RGBA8,64,64,glc::RGBA,glc::UNSIGNED_BYTE,nullptr);textures.destroy(1,&transient);textures.bind(glc::TEXTURE_2D,texture);}
             check(ctx.beginFrame(clear),"frame after destroy of a texture created in the batch");ctx.endFrame(false);VK_CHECK(vkDeviceWaitIdle(ctx.device));ctx.collectReleasedResources();
+            // between-frames batch over its size limit: submitted without waiting, freed when its own fence signals
+            {const auto limit=ctx.batchLimit;ctx.batchLimit=1;const auto blocking=ctx.blockingSubmissions;const auto stalls=ctx.stallCounts[size_t(VkContext::Stall::Upload)];
+            upload(true);check(!ctx.batch.cmd && ctx.fencedBatches.size()==1,"over-limit batch is submitted on its own fence");
+            U32 transient;textures.generate(1,&transient);textures.bind(glc::TEXTURE_2D,transient);textures.image2D(glc::TEXTURE_2D,0,glc::RGBA8,128,128,glc::RGBA,glc::UNSIGNED_BYTE,nullptr);
+            textures.subImage2D(glc::TEXTURE_2D,0,0,0,128,1,glc::RGBA,glc::UNSIGNED_BYTE,red.data());textures.destroy(1,&transient);textures.bind(glc::TEXTURE_2D,texture);
+            check(ctx.blockingSubmissions==blocking && ctx.stallCounts[size_t(VkContext::Stall::Upload)]==stalls,"over-limit flush adds no blocking submit or upload stall");
+            ctx.batchLimit=limit;textures.readImage(glc::TEXTURE_2D,0,glc::RGBA,glc::UNSIGNED_BYTE,read.data());check(read[64*128*4+1]==255,"flushed batch upload is visible to a later readback");
+            VK_CHECK(vkDeviceWaitIdle(ctx.device));check(ctx.beginFrame(clear),"frame after fenced batches");ctx.endFrame(false);check(ctx.fencedBatches.empty(),"finished fenced batches are collected");}
             textures.destroy((U32)registry.size(),registry.data());
             U32 attachments[2];textures.generate(2,attachments);
             textures.bind(glc::TEXTURE_2D,attachments[0]);textures.image2D(glc::TEXTURE_2D,0,glc::RGBA8,8,8,glc::RGBA,glc::UNSIGNED_BYTE,nullptr);

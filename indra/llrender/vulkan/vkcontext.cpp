@@ -627,6 +627,7 @@ bool VkContext::beginFrame(const float clear[4])
     lastFenceWaitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-fenceStart).count();
     const auto collectStart = std::chrono::steady_clock::now();
     lastCollectCount = slots[next].release.size();
+    collectFencedBatches(false);
     collectSlot(next);
     lastCollectMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-collectStart).count();
     if (!headless)
@@ -835,14 +836,15 @@ uint8_t* VkContext::batchStage(VkDeviceSize bytes, VkBuffer& buffer, VkDeviceSiz
     return chunk.mapped;
 }
 
-VkCommandBuffer VkContext::takeBatch()
+VkCommandBuffer VkContext::takeBatch(std::function<void()>* releaseOut)
 {
     if (!batch.cmd) return VK_NULL_HANDLE;
     VK_CHECK(vkEndCommandBuffer(batch.cmd));
     auto taken = std::move(batch);
     batch = UploadBatch{};
+    const VkCommandBuffer cmd = taken.cmd;
     // Everything the batch owns is freed once the carrying submission has finished; its frame slot is reused only after that.
-    slot().release.push_back([this, taken]() mutable {
+    std::function<void()> release = [this, taken]() mutable {
         for (auto& release : taken.release) release();
         vkFreeCommandBuffers(device, pool, 1, &taken.cmd);
         for (auto& chunk : taken.chunks)
@@ -855,24 +857,43 @@ VkCommandBuffer VkContext::takeBatch()
                 vkFreeMemory(device, chunk.memory, nullptr);
             });
         }
-    });
-    return taken.cmd;
+    };
+    if (releaseOut) *releaseOut = std::move(release);
+    else slot().release.push_back(std::move(release));
+    return cmd;
 }
 
-void VkContext::flushBatchBlocking()
+void VkContext::flushBatch()
 {
+    collectFencedBatches(false);
     if (recording || !batch.cmd) return;
-    const auto start = std::chrono::steady_clock::now();
-    VkCommandBuffer cmd = takeBatch();
+    // Its own fence, so the staging memory is freed when this submission finishes, without waiting for it (that wait was a
+    // 30 ms stall during loading) and without depending on a frame that may not come while minimized.
+    FencedBatch fenced{};
+    VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    VK_CHECK(vkCreateFence(device, &fci, nullptr, &fenced.fence));
+    VkCommandBuffer cmd = takeBatch(&fenced.release);
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cmd;
-    VK_CHECK(vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE));
+    VK_CHECK(vkQueueSubmit(queue, 1, &si, fenced.fence));
     ++submissionSerial;
-    VK_CHECK(vkQueueWaitIdle(queue));
-    completedFrame = submittedFrame;
-    ++blockingSubmissions;
-    recordStall(Stall::Upload, start);
+    fencedBatches.push_back(std::move(fenced));
+}
+
+void VkContext::collectFencedBatches(bool wait)
+{
+    // Submissions finish in order: stop at the first one still running.
+    size_t done = 0;
+    for (; done < fencedBatches.size(); ++done)
+    {
+        auto& fenced = fencedBatches[done];
+        if (wait) VK_CHECK(vkWaitForFences(device, 1, &fenced.fence, VK_TRUE, UINT64_MAX));
+        else if (vkGetFenceStatus(device, fenced.fence) != VK_SUCCESS) break;
+        fenced.release();
+        vkDestroyFence(device, fenced.fence, nullptr);
+    }
+    fencedBatches.erase(fencedBatches.begin(), fencedBatches.begin() + done);
 }
 
 void VkContext::discardBatch()
@@ -913,6 +934,17 @@ void VkContext::waitForFrame(uint64_t frame)
 void VkContext::deferRelease(std::function<void()> release)
 {
     if (batch.cmd) { batch.release.push_back(std::move(release)); return; }
+    if (!recording)
+    {
+        // A flushed batch still on the GPU may use it, and was submitted after the last frame: free it after that batch.
+        collectFencedBatches(false);
+        if (!fencedBatches.empty())
+        {
+            auto& last = fencedBatches.back().release;
+            last = [first = std::move(last), then = std::move(release)]() mutable { first(); then(); };
+            return;
+        }
+    }
     refreshCompleted();
     if (!recording && completedFrame >= submittedFrame)
         release();
@@ -965,6 +997,7 @@ void VkContext::collectSlot(size_t index)
 
 void VkContext::collectReleasedResources()
 {
+    collectFencedBatches(true);
     for (size_t i = 0; i < slotCount; ++i) collectSlot(i);
 }
 

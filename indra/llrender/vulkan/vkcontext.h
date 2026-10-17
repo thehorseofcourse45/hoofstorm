@@ -168,12 +168,18 @@ struct VkContext
     std::deque<std::function<void()>> reaperQueue;
     std::thread reaper;
     bool reaperQuit = false;
-    static constexpr VkDeviceSize kBatchChunk = 8 << 20, kBatchLimit = 128 << 20;
+    static constexpr VkDeviceSize kBatchChunk = 8 << 20;
+    VkDeviceSize batchLimit = 128 << 20;                               // between-frames batch size that triggers flushBatch
     uint64_t batchedUploads = 0;
     VkCommandBuffer batchCommands();                                   // opens the batch on first use
     uint8_t* batchStage(VkDeviceSize bytes, VkBuffer& buffer, VkDeviceSize& offset);   // 16-byte aligned staging inside the batch
-    VkCommandBuffer takeBatch();                                       // ends the batch for the caller's submit; null if none
-    void flushBatchBlocking();                                         // size limit or no frame coming: submit alone and wait
+    // Ends the batch for the caller's submit; null if none. Its resources are freed once the current frame slot's fence
+    // signals, or, given `release`, handed to the caller to run when its own submission has finished.
+    VkCommandBuffer takeBatch(std::function<void()>* release = nullptr);
+    void flushBatch();                                                 // size limit or no frame coming: submit alone, no wait
+    struct FencedBatch { VkFence fence; std::function<void()> release; };
+    std::vector<FencedBatch> fencedBatches;                            // flushBatch submissions not yet known finished
+    void collectFencedBatches(bool wait);
     void discardBatch();                                               // shutdown: never executed
 
     bool samplerAnisotropy = false;
