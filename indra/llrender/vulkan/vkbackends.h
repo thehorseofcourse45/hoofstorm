@@ -129,6 +129,11 @@ private:
     void dropDeviceCopy(Buf& b);
     U64 mDeviceBytes = 0;
     static constexpr U64 kDeviceCap = 2048ull << 20;     // ponytail: fixed VRAM budget for vertex data, size it from the heap if it binds
+    // Each promotion is its own vkAllocateMemory; crowds promoted thousands at once and stalled the render thread for 100+ ms.
+    // ponytail: per-frame cap, suballocate device copies from large blocks if the remaining allocations still show in a profile
+    static constexpr U32 kPromotionsPerFrame = 16;
+    U64 mPromotionFrame = 0;
+    U32 mPromotionsThisFrame = 0;
     BufferStorage createStorage(BufferKind kind, U32 size);
     static void destroyStorage(VkDevice device, const BufferStorage& storage);
     void recycleStorage(BufferKind kind, const BufferStorage& storage);

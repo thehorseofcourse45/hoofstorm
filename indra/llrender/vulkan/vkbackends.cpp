@@ -713,7 +713,11 @@ VulkanVertexBufferBackend::Buf& VulkanVertexBufferBackend::resolve(BufferHandle 
     }
     cache->usedFrame = mCtx->frameCounter;
     // Only buffers left alone for about a second: earlier, most copies were dropped again by the next upload.
-    if (!cache->device && cache->size && cache->uploadFrame + 60 < mCtx->frameCounter && mDeviceBytes + cache->size <= kDeviceCap) promote(*cache);
+    if (!cache->device && cache->size && cache->uploadFrame + 60 < mCtx->frameCounter && mDeviceBytes + cache->size <= kDeviceCap)
+    {
+        if (mPromotionFrame != mCtx->frameCounter) { mPromotionFrame = mCtx->frameCounter; mPromotionsThisFrame = 0; }
+        if (mPromotionsThisFrame < kPromotionsPerFrame) { ++mPromotionsThisFrame; promote(*cache); }
+    }
     return *cache;
 }
 

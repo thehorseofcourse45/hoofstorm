@@ -120,5 +120,12 @@ def main():
     for f, c in inclusive.most_common(70): print("%5.1f%%  %s" % (100.0 * c / n, f[:150]))
     print("\n== self (first C++ frame of each sample)")
     for f, c in leaf.most_common(40): print("%5.1f%%  %s" % (100.0 * c / n, f[:150]))
+    # MAINPROF_PATH=<substring>: the most common full stacks through a matching function
+    want = os.environ.get("MAINPROF_PATH")
+    if want:
+        paths = collections.Counter(" < ".join(f[:60] for f in fs[:14]) for fs in ([name(pc) for pc in pcs] for pcs in stacks)
+                                    if any(want in f for f in fs))
+        print("\n== stacks through %s" % want)
+        for p, c in paths.most_common(8): print("%5.1f%%  %s" % (100.0 * c / n, p))
 
 main()
