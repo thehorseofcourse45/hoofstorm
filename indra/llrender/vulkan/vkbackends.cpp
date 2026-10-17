@@ -754,7 +754,7 @@ void VulkanVertexBufferBackend::dropDeviceCopy(Buf& b)
 {
     if (!b.device) return;
     auto device = mCtx->device; auto buffer = b.device; auto memory = b.deviceMemory;
-    mCtx->deferRelease([device, buffer, memory] { vkDestroyBuffer(device, buffer, nullptr); vkFreeMemory(device, memory, nullptr); });
+    mCtx->deferFree([device, buffer, memory] { vkDestroyBuffer(device, buffer, nullptr); vkFreeMemory(device, memory, nullptr); });
     mDeviceBytes -= b.size;
     ++mCtx->bufferDemotions;
     mCtx->bufferVramBytes = mDeviceBytes;

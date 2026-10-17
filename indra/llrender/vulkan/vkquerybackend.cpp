@@ -10,7 +10,7 @@ constexpr uint32_t TIME=0x88BF, SAMPLES=0x8914, ANY=0x8C2F, CONSERVATIVE=0x8D6A,
 constexpr uint32_t CAPACITY=256;
 bool occlusion(uint32_t target) { return target==SAMPLES || target==ANY || target==CONSERVATIVE; }
 }
-VulkanQueryBackend::VulkanQueryBackend(VkContext* ctx) : mCtx(ctx), mPassTiming(!getenv("FS_VK_PASS_TIMING") || *getenv("FS_VK_PASS_TIMING") != '0'),
+VulkanQueryBackend::VulkanQueryBackend(VkContext* ctx) : mCtx(ctx), mPassTiming(getenv("FS_VK_PASS_TIMING") && *getenv("FS_VK_PASS_TIMING") != '0'),
     mDrawTimingProgram(getenv("FS_VK_DRAW_TIMING") ? (uint32_t) atoi(getenv("FS_VK_DRAW_TIMING")) : 0)
 {
     if (supported(TIME)) for (auto& timer:mFrameTimers) generate(1,&timer);

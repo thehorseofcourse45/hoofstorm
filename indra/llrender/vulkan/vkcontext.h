@@ -25,6 +25,10 @@
 #include <array>
 #include <string>
 #include <stdexcept>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
 
 #define VK_CHECK(x)                                                                         \
     do {                                                                                    \
@@ -130,6 +134,15 @@ struct VkContext
     void refreshCompleted();                  // polls the fence, never waits
     void waitForFrame(uint64_t frame);        // waits until `frame` has finished
     void deferRelease(std::function<void()> release);
+    bool ringFits(VkDeviceSize bytes, VkDeviceSize align) const    // uploadRingAlloc would not have to flush
+    {
+        return (ringOffset + align - 1) / align * align + bytes <= slots[currentSlot].ringBase + ringSize;
+    }
+    // deferRelease for plain vkDestroy*/vkFreeMemory calls on objects nothing else references: once the frame is finished
+    // they run on the reaper thread, because vkFreeMemory can take milliseconds and stalled the render thread.
+    void deferFree(std::function<void()> free) { deferRelease([this, free = std::move(free)]() mutable { reap(std::move(free)); }); }
+    void reap(std::function<void()> free);
+    void stopReaper();                        // runs what is queued, then joins; before the device goes away
     void collectReleasedResources();
     enum class Stall : size_t { Readback, Query, UniformRing, BufferReuse, Upload, Explicit, Count };
     static constexpr size_t stallKinds = size_t(Stall::Count);
@@ -150,6 +163,11 @@ struct VkContext
         VkDeviceSize bytes = 0;
     } batch;
     std::vector<StageChunk> freeChunks;
+    std::mutex reaperMutex;
+    std::condition_variable reaperWake;
+    std::deque<std::function<void()>> reaperQueue;
+    std::thread reaper;
+    bool reaperQuit = false;
     static constexpr VkDeviceSize kBatchChunk = 8 << 20, kBatchLimit = 128 << 20;
     uint64_t batchedUploads = 0;
     VkCommandBuffer batchCommands();                                   // opens the batch on first use
@@ -232,6 +250,9 @@ struct VkContext
     uint8_t* readMapped = nullptr;
 
     double lastFenceWaitMs = 0, lastAcquireWaitMs = 0, lastRecordingMs = 0, lastPresentMs = 0;
+    // beginFrame breakdown for the slow-record log: whole call, deferred releases (count), framebuffer and query begin
+    double lastBeginMs = 0, lastCollectMs = 0, lastFramebufferBeginMs = 0, lastQueryBeginMs = 0;
+    size_t lastCollectCount = 0;
     double pipelineCreationMs = 0;
     uint64_t bufferRenames = 0, pipelinesCreated = 0, pipelineCacheHits = 0;
     uint64_t bufferPromotions = 0, bufferDemotions = 0, bufferVramBytes = 0;   // vertex/index copies kept in VRAM

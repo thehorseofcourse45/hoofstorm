@@ -384,7 +384,7 @@ void VulkanTextureBackend::destroyImage(Tex& t)
     t.views.clear();
     t.cView = VK_NULL_HANDLE;
     t.aView = VK_NULL_HANDLE;
-    mCtx->deferRelease([device, image, memory, views] {
+    mCtx->deferFree([device, image, memory, views] {
         for (const auto& view : views) vkDestroyImageView(device, view.second, nullptr);
         vkDestroyImage(device, image, nullptr);
         vkFreeMemory(device, memory, nullptr);
@@ -476,7 +476,8 @@ void VulkanTextureBackend::upload(Tex& t, uint32_t level, uint32_t layer, uint32
     VkBuffer staging = mCtx->ringBuffer;
     VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
     VkDeviceSize stagingOffset = 0;
-    const bool useRing = mCtx->recording && texels.size() <= mCtx->ringSize;
+    // A ring that is too full to take the texels would end the frame and wait for the GPU: use separate staging instead.
+    const bool useRing = mCtx->recording && mCtx->ringFits(texels.size(), 16);
     const bool useBatch = !mCtx->recording;
     if (useBatch)
     {
@@ -529,7 +530,7 @@ void VulkanTextureBackend::upload(Tex& t, uint32_t level, uint32_t layer, uint32
     else if (!useRing)
     {
         const auto device = mCtx->device;
-        mCtx->deferRelease([device, staging, stagingMemory] {
+        mCtx->deferFree([device, staging, stagingMemory] {
             vkDestroyBuffer(device, staging, nullptr);
             vkFreeMemory(device, stagingMemory, nullptr);
         });
@@ -941,8 +942,23 @@ void VulkanTextureBackend::subImage2D(U32 target, S32 level, S32 x, S32 y, S32 w
         return;
     }
     const uint32_t layer = isCubeFace(target) ? (uint32_t) (target - glc::TEXTURE_CUBE_MAP_POSITIVE_X) : 0;
-    upload(*tp, (uint32_t) level, layer, 1, x, y, (uint32_t) width, (uint32_t) height,
-           convertForUpload(*tp, format, type, (uint32_t) width, (uint32_t) height, 1, pixels));
+    // diagnostic: slow sub-image uploads go to stderr (vulkan_fatal.log in the viewer), at most 200 lines
+    const auto start = std::chrono::steady_clock::now();
+    auto texels = convertForUpload(*tp, format, type, (uint32_t) width, (uint32_t) height, 1, pixels);
+    const auto converted = std::chrono::steady_clock::now();
+    upload(*tp, (uint32_t) level, layer, 1, x, y, (uint32_t) width, (uint32_t) height, texels);
+    const auto end = std::chrono::steady_clock::now();
+    static int reported = 0;
+    const double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
+    if (totalMs > 4.0 && reported < 200)
+    {
+        ++reported;
+        fprintf(stderr, "TEXSLOW subImage2D %dx%d at %d,%d level %d of %ux%u levels=%u format=0x%x type=0x%x kind=%d recording=%d: "
+                "convert %.2f ms, upload %.2f ms\n", width, height, x, y, level, tp->width, tp->height, tp->levels, format, type,
+                (int) tp->info.kind, (int) mCtx->recording, std::chrono::duration<double, std::milli>(converted - start).count(),
+                std::chrono::duration<double, std::milli>(end - converted).count());
+        fflush(stderr);
+    }
 }
 
 void VulkanTextureBackend::image3D(U32 target, S32 level, S32 internalFormat, S32 width, S32 height, S32 depth, U32 format, U32 type,

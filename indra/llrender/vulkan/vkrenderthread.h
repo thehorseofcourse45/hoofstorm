@@ -138,6 +138,9 @@ public:
         if (e) std::rethrow_exception(e);
     }
     Stats& stats() { return mStats; }
+    // Records that ran over 4 ms, by thunk address. Worker thread only: read and clear it from a record.
+    struct SlowRecord { void (*run)(void*); double ms; };
+    std::vector<SlowRecord>& slowRecords() { return mSlowRecords; }
     bool onWorker() const { return std::this_thread::get_id() == mWorker.get_id(); }
 
 private:
@@ -181,7 +184,10 @@ private:
             auto* h = reinterpret_cast<Header*>(batch.data() + offset);
             try
             {
+                const auto start = std::chrono::steady_clock::now();
                 h->run(batch.data() + offset + sizeof(Header));
+                const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+                if (ms > 4.0 && mSlowRecords.size() < 64) mSlowRecords.push_back({h->run, ms});
             }
             catch (const std::exception& e)
             {
@@ -205,6 +211,8 @@ private:
         wchar_t wide[64] = {};
         for (int i = 0; name[i] && i < 63; ++i) wide[i] = static_cast<wchar_t>(name[i]);
         SetThreadDescription(GetCurrentThread(), wide);
+        // The main thread waits on this one every frame; at normal priority, image decode and avatar workers took its time slices.
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 #else
         (void) name;
 #endif
@@ -252,6 +260,7 @@ private:
     int mFramesQueued = 0;
     bool mQuit = false;
     std::exception_ptr mFailure;
+    std::vector<SlowRecord> mSlowRecords;         // worker thread only
     std::thread mWorker;
 };
 

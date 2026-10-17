@@ -1815,6 +1815,7 @@ bool LLAppViewer::doFrame()
                 if (drawable && started && !isVulkanRenderBackendActive()) updateAuxiliaryViews();
 
                 deferRenderBackendPresentation(false);
+                pingMainloopTimeout("Main:EndBackendFrame");
                 endRenderBackendFrame();
                 gGLActive = false;
                 if (LLViewerStatsRecorder::instanceExists())
@@ -7066,6 +7067,38 @@ void LLAppViewer::pingMainloopTimeout(std::string_view state)
     {
         mMainloopTimeout->setTimeout(getMainloopTimeoutSec());
         mMainloopTimeout->ping(state);
+    }
+
+    // Slow frame log: time between consecutive pings, per phase, for main-loop frames over 20 ms. "Main:End" closes a frame.
+    if (!on_main_thread())
+    {
+        return;
+    }
+    static std::vector<std::pair<std::string, F64>> phases;
+    static LLTimer phase_timer;
+    const F64 elapsed_ms = phase_timer.getElapsedTimeAndResetF64() * 1000.0;
+    phases.emplace_back(state, elapsed_ms);
+    if (state == "Main:End")
+    {
+        F64 total_ms = 0;
+        for (const auto& phase : phases)
+        {
+            total_ms += phase.second;
+        }
+        if (total_ms > 20.0 && LLStartUp::getStartupState() == STATE_STARTED)
+        {
+            std::ostringstream out;
+            out << "frame ms=" << total_ms << ";";
+            for (const auto& phase : phases)
+            {
+                if (phase.second >= 1.0)
+                {
+                    out << " to " << phase.first << "=" << phase.second;
+                }
+            }
+            LL_INFOS("FrameSpike") << out.str() << LL_ENDL;
+        }
+        phases.clear();
     }
 }
 

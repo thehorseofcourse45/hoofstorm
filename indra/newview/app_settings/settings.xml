@@ -242,7 +242,7 @@
     <key>Type</key>
     <string>U32</string>
     <key>Value</key>
-    <integer>3</integer>
+    <integer>1</integer>
   </map>
 
   <key>FSDistantAvatarAnimDistance</key>

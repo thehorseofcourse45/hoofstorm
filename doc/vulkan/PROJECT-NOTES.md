@@ -1,5 +1,19 @@
 # Vulkan project notes
 
+## Current status: frame stutter and far-avatar jitter, 2026-10-16 (evening)
+
+- Stutter root cause: deferred frees in `VkContext::beginFrame` -> `collectSlot` on the render thread. Each texture, VRAM vertex copy and staging buffer is its own `vkFreeMemory`, slow on the AMD driver. One crowd run: 1080 frame starts over 4 ms, 11.3 s of 15.8 s in releases (single frees up to 300 ms); fence wait median 0.01 ms. The main thread waited for it in `throttle(1)`.
+- Fix (built, activation test 45/45 both thread modes, not yet tested in-world): `VkContext::deferFree` / `reap` run plain `vkDestroy*`/`vkFreeMemory` on a `VulkanReaper` thread once the frame is finished (texture images, texture staging, dropped VRAM vertex copies, upload batch chunks). Releases that touch pools (command pool, descriptor pool, buffer recycling, programs) stay on the render thread. `stopReaper()` in `shutdown()`.
+- Diagnostics added: `FrameSpike` log (main-loop frames over 20 ms, per `pingMainloopTimeout` phase, `llappviewer.cpp`); `VulkanSlowRecord` log (render-thread records over 4 ms as module offsets plus beginFrame breakdown); `doc/vulkan/tools/symaddr.py <exe> <rva>...` resolves the offsets with the PDB.
+- Far-avatar attachment jitter: caused by the distant-animation throttle (pose updated every 3rd/6th frame). User confirmed it stops with `FSDistantAvatarAnimPeriod` 1. Default changed 3 -> 1 (settings.xml and `llvoavatar.cpp`); parallel motion carries the load.
+- Reaper verified in-world: release time in slow frame starts 11278 -> 28.5 ms; user reports less stutter.
+- Texture upload stalls: `TEXSLOW` diagnostic (stderr, `VulkanTextureBackend::subImage2D`) showed conversion negligible; uploads blocked in quantized 10/20/32/52 ms waits. Cause: `uploadRingAlloc` on a full ring ends the frame and `vkQueueWaitIdle`s (`blocking upload` 27 calls, 434 ms in one run). Fix (built, activation 45/45, not yet tested in-world): `upload()` uses the ring only when `ringFits`, else one-off staging (`deferFree`). Viewer slices uploads into 8-32 rows (`sub_image_lines`), so one texture can hit this many times.
+- Render thread now `THREAD_PRIORITY_ABOVE_NORMAL` (`vkrenderthread.h`); it did not remove the upload stalls (those were the ring), kept since the main thread waits on it.
+- A 44-avatar crowd (13000 updates/300 frames) runs 15-40 FPS, main-thread idle (avatar update) dominant: next target after uploads.
+- Ring fix verified: ring-full upload stalls gone. Remaining `blocking upload` (5 calls, ~30 ms each in one run) are `flushBatchBlocking`: a between-frames upload batch over `kBatchLimit` (128 MiB) during loading. Not fixed.
+- Pass timing (`FS_VK_PASS_TIMING`) was on by default and cost about 5 ms/frame of render-thread query readback in a 44-avatar crowd (`queries` in the beginFrame breakdown). Now opt-in (`FS_VK_PASS_TIMING=1`). Activation 45/45 for both thread modes x pass timing on/off. Not yet tested in-world.
+- Next: user runs the crowd with this build; check the beginFrame `queries` share and FPS.
+
 ## Current status: vertex data in VRAM, restore crash fix, 2026-10-16 (later)
 
 - Big win: vertex and index buffers lived in the first HOST_VISIBLE|HOST_COHERENT memory type, which on the RX 6700 XT (no Resizable BAR; the device-local host-visible heap is only 256 MB) is system RAM. Every vertex fetch crossed PCIe. Skinned avatars cost about 4.9 us per 1K vertex shader invocations.

@@ -25,7 +25,8 @@ public:
     void endFrame();
     void beginRecording();
     void endRecording();
-    // Per-render-pass GPU time, on by default, FS_VK_PASS_TIMING=0 disables. Results arrive two frames late and accumulate in
+    // Per-render-pass GPU time, off by default (about 5 ms/frame of render-thread readback in a big crowd), FS_VK_PASS_TIMING=1
+    // enables. Results arrive two frames late and accumulate in
     // passTimes until the pacing log drains them.
     void passBegin(const std::array<uint32_t, 4>& key);
     void passEnd();

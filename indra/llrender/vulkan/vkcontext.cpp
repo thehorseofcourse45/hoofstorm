@@ -625,7 +625,10 @@ bool VkContext::beginFrame(const float clear[4])
     VK_CHECK(vkWaitForFences(device, 1, &ns.fence, VK_TRUE, UINT64_MAX));
     completedFrame = std::max(completedFrame, ns.frame);
     lastFenceWaitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-fenceStart).count();
+    const auto collectStart = std::chrono::steady_clock::now();
+    lastCollectCount = slots[next].release.size();
     collectSlot(next);
+    lastCollectMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-collectStart).count();
     if (!headless)
     {
         RECT client{};
@@ -664,8 +667,14 @@ bool VkContext::beginFrame(const float clear[4])
     recordingStarted = std::chrono::steady_clock::now();
     acquireConsumed = headless;
     windowColorLayout = windowDepthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    const auto tailStart = std::chrono::steady_clock::now();
     framebuffers->beginFrame(clear);
+    const auto queriesStart = std::chrono::steady_clock::now();
     if (queries) { queries->beginFrame(); queries->beginRecording(); }
+    const auto end = std::chrono::steady_clock::now();
+    lastFramebufferBeginMs = std::chrono::duration<double, std::milli>(queriesStart-tailStart).count();
+    lastQueryBeginMs = std::chrono::duration<double, std::milli>(end-queriesStart).count();
+    lastBeginMs = std::chrono::duration<double, std::milli>(end-fenceStart).count();
     return true;
 }
 
@@ -840,9 +849,11 @@ VkCommandBuffer VkContext::takeBatch()
         {
             chunk.used = 0;
             if (chunk.size == kBatchChunk && freeChunks.size() < 4) { freeChunks.push_back(chunk); continue; }
-            vkUnmapMemory(device, chunk.memory);
-            vkDestroyBuffer(device, chunk.buffer, nullptr);
-            vkFreeMemory(device, chunk.memory, nullptr);
+            reap([device = device, chunk] {
+                vkUnmapMemory(device, chunk.memory);
+                vkDestroyBuffer(device, chunk.buffer, nullptr);
+                vkFreeMemory(device, chunk.memory, nullptr);
+            });
         }
     });
     return taken.cmd;
@@ -908,6 +919,43 @@ void VkContext::deferRelease(std::function<void()> release)
     else slot().release.push_back(std::move(release));
 }
 
+void VkContext::reap(std::function<void()> free)
+{
+    {
+        std::lock_guard<std::mutex> lock(reaperMutex);
+        if (!reaper.joinable())
+        {
+            reaperQuit = false;
+            reaper = std::thread([this] {
+                SetThreadDescription(GetCurrentThread(), L"VulkanReaper");
+                std::unique_lock<std::mutex> lock(reaperMutex);
+                for (;;)
+                {
+                    reaperWake.wait(lock, [this] { return reaperQuit || !reaperQueue.empty(); });
+                    if (reaperQueue.empty()) return;
+                    auto next = std::move(reaperQueue.front());
+                    reaperQueue.pop_front();
+                    lock.unlock();
+                    next();
+                    lock.lock();
+                }
+            });
+        }
+        reaperQueue.push_back(std::move(free));
+    }
+    reaperWake.notify_one();
+}
+
+void VkContext::stopReaper()
+{
+    {
+        std::lock_guard<std::mutex> lock(reaperMutex);
+        reaperQuit = true;
+    }
+    reaperWake.notify_one();
+    if (reaper.joinable()) reaper.join();
+}
+
 void VkContext::collectSlot(size_t index)
 {
     auto ready = std::move(slots[index].release);
@@ -927,6 +975,7 @@ void VkContext::shutdown()
         vkDeviceWaitIdle(device);
         discardBatch();
         collectReleasedResources();
+        stopReaper();
         for (auto& chunk : freeChunks)
         {
             vkUnmapMemory(device, chunk.memory);

@@ -91,6 +91,23 @@ struct NativeRenderer
                 context.endFrame(false);
                 logFramePacing();
             }
+            // Slow records as module offsets: resolve against the exe's PDB (doc/vulkan/tools/symaddr.py).
+            if (!t->slowRecords().empty())
+            {
+                const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+                std::ostringstream out;
+                out << "slow render-thread records (ms@rva):";
+                for (const auto& r : t->slowRecords())
+                {
+                    out << " " << r.ms << "@0x" << std::hex << (reinterpret_cast<uintptr_t>(r.run) - base) << std::dec;
+                }
+                out << "; beginFrame ms=" << context.lastBeginMs << " fence=" << context.lastFenceWaitMs
+                    << " releases=" << context.lastCollectMs << " (" << context.lastCollectCount << ") acquire="
+                    << context.lastAcquireWaitMs << " framebuffers=" << context.lastFramebufferBeginMs
+                    << " queries=" << context.lastQueryBeginMs;
+                LL_INFOS("VulkanSlowRecord") << out.str() << LL_ENDL;
+                t->slowRecords().clear();
+            }
             t->frameDone();
         });
         thread->frameQueued();
@@ -156,7 +173,7 @@ struct NativeRenderer
                     << " passes/frame=" << byDraws[i].first.second / 300.0 << LL_ENDL;
             context.statPassDraws.clear();
         }
-        if (context.queries && !context.queries->passTimes.empty())     // on unless FS_VK_PASS_TIMING=0
+        if (context.queries && !context.queries->passTimes.empty())     // only with FS_VK_PASS_TIMING=1
         {
             std::vector<std::pair<double, std::pair<std::array<uint32_t, 4>, uint64_t>>> byTime;
             std::map<std::array<uint32_t, 4>, double> gaps;
