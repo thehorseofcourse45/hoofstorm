@@ -113,12 +113,16 @@ void VulkanQueryBackend::begin(uint32_t target,uint32_t id)
     std::lock_guard<std::recursive_mutex> lock(mLock);
     if (!supported(target)) throw std::runtime_error("Unsupported Vulkan query target");
     if (mActive.count(target)) throw std::runtime_error("Vulkan query target already active");
-    if (!mCtx->recording)
-    {
-        const float clear[4]={0,0,0,1};
-        if (!mCtx->beginFrame(clear)) throw std::runtime_error("Query issued while window unavailable");
-    }
     for (auto& active:mActive) if (active.second==id) throw std::runtime_error("Query name already active");
+    if (!mCtx->framebuffers->ensureFrame())
+    {
+        // Minimized: no frame, so the query covers no GPU work and reads 0 once ended (avatar render-time profiling
+        // issues these from impostor updates). Throwing here crashed the viewer on minimize.
+        auto& query=object(id);
+        query=Query{}; query.target=target;
+        mActive.emplace(target,id);
+        return;
+    }
     if (occlusion(target))
         for (auto& active:mActive) if (occlusion(active.first)) { mCtx->framebuffers->endRendering(); break; }
     auto& query=object(id);

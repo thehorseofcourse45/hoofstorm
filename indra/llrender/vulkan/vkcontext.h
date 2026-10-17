@@ -144,6 +144,9 @@ struct VkContext
     void reap(std::function<void()> free);
     void stopReaper();                        // runs what is queued, then joins; before the device goes away
     void collectReleasedResources();
+    // Process exit without validation: vertex/index buffer memory and the device are left to process teardown. Freeing
+    // thousands of buffers one vkFreeMemory at a time took about 10 s of the viewer's exit.
+    bool exiting = false;
     enum class Stall : size_t { Readback, Query, UniformRing, BufferReuse, Upload, Explicit, Count };
     static constexpr size_t stallKinds = size_t(Stall::Count);
     std::array<uint64_t, stallKinds> stallCounts{};

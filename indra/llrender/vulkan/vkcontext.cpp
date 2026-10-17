@@ -1031,7 +1031,7 @@ void VkContext::shutdown()
         savePipelineCache();
         vkDestroyPipelineCache(device, pipelineCache, nullptr);
         pipelineCache = VK_NULL_HANDLE;
-        vkDestroyDevice(device, nullptr);
+        if (!exiting) vkDestroyDevice(device, nullptr);     // exiting: it still owns the buffers left to process teardown
         device = VK_NULL_HANDLE;
     }
     if (surface) { vkDestroySurfaceKHR(instance, surface, nullptr); surface = VK_NULL_HANDLE; }
@@ -1041,6 +1041,7 @@ void VkContext::shutdown()
         destroy(instance, messenger, nullptr);
         messenger = VK_NULL_HANDLE;
     }
-    if (instance) { vkDestroyInstance(instance, nullptr); instance = VK_NULL_HANDLE; }
+    if (instance && !exiting) vkDestroyInstance(instance, nullptr);
+    instance = VK_NULL_HANDLE;
     recording = false;
 }

@@ -38,6 +38,7 @@ bool beginRenderBackendFrame(const float clear[4]);
 bool isRenderBackendFrameActive();
 void endRenderBackendFrame();
 void shutdownRenderBackend(); // caller releases LLRender/LLVertexBuffer resources before closing the native window
+void setRenderBackendExiting(); // process exit: skip freeing GPU buffers one by one (not with validation on)
 void getRenderBackendValidationCounts(std::uint32_t& errors, std::uint32_t& warnings);
 bool renderBackendObjectsCreated();
 class LLGLManager;

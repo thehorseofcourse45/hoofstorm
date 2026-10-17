@@ -37,6 +37,8 @@
 #include "llshadermgr.h"
 #include "llglslshader.h"
 #include "llmemory.h"
+#include "llapp.h"
+#include "llrenderbackend.h"
 #include <glm/gtc/type_ptr.hpp>
 
 //Next Highest Power Of Two
@@ -431,6 +433,7 @@ void LLVertexBuffer::invalidateBufferBinding()
 void LLVertexBuffer::cleanupClass()
 {
     unbind();
+    if (LLApp::isExiting()) setRenderBackendExiting();
 
     delete sBackend;
     sBackend = nullptr;

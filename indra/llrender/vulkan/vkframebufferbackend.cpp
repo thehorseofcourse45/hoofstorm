@@ -251,20 +251,22 @@ void VulkanFramebufferBackend::beginRendering(U32 clearMask)
     mRendering = true;
     mRenderingDepthLayout = depthLayout;
 }
+bool VulkanFramebufferBackend::ensureFrame()
+{
+    if (mCtx->recording) return true;
+    const U32 draw = mDraw, read = mRead;      // beginFrame resets the bindings to the window
+    const float black[4] = {0, 0, 0, 1};
+    if (!mCtx->beginFrame(black)) return false;
+    mDraw = draw; mRead = read;
+    return true;
+}
+
 void VulkanFramebufferBackend::clear(U32 mask)
 {
     prepareDraw();
     if (mask & ~(COLOR_BIT | DEPTH_BIT)) fail("stencil clears need a stencil attachment");
     if (!mask) return;
-    // A frame can start with a clear (after a restore from minimized, before any draw); begin it like a draw does.
-    // While minimized there is no frame and nothing to clear.
-    if (!mCtx->recording)
-    {
-        const U32 draw = mDraw, read = mRead;      // beginFrame resets the bindings to the window
-        const float black[4] = {0, 0, 0, 1};
-        if (!mCtx->beginFrame(black)) return;
-        mDraw = draw; mRead = read;
-    }
+    if (!ensureFrame()) return;     // minimized: nothing to clear
     const auto& s = mState->s;
     assert(!(mask & COLOR_BIT) || (s.colorMask[0] && s.colorMask[1] && s.colorMask[2] && s.colorMask[3]));
     assert(!(mask & DEPTH_BIT) || s.depthWrite);
@@ -333,9 +335,13 @@ bool VulkanFramebufferBackend::prepareSample(U32 texture)
 
 void VulkanFramebufferBackend::readPixels(S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, void* data)
 {
-    if (!mCtx->recording) fail("readPixels requires an active frame");
     if (!data || width < 0 || height < 0) fail("invalid readPixels arguments");
     if (!width || !height) return;
+    if (!ensureFrame())     // minimized: no image to read
+    {
+        memset(data, 0, VulkanTextureBackend::sourceBytes(format, type, width, height, 1, 0));
+        return;
+    }
     Image image = readImage(format == glc::DEPTH_COMPONENT);
     if (x < 0 || y < 0 || x > (S32) image.extent.width - width || y > (S32) image.extent.height - height)
         fail("readPixels rectangle outside attachment");
@@ -381,7 +387,7 @@ void VulkanFramebufferBackend::readPixels(S32 x, S32 y, S32 width, S32 height, U
 void VulkanFramebufferBackend::copyToTexture(U32 target, S32 level, S32 xoffset, S32 yoffset, S32 layer,
                                              S32 x, S32 y, S32 width, S32 height)
 {
-    if (!mCtx->recording) fail("framebuffer copies require an active frame");
+    if (!ensureFrame()) return;     // minimized: no image to copy from
     auto* t = mCtx->textures->bound(target);
     if (!t || !t->image || level < 0 || (U32) level >= t->levels || layer < 0 || (U32) layer >= t->layers)
         fail("invalid copy destination");

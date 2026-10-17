@@ -136,6 +136,27 @@ int main(int argc,char** argv)
         }
         ctx.shutdown();
         check(ctx.validationErrors==0 && ctx.validationWarnings==0,"zero Vulkan validation messages");
+        {
+            // A minimized window has no frame: a query begun then (avatar render-time profiling during impostor updates) must
+            // not throw, and reads 0. It used to throw "Query issued while window unavailable" and crash the viewer.
+            WNDCLASSW wc{}; wc.lpfnWndProc=DefWindowProcW; wc.hInstance=GetModuleHandle(nullptr); wc.lpszClassName=L"QueryTestWindow";
+            RegisterClassW(&wc);
+            HWND window=CreateWindowW(wc.lpszClassName,L"query test",WS_OVERLAPPEDWINDOW|WS_VISIBLE,0,0,320,240,nullptr,nullptr,wc.hInstance,nullptr);
+            VkContext windowed;
+            if(!window || !windowed.init(GetModuleHandle(nullptr),window,validation)) throw std::runtime_error("windowed context");
+            {
+                VulkanRenderStateBackend state; VulkanFramebufferBackend fb(&windowed,&state); VulkanQueryBackend queries(&windowed);
+                ShowWindow(window,SW_MINIMIZE);
+                for(MSG msg;PeekMessageW(&msg,nullptr,0,0,PM_REMOVE);) DispatchMessageW(&msg);
+                check(IsIconic(window) && !windowed.recording,"window minimized, no frame recording");
+                U32 id; queries.generate(1,&id);
+                constexpr U32 TIME=0x88BF; queries.begin(TIME,id); queries.end(TIME);
+                check(queries.available(id) && queries.result(id)==0,"a query while minimized does not throw and reads 0");
+                queries.destroy(1,&id);
+            }
+            windowed.shutdown(); DestroyWindow(window);
+            check(windowed.validationErrors==0 && windowed.validationWarnings==0,"zero validation messages in the minimized-window context");
+        }
         printf("QUERY_CHECKS=%u validation=%u errors=%u warnings=%u\n",checks,validation,ctx.validationErrors,ctx.validationWarnings);
         return 0;
     }

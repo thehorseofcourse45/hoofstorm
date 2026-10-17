@@ -37,6 +37,9 @@ public:
     U32 colorCount() const;
     bool prepareSample(U32 texture);   // false: feedback tolerated, the caller must sample a fallback instead
     void prepareDraw() { mSampledDepth = false; }
+    // Begins the frame if none is recording (after a restore from minimized the first call may be a clear, copy or read, not a
+    // draw), keeping the current framebuffer bindings. False while minimized: there is no frame.
+    bool ensureFrame();
     // Copies into the active texture; used by LLTextureBackend's framebuffer-copy methods.
     void copyToTexture(U32 target, S32 level, S32 xoffset, S32 yoffset, S32 layer,
                        S32 x, S32 y, S32 width, S32 height);

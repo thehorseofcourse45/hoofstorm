@@ -1,6 +1,7 @@
 # Sampling profiler for the viewer's main thread: suspend, walk the stack with dbghelp, resume, repeat.
 # usage: python mainprof.py <pid> <samples> <interval_ms> [thread_id]
-import ctypes, ctypes.wintypes as wt, sys, time, collections
+# MAINPROF_ANY=1 samples even while the viewer is not the foreground window (shutdown hangs, minimized).
+import ctypes, ctypes.wintypes as wt, os, sys, time, collections
 
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 dbg = ctypes.WinDLL("dbghelp", use_last_error=True)
@@ -75,7 +76,7 @@ def main():
         # only sample while the viewer is the foreground window; in the background it sleeps 40 ms a frame
         fg = wt.DWORD()
         user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(fg))
-        if fg.value != pid:
+        if fg.value != pid and not os.environ.get("MAINPROF_ANY"):
             time.sleep(0.1)
             continue
         if k32.SuspendThread(thread) == 0xFFFFFFFF: break

@@ -155,6 +155,22 @@ int main(int argc, char** argv)
                 VK_CHECK(vkDeviceWaitIdle(ctx.device)); ctx.collectReleasedResources();
                 ctx.asyncPipelines = false;
             }
+            // After a restore from minimized the first call of a frame may be a framebuffer copy or read: each starts the frame
+            // itself and keeps the bound framebuffer (it used to abort with "framebuffer copies require an active frame").
+            {
+                check(ctx.beginFrame(clear), "frame for the red scratch target");
+                fb.bind(scratch); state.setColorMask(true, true, true, true); fb.setClearColor(1, 0, 0, 1); fb.clear(0x4000); fb.bind(0);
+                ctx.endFrame(false);
+                fb.bind(scratch); textures.bind(glc::TEXTURE_2D, source);
+                fb.copyToTexture(glc::TEXTURE_2D, 0, 0, 0, 0, 0, 0, 16, 16);
+                check(ctx.recording && fb.getBound() == scratch, "a copy outside a frame begins one and keeps the bound framebuffer");
+                ctx.endFrame(false);
+                fb.bind(scratch); uint8_t px[4]{};
+                fb.readPixels(4, 4, 1, 1, glc::RGBA, glc::UNSIGNED_BYTE, px);
+                check(ctx.recording && px[0] == 255 && px[1] == 0, "a read outside a frame begins one and reads the bound framebuffer");
+                fb.bind(0); ctx.endFrame(false);
+                VK_CHECK(vkDeviceWaitIdle(ctx.device));
+            }
             check(ctx.validationErrors == 0 && ctx.validationWarnings == 0, "zero Vulkan validation messages");
         }
         printf("FRAMES_CHECKS=%u PASS\n", checks);

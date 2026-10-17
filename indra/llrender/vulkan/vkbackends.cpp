@@ -152,12 +152,13 @@ VulkanVertexBufferBackend::~VulkanVertexBufferBackend()
     drainCompiledPipelines();
     vkDeviceWaitIdle(mCtx->device);
     mCtx->collectReleasedResources(); // drain callbacks that recycle storage into this backend
-    for (const auto& entry : mStoragePool) destroyStorage(mCtx->device, entry.second);
     mLastPipeline = VK_NULL_HANDLE;
     for (auto& p : mPipelines)
     {
         vkDestroyPipeline(mCtx->device, p.second, nullptr);
     }
+    if (mCtx->exiting) return;      // buffer memory goes with the process (see VkContext::exiting)
+    for (const auto& entry : mStoragePool) destroyStorage(mCtx->device, entry.second);
     for (auto& kv : mBuffers)
     {
         destroyStorage(mCtx->device, kv.second);
@@ -764,11 +765,7 @@ void VulkanVertexBufferBackend::dropDeviceCopy(Buf& b)
 
 bool VulkanVertexBufferBackend::recordCommon(U32 mode, bool indexed, bool vertexInput)
 {
-    if (!mCtx->recording)
-    {
-        const float clear[4]={0,0,0,1};
-        if(!mCtx->beginFrame(clear)) throw std::runtime_error("Draw attempted while Vulkan window is minimized");
-    }
+    if (!mCtx->framebuffers->ensureFrame()) throw std::runtime_error("Draw attempted while Vulkan window is minimized");
     if (!mCtx->program) throw std::runtime_error("Vulkan draw requires a bound shader");
     const RecordedState& st = mState->s;
     VkCommandBuffer cmd = mCtx->slot().cmd;

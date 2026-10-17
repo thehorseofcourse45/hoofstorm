@@ -419,6 +419,14 @@ void endRenderBackendFrame()
     }
 #endif
 }
+void setRenderBackendExiting()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (!sNative || sNative->context.validation) return;
+    if (sNative->thread) sNative->thread->sync();       // the render thread is idle after this, so the flag is safe to set
+    sNative->context.exiting = true;
+#endif
+}
 void shutdownRenderBackend()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
