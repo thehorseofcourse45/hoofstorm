@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <deque>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <set>
@@ -77,7 +78,8 @@ public:
 class VulkanVertexBufferBackend final : public LLVertexBufferBackend
 {
 public:
-    VulkanVertexBufferBackend(VkContext* ctx, VulkanRenderStateBackend* state) : mCtx(ctx), mState(state) {}
+    VulkanVertexBufferBackend(VkContext* ctx, VulkanRenderStateBackend* state)
+        : mCtx(ctx), mState(state), mSlabs(std::make_shared<StorageSlabs>()) {}
     ~VulkanVertexBufferBackend() override;
 
     bool usesDeferredUpload() const override { return false; }
@@ -111,6 +113,27 @@ private:
         uint8_t* mapped = nullptr;
         VkDeviceSize allocationBytes = 0, capacity = 0;
         uint64_t usedFrame = 0;
+        int32_t block = -1;     // StorageSlabs block and slot, or -1 for memory of its own
+        uint32_t slot = 0;
+    };
+    // Storage up to kMaxSlot is carved from kBlock-sized allocations in equal power-of-two slots. One vkAllocateMemory
+    // per storage cost a driver call each, and a crowd coming into view made thousands at once (render-thread frames
+    // of 0.5-3 s, the main thread blocked behind them in stateSort).
+    struct StorageSlabs
+    {
+        static constexpr VkDeviceSize kBlock = 16u << 20, kMinSlot = 4096, kMaxSlot = 1u << 20;
+        struct Block
+        {
+            VkDeviceMemory memory = VK_NULL_HANDLE;
+            uint8_t* mapped = nullptr;
+            VkDeviceSize slotSize = 0;
+            uint32_t memoryType = 0;
+            std::vector<uint32_t> free;
+        };
+        ~StorageSlabs();
+        VkDevice device = VK_NULL_HANDLE;     // set with the first block
+        std::mutex mutex;              // the reaper returns slots from its own thread
+        std::vector<Block> blocks;     // ponytail: kept until shutdown, free empty blocks if host memory matters
     };
     struct Buf : BufferStorage
     {
@@ -135,7 +158,7 @@ private:
     U64 mPromotionFrame = 0;
     U32 mPromotionsThisFrame = 0;
     BufferStorage createStorage(BufferKind kind, U32 size);
-    static void destroyStorage(VkDevice device, const BufferStorage& storage);
+    static void destroyStorage(VkDevice device, StorageSlabs& slabs, const BufferStorage& storage);
     void recycleStorage(BufferKind kind, const BufferStorage& storage);
 
     struct PipelineJob;
@@ -150,6 +173,7 @@ private:
 
     VkContext* mCtx;
     VulkanRenderStateBackend* mState;
+    std::shared_ptr<StorageSlabs> mSlabs;     // shared with reaper jobs, which can outlive this backend
     std::unordered_map<U64, Buf> mBuffers;
     std::vector<Buf*> mById;    // mBuffers entries indexed by id (ids are sequential), null once freed; ponytail: grows 8 bytes per buffer ever made
     U64 mNextId = 1;

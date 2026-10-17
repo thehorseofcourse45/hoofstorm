@@ -158,20 +158,35 @@ VulkanVertexBufferBackend::~VulkanVertexBufferBackend()
         vkDestroyPipeline(mCtx->device, p.second, nullptr);
     }
     if (mCtx->exiting) return;      // buffer memory goes with the process (see VkContext::exiting)
-    for (const auto& entry : mStoragePool) destroyStorage(mCtx->device, entry.second);
+    for (const auto& entry : mStoragePool) destroyStorage(mCtx->device, *mSlabs, entry.second);
     for (auto& kv : mBuffers)
     {
-        destroyStorage(mCtx->device, kv.second);
-        for (const auto& retired : kv.second.retired) destroyStorage(mCtx->device, retired);
+        destroyStorage(mCtx->device, *mSlabs, kv.second);
+        for (const auto& retired : kv.second.retired) destroyStorage(mCtx->device, *mSlabs, retired);
         vkDestroyBuffer(mCtx->device, kv.second.device, nullptr);
         vkFreeMemory(mCtx->device, kv.second.deviceMemory, nullptr);
     }
 }
 
-void VulkanVertexBufferBackend::destroyStorage(VkDevice device, const BufferStorage& storage)
+VulkanVertexBufferBackend::StorageSlabs::~StorageSlabs()
 {
-    vkUnmapMemory(device, storage.memory);
+    for (const auto& b : blocks)
+    {
+        vkUnmapMemory(device, b.memory);
+        vkFreeMemory(device, b.memory, nullptr);
+    }
+}
+
+void VulkanVertexBufferBackend::destroyStorage(VkDevice device, StorageSlabs& slabs, const BufferStorage& storage)
+{
     vkDestroyBuffer(device, storage.buffer, nullptr);
+    if (storage.block >= 0)
+    {
+        std::lock_guard<std::mutex> lock(slabs.mutex);
+        slabs.blocks[storage.block].free.push_back(storage.slot);
+        return;
+    }
+    vkUnmapMemory(device, storage.memory);
     vkFreeMemory(device, storage.memory, nullptr);
 }
 
@@ -187,7 +202,7 @@ void VulkanVertexBufferBackend::recycleStorage(BufferKind kind, const BufferStor
             if (it->second.usedFrame + kPoolIdleFrames < mCtx->frameCounter)
             {
                 mPooledBytes -= it->second.allocationBytes;
-                mCtx->reap([device = mCtx->device, storage = it->second] { destroyStorage(device, storage); });
+                mCtx->reap([device = mCtx->device, slabs = mSlabs, storage = it->second] { destroyStorage(device, *slabs, storage); });
                 it = mStoragePool.erase(it);
             }
             else ++it;
@@ -203,7 +218,7 @@ void VulkanVertexBufferBackend::recycleStorage(BufferKind kind, const BufferStor
     else
     {
         // on the reaper: thousands of these ran inline during teardown (5 s of the exit), and on the render thread at runtime
-        mCtx->reap([device = mCtx->device, storage] { destroyStorage(device, storage); });
+        mCtx->reap([device = mCtx->device, slabs = mSlabs, storage] { destroyStorage(device, *slabs, storage); });
         ++mCtx->bufferPoolEvictions;
     }
 }
@@ -231,11 +246,46 @@ VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createStorag
     ++mCtx->bufferAllocations;
     VkMemoryRequirements req;
     vkGetBufferMemoryRequirements(mCtx->device, b.buffer, &req);
+    const uint32_t memoryType = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (req.size <= StorageSlabs::kMaxSlot && req.alignment <= StorageSlabs::kMaxSlot)
+    {
+        VkDeviceSize slotSize = StorageSlabs::kMinSlot;
+        while (slotSize < req.size || slotSize < req.alignment) slotSize *= 2;
+        std::lock_guard<std::mutex> lock(mSlabs->mutex);
+        auto& blocks = mSlabs->blocks;
+        size_t index = 0;
+        while (index < blocks.size() && (blocks[index].slotSize != slotSize || blocks[index].memoryType != memoryType || blocks[index].free.empty())) ++index;
+        if (index == blocks.size())
+        {
+            StorageSlabs::Block block;
+            block.slotSize = slotSize;
+            block.memoryType = memoryType;
+            VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            mai.allocationSize = StorageSlabs::kBlock;
+            mai.memoryTypeIndex = memoryType;
+            VK_CHECK(vkAllocateMemory(mCtx->device, &mai, nullptr, &block.memory));
+            mSlabs->device = mCtx->device;
+            ++mCtx->bufferMemoryAllocations;
+            VK_CHECK(vkMapMemory(mCtx->device, block.memory, 0, VK_WHOLE_SIZE, 0, (void**) &block.mapped));
+            for (uint32_t slot = (uint32_t) (StorageSlabs::kBlock / slotSize); slot-- > 0;) block.free.push_back(slot);
+            blocks.push_back(std::move(block));
+        }
+        auto& block = blocks[index];
+        b.block = (int32_t) index;
+        b.slot = block.free.back();
+        block.free.pop_back();
+        b.memory = block.memory;
+        b.mapped = block.mapped + b.slot * slotSize;
+        b.allocationBytes = slotSize;
+        VK_CHECK(vkBindBufferMemory(mCtx->device, b.buffer, b.memory, b.slot * slotSize));
+        return b;
+    }
     VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     mai.allocationSize = req.size;
     b.allocationBytes = req.size;
-    mai.memoryTypeIndex = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    mai.memoryTypeIndex = memoryType;
     VK_CHECK(vkAllocateMemory(mCtx->device, &mai, nullptr, &b.memory));
+    ++mCtx->bufferMemoryAllocations;
     VK_CHECK(vkBindBufferMemory(mCtx->device, b.buffer, b.memory, 0));
     VK_CHECK(vkMapMemory(mCtx->device, b.memory, 0, VK_WHOLE_SIZE, 0, (void**) &b.mapped));
 

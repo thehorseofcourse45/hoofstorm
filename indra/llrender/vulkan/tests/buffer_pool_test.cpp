@@ -40,6 +40,11 @@ int main(int argc,char** argv)
             std::vector<BufferHandle> handles(70);std::vector<U8*> shadows(70,nullptr);for(int i=0;i<70;++i)vb.allocate(i%2?BufferKind::Index:BufferKind::Vertex,1<<20,handles[i],shadows[i]);
             for(int i=0;i<70;++i)vb.free(i%2?BufferKind::Index:BufferKind::Vertex,1<<20,handles[i],shadows[i]);
             ctx.collectReleasedResources();check(vb.getVramBytesUsed()<=(256u<<20),"completed buffer cache remains bounded to 256 MiB");
+            {const auto memory=ctx.bufferMemoryAllocations;std::vector<BufferHandle> live(1000);std::vector<U8*> liveShadows(1000,nullptr);
+            for(int i=0;i<1000;++i)vb.allocate(i%2?BufferKind::Index:BufferKind::Vertex,1024u+977u*(i%40),live[i],liveShadows[i]);
+            printf("POOL_MEMORY_ALLOCATIONS live_buffers=1000 allocations=%llu\n",ctx.bufferMemoryAllocations-memory);
+            check(ctx.bufferMemoryAllocations-memory<=16,"1000 live small buffers share a few memory allocations");
+            for(int i=0;i<1000;++i)vb.free(i%2?BufferKind::Index:BufferKind::Vertex,1024u+977u*(i%40),live[i],liveShadows[i]);ctx.collectReleasedResources();}
             shaders.use(0);shaders.deleteProgramAndObjects(program);
         }
         ctx.shutdown();check(!ctx.validationErrors && !ctx.validationWarnings,"zero validation messages including pool teardown");printf("POOL_CHECKS=%u PASS\n",checks);return 0;

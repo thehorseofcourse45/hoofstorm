@@ -127,5 +127,13 @@ def main():
                                     if any(want in f for f in fs))
         print("\n== stacks through %s" % want)
         for p, c in paths.most_common(8): print("%5.1f%%  %s" % (100.0 * c / n, p))
+        # what the matching function spends its time in, 1-3 calls deep
+        for depth in (1, 2, 3):
+            under = collections.Counter()
+            for fs in ([name(pc) for pc in pcs] for pcs in stacks):
+                i = next((k for k, f in enumerate(fs) if want in f), None)
+                if i is not None and i >= depth: under[fs[i - depth]] += 1
+            print("\n== %d below %s" % (depth, want))
+            for f, c in under.most_common(15): print("%5.1f%%  %s" % (100.0 * c / n, f[:150]))
 
 main()

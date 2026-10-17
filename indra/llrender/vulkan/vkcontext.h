@@ -275,6 +275,7 @@ struct VkContext
     bool tolerateFeedback = false;
     uint64_t feedbackSubstitutions = 0;
     uint64_t bufferAllocations = 0, bufferPoolHits = 0, bufferPoolEvictions = 0;
+    uint64_t bufferMemoryAllocations = 0;   // vkAllocateMemory calls behind vertex/index storage
     uint64_t textureUploadAllocations = 0, textureRingUploads = 0;
     std::chrono::steady_clock::time_point recordingStarted;
     uint64_t blockingSubmissions = 0; // synchronous partial submits; excluded from ordinary frame-fence pacing
