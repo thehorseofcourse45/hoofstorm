@@ -1384,11 +1384,6 @@ bool LLPrimitive::packTEMessage(LLDataPacker &dp) const
 
 S32 LLPrimitive::parseTEMessage(LLMessageSystem* mesgsys, char const* block_name, const S32 block_num, LLTEContents& tec)
 {
-    S32 retval = 0;
-    // temp buffer for material ID processing
-    // data will end up in tec.material_id[]
-    material_id_type material_data[LLTEContents::MAX_TES];
-
     if (block_num < 0)
     {
         tec.size = mesgsys->getSizeFast(block_name, _PREHASH_TextureEntry);
@@ -1401,7 +1396,7 @@ S32 LLPrimitive::parseTEMessage(LLMessageSystem* mesgsys, char const* block_name
     if (tec.size == 0)
     {
         tec.face_count = 0;
-        return retval;
+        return 0;
     }
     else if (tec.size >= LLTEContents::MAX_TE_BUFFER)
     {
@@ -1411,6 +1406,32 @@ S32 LLPrimitive::parseTEMessage(LLMessageSystem* mesgsys, char const* block_name
 
     // if block_num < 0 ask for block 0
     mesgsys->getBinaryDataFast(block_name, _PREHASH_TextureEntry, tec.packed_buffer, 0, std::max(block_num, 0), LLTEContents::MAX_TE_BUFFER - 1);
+    return unpackTEContents(tec);
+}
+
+S32 LLPrimitive::parseTEMessage(const U8* data, U32 size, LLTEContents& tec)
+{
+    tec.size = size;
+    if (tec.size == 0)
+    {
+        tec.face_count = 0;
+        return 0;
+    }
+    if (tec.size >= LLTEContents::MAX_TE_BUFFER)
+    {
+        LL_WARNS("TEXTUREENTRY") << "Excessive buffer size detected in Texture Entry! Truncating." << LL_ENDL;
+        tec.size = LLTEContents::MAX_TE_BUFFER - 1;
+    }
+    memcpy(tec.packed_buffer, data, tec.size);
+    return unpackTEContents(tec);
+}
+
+S32 LLPrimitive::unpackTEContents(LLTEContents& tec)
+{
+    S32 retval = 0;
+    // temp buffer for material ID processing
+    // data will end up in tec.material_id[]
+    material_id_type material_data[LLTEContents::MAX_TES];
 
     // The last field is not zero terminated.
     // Rather than special case the upack functions.  Just make it 0x00 terminated.

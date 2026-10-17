@@ -74,6 +74,7 @@ class LLHUDEffectSpiral;
 class LLTexGlobalColor;
 
 struct LLAppearanceMessageContents;
+struct LLAvatarAppearanceFields;
 class LLViewerJointMesh;
 
 const F32 MAX_AVATAR_LOD_FACTOR = 1.0f;
@@ -1010,8 +1011,11 @@ protected:
     LLPointer<LLAppearanceMessageContents>  mLastProcessedAppearance;
 
 public:
-    void            parseAppearanceMessage(LLMessageSystem* mesgsys, LLAppearanceMessageContents& msg);
+    void            parseAppearanceMessage(const LLAvatarAppearanceFields& fields, LLAppearanceMessageContents& msg);
     void            processAvatarAppearance(LLMessageSystem* mesgsys);
+    void            processAvatarAppearance(const LLAvatarAppearanceFields& fields);
+    static void     holdAppearanceForUnknownAvatar(const LLUUID& id, LLMessageSystem* mesgsys);  // applied when the avatar arrives
+    void            applyHeldAppearance();
     void            applyParsedAppearanceMessage(LLAppearanceMessageContents& contents, bool slam_params);
     void            hideHair();
     void            hideSkirt();

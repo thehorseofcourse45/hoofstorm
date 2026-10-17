@@ -511,6 +511,8 @@ public:
     S32 unpackTEMessage(LLMessageSystem* mesgsys, char const* block_name, const S32 block_num); // Variable num of blocks
     S32 unpackTEMessage(LLDataPacker &dp);
     S32 parseTEMessage(LLMessageSystem* mesgsys, char const* block_name, const S32 block_num, LLTEContents& tec);
+    S32 parseTEMessage(const U8* data, U32 size, LLTEContents& tec);   // TextureEntry bytes already copied out of a message
+    S32 unpackTEContents(LLTEContents& tec);   // tec.packed_buffer/size filled in
     S32 applyParsedTEMessage(LLTEContents& tec);
 
 #ifdef CHECK_FOR_FINITE

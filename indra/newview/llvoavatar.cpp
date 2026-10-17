@@ -302,6 +302,66 @@ struct LLAppearanceMessageContents: public LLRefCount
     bool mHoverOffsetWasSet;
 };
 
+// AvatarAppearance fields copied out of the message. A neighbour region's agent can be sent its appearance by our
+// region before the neighbour's object update creates the avatar; the sim only resends it about two minutes later.
+struct LLAvatarAppearanceFields
+{
+    std::vector<U8> mTextureEntry;
+    bool mHasAppearanceData = false;
+    U8 mAppearanceVersion = 0;
+    S32 mCOFVersion = 0;
+    bool mHasHover = false;
+    LLVector3 mHover;
+    std::vector<std::pair<LLUUID, U8>> mAttachments;
+    std::vector<U8> mParamValues;
+    F64 mReceived = 0.0;
+
+    explicit LLAvatarAppearanceFields(LLMessageSystem* mesgsys)
+    {
+        mReceived = LLFrameTimer::getElapsedSeconds();
+        const S32 te_size = mesgsys->getSizeFast(_PREHASH_ObjectData, _PREHASH_TextureEntry);
+        if (te_size > 0)
+        {
+            mTextureEntry.resize(llmin(te_size, (S32)LLTEContents::MAX_TE_BUFFER - 1));
+            mesgsys->getBinaryDataFast(_PREHASH_ObjectData, _PREHASH_TextureEntry, mTextureEntry.data(), 0, 0, (S32)mTextureEntry.size());
+        }
+        if (mesgsys->has(_PREHASH_AppearanceData))
+        {
+            mHasAppearanceData = true;
+            mesgsys->getU8Fast(_PREHASH_AppearanceData, _PREHASH_AppearanceVersion, mAppearanceVersion, 0);
+            mesgsys->getS32Fast(_PREHASH_AppearanceData, _PREHASH_CofVersion, mCOFVersion, 0);
+            // For future use:
+            //mesgsys->getU32Fast(_PREHASH_AppearanceData, _PREHASH_Flags, appearance_flags, 0);
+        }
+        if (mesgsys->has(_PREHASH_AppearanceHover))
+        {
+            mHasHover = true;
+            mesgsys->getVector3Fast(_PREHASH_AppearanceHover, _PREHASH_HoverHeight, mHover);
+        }
+        const S32 attach_count = mesgsys->getNumberOfBlocksFast(_PREHASH_AttachmentBlock);
+        for (S32 i = 0; i < attach_count; i++)
+        {
+            LLUUID id;
+            U8 point;
+            mesgsys->getUUIDFast(_PREHASH_AttachmentBlock, _PREHASH_ID, id, i);
+            mesgsys->getU8Fast(_PREHASH_AttachmentBlock, _PREHASH_AttachmentPoint, point, i);
+            mAttachments.emplace_back(id, point);
+        }
+        const S32 num_params = mesgsys->getNumberOfBlocksFast(_PREHASH_VisualParam);
+        mParamValues.resize(llmax(num_params, 0));
+        for (S32 i = 0; i < num_params; i++)
+        {
+            mesgsys->getU8Fast(_PREHASH_VisualParam, _PREHASH_ParamValue, mParamValues[i], i);
+        }
+    }
+};
+
+namespace
+{
+    constexpr F64 HELD_APPEARANCE_SECONDS = 60.0;
+    std::map<LLUUID, LLAvatarAppearanceFields> sHeldAppearances;   // by agent id, for avatars not created yet
+}
+
 
 //-----------------------------------------------------------------------------
 // class LLBodyNoiseMotion
@@ -3032,6 +3092,7 @@ U32 LLVOAvatar::processUpdateMessage(LLMessageSystem *mesgsys,
     {
         mDebugExistenceTimer.reset();
         debugAvatarRezTime("AvatarRezArrivedNotification", "avatar arrived");
+        applyHeldAppearance();
     }
 
     if (retval & LLViewerObject::INVALID_UPDATE)
@@ -10889,45 +10950,39 @@ void LLVOAvatar::dumpAppearanceMsgParams( const std::string& dump_prefix,
     apr_file_printf(file, "</textures>\n");
 }
 
-void LLVOAvatar::parseAppearanceMessage(LLMessageSystem* mesgsys, LLAppearanceMessageContents& contents)
+void LLVOAvatar::parseAppearanceMessage(const LLAvatarAppearanceFields& fields, LLAppearanceMessageContents& contents)
 {
-    parseTEMessage(mesgsys, _PREHASH_ObjectData, -1, contents.mTEContents);
+    parseTEMessage(fields.mTextureEntry.data(), (U32)fields.mTextureEntry.size(), contents.mTEContents);
 
     // Parse the AppearanceData field, if any.
-    if (mesgsys->has(_PREHASH_AppearanceData))
+    if (fields.mHasAppearanceData)
     {
-        U8 av_u8;
-        mesgsys->getU8Fast(_PREHASH_AppearanceData, _PREHASH_AppearanceVersion, av_u8, 0);
-        contents.mAppearanceVersion = av_u8;
+        contents.mAppearanceVersion = fields.mAppearanceVersion;
         //LL_DEBUGS("Avatar") << "appversion set by AppearanceData field: " << contents.mAppearanceVersion << LL_ENDL;
-        mesgsys->getS32Fast(_PREHASH_AppearanceData, _PREHASH_CofVersion, contents.mCOFVersion, 0);
-        // For future use:
-        //mesgsys->getU32Fast(_PREHASH_AppearanceData, _PREHASH_Flags, appearance_flags, 0);
+        contents.mCOFVersion = fields.mCOFVersion;
     }
 
     // Parse the AppearanceHover field, if any.
     contents.mHoverOffsetWasSet = false;
-    if (mesgsys->has(_PREHASH_AppearanceHover))
+    if (fields.mHasHover)
     {
-        LLVector3 hover;
-        mesgsys->getVector3Fast(_PREHASH_AppearanceHover, _PREHASH_HoverHeight, hover);
-        //LL_DEBUGS("Avatar") << avString() << " hover received " << hover.mV[ VX ] << "," << hover.mV[ VY ] << "," << hover.mV[ VZ ] << LL_ENDL;
-        contents.mHoverOffset = hover;
+        //LL_DEBUGS("Avatar") << avString() << " hover received " << fields.mHover << LL_ENDL;
+        contents.mHoverOffset = fields.mHover;
         contents.mHoverOffsetWasSet = true;
     }
 
     // Get attachment info, if sent
     LLUUID attachment_id;
     U8     attach_point;
-    S32    attach_count = mesgsys->getNumberOfBlocksFast(_PREHASH_AttachmentBlock);
+    S32    attach_count = (S32)fields.mAttachments.size();
     LL_DEBUGS("AVAppearanceAttachments") << "Agent " << getID() << " has "
                                          << attach_count << " attachments" << LL_ENDL;
     size_t old_size = mSimAttachments.size();
     mSimAttachments.clear();
     for (S32 attach_i = 0; attach_i < attach_count; attach_i++)
     {
-        mesgsys->getUUIDFast(_PREHASH_AttachmentBlock, _PREHASH_ID, attachment_id, attach_i);
-        mesgsys->getU8Fast(_PREHASH_AttachmentBlock, _PREHASH_AttachmentPoint, attach_point, attach_i);
+        attachment_id = fields.mAttachments[attach_i].first;
+        attach_point = fields.mAttachments[attach_i].second;
         LL_DEBUGS("AVAppearanceAttachments") << "AV " << getID() << " has attachment " << attach_i << " "
             << (attachment_id.isNull() ? "pending" : attachment_id.asString())
             << " on point " << (S32)attach_point << LL_ENDL;
@@ -10957,7 +11012,7 @@ void LLVOAvatar::parseAppearanceMessage(LLMessageSystem* mesgsys, LLAppearanceMe
     }
 
     // Parse visual params, if any.
-    S32 num_blocks = mesgsys->getNumberOfBlocksFast(_PREHASH_VisualParam);
+    S32 num_blocks = (S32)fields.mParamValues.size();
     if( num_blocks > 1)
     {
         //LL_DEBUGS("Avatar") << avString() << " handle visual params, num_blocks " << num_blocks << LL_ENDL;
@@ -10984,8 +11039,7 @@ void LLVOAvatar::parseAppearanceMessage(LLMessageSystem* mesgsys, LLAppearanceMe
                     break;
                 }
 
-                U8 value;
-                mesgsys->getU8Fast(_PREHASH_VisualParam, _PREHASH_ParamValue, value, i);
+                const U8 value = fields.mParamValues[i];
                 F32 newWeight = U8_to_F32(value, param->getMinWeight(), param->getMaxWeight());
                 contents.mParamWeights.push_back(newWeight);
                 contents.mParams.push_back(param);
@@ -11066,7 +11120,35 @@ bool resolve_appearance_version(const LLAppearanceMessageContents& contents, S32
 //-----------------------------------------------------------------------------
 // processAvatarAppearance()
 //-----------------------------------------------------------------------------
+void LLVOAvatar::holdAppearanceForUnknownAvatar(const LLUUID& id, LLMessageSystem* mesgsys)
+{
+    const F64 now = LLFrameTimer::getElapsedSeconds();
+    for (auto it = sHeldAppearances.begin(); it != sHeldAppearances.end();)
+    {
+        it = now - it->second.mReceived > HELD_APPEARANCE_SECONDS ? sHeldAppearances.erase(it) : std::next(it);
+    }
+    sHeldAppearances.insert_or_assign(id, LLAvatarAppearanceFields(mesgsys));
+}
+
+void LLVOAvatar::applyHeldAppearance()
+{
+    auto it = sHeldAppearances.find(getID());
+    if (it == sHeldAppearances.end()) return;
+    LLAvatarAppearanceFields fields = std::move(it->second);
+    sHeldAppearances.erase(it);
+    const F64 age = LLFrameTimer::getElapsedSeconds() - fields.mReceived;
+    if (age > HELD_APPEARANCE_SECONDS) return;
+    LL_INFOS("Avatar") << "Applying appearance message held " << age << " s for " << getID() << LL_ENDL;
+    processAvatarAppearance(fields);
+}
+
 void LLVOAvatar::processAvatarAppearance( LLMessageSystem* mesgsys )
+{
+    sHeldAppearances.erase(getID());     // newer than any held message
+    processAvatarAppearance(LLAvatarAppearanceFields(mesgsys));
+}
+
+void LLVOAvatar::processAvatarAppearance(const LLAvatarAppearanceFields& fields)
 {
     static LLCachedControl<bool> enable_verbose_dumps(gSavedSettings, "DebugAvatarAppearanceMessage");
     static LLCachedControl<bool> block_avatar_appearance_messages(gSavedSettings, "BlockAvatarAppearanceMessages");
@@ -11081,7 +11163,7 @@ void LLVOAvatar::processAvatarAppearance( LLMessageSystem* mesgsys )
     mLastAppearanceMessageTimer.reset();
 
     LLPointer<LLAppearanceMessageContents> contents(new LLAppearanceMessageContents);
-    parseAppearanceMessage(mesgsys, *contents);
+    parseAppearanceMessage(fields, *contents);
     if (enable_verbose_dumps)
     {
         std::string dump_prefix = getFullname() + "_" + (isSelf()?"s":"o") + "_";

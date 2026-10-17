@@ -5440,7 +5440,8 @@ void process_avatar_appearance(LLMessageSystem *mesgsys, void **user_data)
     }
     else
     {
-        LL_WARNS("Messaging") << "avatar_appearance sent for unknown avatar " << uuid << LL_ENDL;
+        LL_WARNS("Messaging") << "avatar_appearance sent for unknown avatar " << uuid << ", held until it arrives" << LL_ENDL;
+        LLVOAvatar::holdAppearanceForUnknownAvatar(uuid, mesgsys);
     }
 }
 
