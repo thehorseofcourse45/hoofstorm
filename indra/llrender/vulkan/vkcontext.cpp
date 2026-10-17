@@ -982,6 +982,7 @@ void VkContext::stopReaper()
 {
     {
         std::lock_guard<std::mutex> lock(reaperMutex);
+        if (exiting) reaperQueue.clear();     // process exit: the memory goes with the process
         reaperQuit = true;
     }
     reaperWake.notify_one();

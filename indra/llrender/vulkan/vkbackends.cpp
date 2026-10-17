@@ -187,7 +187,7 @@ void VulkanVertexBufferBackend::recycleStorage(BufferKind kind, const BufferStor
             if (it->second.usedFrame + kPoolIdleFrames < mCtx->frameCounter)
             {
                 mPooledBytes -= it->second.allocationBytes;
-                destroyStorage(mCtx->device, it->second);
+                mCtx->reap([device = mCtx->device, storage = it->second] { destroyStorage(device, storage); });
                 it = mStoragePool.erase(it);
             }
             else ++it;
@@ -202,7 +202,8 @@ void VulkanVertexBufferBackend::recycleStorage(BufferKind kind, const BufferStor
     }
     else
     {
-        destroyStorage(mCtx->device, storage);
+        // on the reaper: thousands of these ran inline during teardown (5 s of the exit), and on the render thread at runtime
+        mCtx->reap([device = mCtx->device, storage] { destroyStorage(device, storage); });
         ++mCtx->bufferPoolEvictions;
     }
 }
