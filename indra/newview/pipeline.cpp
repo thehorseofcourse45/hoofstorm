@@ -990,10 +990,11 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         resY /= res_mod;
     }
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
-    else if (getRenderScale() < 1.f)
+    else if (const F32 render_scale = (RenderFSREnabled && mRT != &mMainRT) ? 1.f : getRenderScale(); render_scale < 1.f)
     {
-        resX = (GLuint)(resX * getRenderScale());
-        resY = (GLuint)(resY * getRenderScale());
+        // FSR only upscales the main view: reflection probes and mirrors keep full size
+        resX = (GLuint)(resX * render_scale);
+        resY = (GLuint)(resY * render_scale);
     }
 // [/SL:KB]
 

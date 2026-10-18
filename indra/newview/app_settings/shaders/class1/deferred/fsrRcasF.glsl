@@ -3456,7 +3456,7 @@ uniform float fsr_sharpness;
 
 vec3 clampHDRRange(vec3 color);
 
-AF4 FsrRcasLoadF(ASU2 p) { return texelFetch(diffuseRect, p, 0); }
+AF4 FsrRcasLoadF(ASU2 p) { return texelFetch(diffuseRect, clamp(p, ASU2(0), ASU2(screen_res) - ASU2(1)), 0); }
 void FsrRcasInputF(inout AF1 r, inout AF1 g, inout AF1 b) {}
 
 // noise as in postDeferredNoDoFF.glsl (after <https://www.shadertoy.com/view/4dS3Wd>, Morgan McGuire)
