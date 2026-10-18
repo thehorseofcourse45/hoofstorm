@@ -1085,6 +1085,11 @@ public:
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
     static F32 RenderResolutionMultiplier;
 // [/SL:KB]
+    static bool RenderFSREnabled;
+    static U32 RenderFSRQuality;
+    static F32 RenderFSRSharpness;
+    // Scene render scale per axis: the FSR preset when FSR is on, else RenderResolutionMultiplier.
+    static F32 getRenderScale();
     static bool RenderUIBuffer;
     static S32 RenderShadowDetail;
     static S32 RenderShadowSplits;

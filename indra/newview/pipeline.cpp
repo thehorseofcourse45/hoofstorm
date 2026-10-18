@@ -26,6 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "llrenderbackend.h"
+#include "llfsr.h"
 #include "llframebufferbackend.h"
 #include "lltexturebackend.h"
 
@@ -161,6 +162,9 @@ U32 LLPipeline::RenderResolutionDivisor;
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
 F32 LLPipeline::RenderResolutionMultiplier;
 // [/SL:KB]
+bool LLPipeline::RenderFSREnabled;
+U32 LLPipeline::RenderFSRQuality;
+F32 LLPipeline::RenderFSRSharpness;
 bool LLPipeline::RenderUIBuffer;
 S32 LLPipeline::RenderShadowDetail;
 S32 LLPipeline::RenderShadowSplits;
@@ -589,6 +593,9 @@ void LLPipeline::init()
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
     connectRefreshCachedSettingsSafe("RenderResolutionMultiplier");
 // [/SL:KB]
+    connectRefreshCachedSettingsSafe("RenderFSREnabled");
+    connectRefreshCachedSettingsSafe("RenderFSRQuality");
+    connectRefreshCachedSettingsSafe("RenderFSRSharpness");
     connectRefreshCachedSettingsSafe("RenderUIBuffer");
     connectRefreshCachedSettingsSafe("RenderShadowDetail");
     connectRefreshCachedSettingsSafe("RenderShadowSplits");
@@ -822,6 +829,11 @@ void LLPipeline::resizeShadowTexture()
     gResizeShadowTexture = false;
 }
 
+F32 LLPipeline::getRenderScale()
+{
+    return effectiveRenderScale(RenderFSREnabled, RenderFSRQuality, RenderResolutionMultiplier);
+}
+
 void LLPipeline::resizeScreenTexture()
 {
     if (gPipeline.shadersLoaded())
@@ -837,10 +849,10 @@ void LLPipeline::resizeScreenTexture()
             scaledResX /= RenderResolutionDivisor;
             scaledResY /= RenderResolutionDivisor;
         }
-        else if (RenderResolutionMultiplier > 0.f && RenderResolutionMultiplier < 1.f)
+        else if (getRenderScale() < 1.f)
         {
-            scaledResX = (GLuint)(scaledResX * RenderResolutionMultiplier);
-            scaledResY = (GLuint)(scaledResY * RenderResolutionMultiplier);
+            scaledResX = (GLuint)(scaledResX * getRenderScale());
+            scaledResY = (GLuint)(scaledResY * getRenderScale());
         }
 // [/SL:KB]
 
@@ -968,10 +980,10 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         resY /= res_mod;
     }
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
-    else if (RenderResolutionMultiplier > 0.f && RenderResolutionMultiplier < 1.f)
+    else if (getRenderScale() < 1.f)
     {
-        resX = (GLuint)(resX * RenderResolutionMultiplier);
-        resY = (GLuint)(resY * RenderResolutionMultiplier);
+        resX = (GLuint)(resX * getRenderScale());
+        resY = (GLuint)(resY * getRenderScale());
     }
 // [/SL:KB]
 
@@ -1220,6 +1232,9 @@ void LLPipeline::refreshCachedSettings()
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
     RenderResolutionMultiplier = gSavedSettings.getF32("RenderResolutionMultiplier");
 // [/SL:KB]
+    RenderFSREnabled = gSavedSettings.getBOOL("RenderFSREnabled");
+    RenderFSRQuality = gSavedSettings.getU32("RenderFSRQuality");
+    RenderFSRSharpness = gSavedSettings.getF32("RenderFSRSharpness");
     RenderUIBuffer = gSavedSettings.getBOOL("RenderUIBuffer");
     RenderShadowDetail = gSavedSettings.getS32("RenderShadowDetail");
     RenderShadowSplits = gSavedSettings.getS32("RenderShadowSplits");
