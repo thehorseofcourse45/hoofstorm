@@ -1090,10 +1090,19 @@ public:
     static U32 RenderFSRQuality;
     static F32 RenderFSRCustomScale;
     static F32 RenderFSRSharpness;
+    static bool RenderFSRDynamic;
+    static U32 RenderFSRTargetFPS;
     // Scene render scale per axis: the FSR preset when FSR is on, else RenderResolutionMultiplier.
     static F32 getRenderScale();
+    // Set while a snapshot renders: the scene is drawn at full size so FSR / the render multiplier do not soften the picture.
+    static bool sSnapshotFullScale;
     // FSR will upscale the final image: enabled, programs and target ready, scene smaller than the window.
     bool fsrActive() const;
+    // Dynamic FSR scaling: call once per frame; flags a render target resize when the scale changes.
+    static void updateFSRDynamic(F32 frameSeconds);
+    static void resetFSRDynamic();
+    // "FSR on, 67%" while FSR is upscaling, else empty.
+    std::string getFSRStatusText() const;
     static bool RenderUIBuffer;
     static S32 RenderShadowDetail;
     static S32 RenderShadowSplits;

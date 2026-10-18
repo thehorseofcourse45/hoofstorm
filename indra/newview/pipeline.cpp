@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 #include "llrenderbackend.h"
 #include "llfsr.h"
+#include "fscommon.h"
 #include "llframebufferbackend.h"
 #include "lltexturebackend.h"
 
@@ -50,6 +51,7 @@
 #include "llglheaders.h"
 #include "llrender.h"
 #include "llstartup.h"
+#include "llfocusmgr.h"
 #include "llwindow.h"   // swapBuffers()
 
 // newview includes
@@ -166,6 +168,9 @@ bool LLPipeline::RenderFSREnabled;
 U32 LLPipeline::RenderFSRQuality;
 F32 LLPipeline::RenderFSRCustomScale;
 F32 LLPipeline::RenderFSRSharpness;
+bool LLPipeline::RenderFSRDynamic;
+U32 LLPipeline::RenderFSRTargetFPS;
+static FsrDynamicScaler sFSRDynamic;
 bool LLPipeline::RenderUIBuffer;
 S32 LLPipeline::RenderShadowDetail;
 S32 LLPipeline::RenderShadowSplits;
@@ -601,6 +606,8 @@ void LLPipeline::init()
     connectRefreshCachedSettingsSafe("RenderFSRQuality");
     connectRefreshCachedSettingsSafe("RenderFSRCustomScale");
     connectRefreshCachedSettingsSafe("RenderFSRSharpness");
+    connectRefreshCachedSettingsSafe("RenderFSRDynamic");
+    connectRefreshCachedSettingsSafe("RenderFSRTargetFPS");
     connectRefreshCachedSettingsSafe("RenderUIBuffer");
     connectRefreshCachedSettingsSafe("RenderShadowDetail");
     connectRefreshCachedSettingsSafe("RenderShadowSplits");
@@ -841,9 +848,48 @@ bool LLPipeline::fsrActive() const
            mRT && (mRT->screen.getWidth() < mRT->width || mRT->screen.getHeight() < mRT->height);
 }
 
+bool LLPipeline::sSnapshotFullScale = false;
+
 F32 LLPipeline::getRenderScale()
 {
+    if (sSnapshotFullScale)
+    {
+        return 1.f;
+    }
+    if (RenderFSREnabled && RenderFSRDynamic)
+    {
+        return sFSRDynamic.scale;
+    }
     return effectiveRenderScale(RenderFSREnabled, RenderFSRQuality, RenderFSRCustomScale, RenderResolutionMultiplier);
+}
+
+std::string LLPipeline::getFSRStatusText() const
+{
+    if (!fsrActive())
+    {
+        return std::string();
+    }
+    const S32 percent = (S32)(getRenderScale() * 100.f + 0.5f);
+    return llformat(RenderFSRDynamic ? "FSR on, dynamic %d%%" : "FSR on, %d%%", percent);
+}
+
+void LLPipeline::resetFSRDynamic()
+{
+    sFSRDynamic.reset(fsrQualityScale(gSavedSettings.getU32("RenderFSRQuality"), gSavedSettings.getF32("RenderFSRCustomScale")));
+}
+
+void LLPipeline::updateFSRDynamic(F32 frameSeconds)
+{
+    // an unfocused or still-loading viewer has throttled, hitchy frame times that say nothing about the GPU
+    if (!RenderFSREnabled || !RenderFSRDynamic || !gFocusMgr.getAppHasFocus() ||
+        LLStartUp::getStartupState() != STATE_STARTED)
+    {
+        return;
+    }
+    if (sFSRDynamic.update(frameSeconds, (F32)RenderFSRTargetFPS, fsrQualityScale(RenderFSRQuality, RenderFSRCustomScale)))
+    {
+        gResizeScreenTexture = true;
+    }
 }
 
 void LLPipeline::resizeScreenTexture()
@@ -1062,6 +1108,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             {
                 LL_WARNS() << "FSR target allocation failed; FSR upscaling is off for now" << LL_ENDL;
                 mFSRMap.release();
+                FSCommon::report_to_nearby_chat("FSR upscaling could not allocate its buffer and is off.");
             }
         }
         else
@@ -1263,6 +1310,8 @@ void LLPipeline::refreshCachedSettings()
     RenderFSRQuality = gSavedSettings.getU32("RenderFSRQuality");
     RenderFSRCustomScale = gSavedSettings.getF32("RenderFSRCustomScale");
     RenderFSRSharpness = gSavedSettings.getF32("RenderFSRSharpness");
+    RenderFSRDynamic = gSavedSettings.getBOOL("RenderFSRDynamic");
+    RenderFSRTargetFPS = gSavedSettings.getU32("RenderFSRTargetFPS");
     RenderUIBuffer = gSavedSettings.getBOOL("RenderUIBuffer");
     RenderShadowDetail = gSavedSettings.getS32("RenderShadowDetail");
     RenderShadowSplits = gSavedSettings.getS32("RenderShadowSplits");

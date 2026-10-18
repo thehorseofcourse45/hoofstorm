@@ -48,6 +48,7 @@
 
 #include "lljoint.h"
 #include "llskinningutil.h"
+#include "fscommon.h"
 
 static LLStaticHashedString sTexture0("texture0");
 static LLStaticHashedString sTexture1("texture1");
@@ -2918,6 +2919,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gDeferredFSREasuProgram.unload();
             gDeferredFSRRcasProgram.unload();
             gSavedSettings.setBOOL("RenderFSREnabled", false);
+            FSCommon::report_to_nearby_chat("FSR upscaling could not start on this graphics driver and has been turned off.");
         }
     }
 

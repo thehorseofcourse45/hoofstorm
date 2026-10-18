@@ -39,6 +39,9 @@
          function="Pref.Cancel" />
     </button>
 
+    <string name="fsr_hint_off">FSR off</string>
+    <string name="fsr_hint_on">Renders at [IW]x[IH], upscaled to [OW]x[OH]</string>
+
     <panel
      name="search_panel"
      layout="topleft"

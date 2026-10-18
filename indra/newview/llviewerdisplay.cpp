@@ -925,6 +925,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("display - 2")
+            LLPipeline::updateFSRDynamic(gFrameIntervalSeconds.value());
             if (gResizeScreenTexture)
             {
                 gPipeline.resizeScreenTexture();

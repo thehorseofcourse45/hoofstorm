@@ -13194,6 +13194,28 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <real>0.9</real>
   </map>
+  <key>RenderFSRDynamic</key>
+  <map>
+    <key>Comment</key>
+    <string>FSR dynamic scaling: lower the render scale when the frame rate is under the target, raise it again when there is headroom. The chosen quality is the lowest scale used.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderFSRTargetFPS</key>
+  <map>
+    <key>Comment</key>
+    <string>Frame rate that FSR dynamic scaling tries to hold.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>U32</string>
+    <key>Value</key>
+    <integer>60</integer>
+  </map>
   <key>RenderFSRCustomScale</key>
   <map>
     <key>Comment</key>

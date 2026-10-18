@@ -59,6 +59,7 @@
 #include "llviewerregion.h"
 #include "llviewerstats.h"
 #include "llviewerwindow.h"
+#include "pipeline.h"
 #include "llframetimer.h"
 #include "llvoavatarself.h"
 #include "llresmgr.h"
@@ -626,6 +627,10 @@ void LLStatusBar::refresh()
         mFPSUpdateTimer.reset();
         const auto fps = LLTrace::get_frame_recording().getPeriodMedianPerSec(LLStatViewer::FPS);
         mFPSText->setText(llformat("%.1f", fps));
+        // the FSR state goes in the tooltip: the FPS box is too narrow for more text
+        static const std::string base_tip = mFPSText->getToolTip();
+        const std::string fsr_text = gPipeline.getFSRStatusText();
+        mFPSText->setToolTip(fsr_text.empty() ? base_tip : base_tip + '\n' + fsr_text);
 
         auto fps_color{ fps_uncapped_color };
         if (fsStatusBarShowFPSColors)

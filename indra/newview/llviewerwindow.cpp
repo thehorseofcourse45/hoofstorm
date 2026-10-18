@@ -526,7 +526,13 @@ public:
             // <FS:Ansariel> FIRE-9746: Show FPS with DebugShowTime
             {
                 const U32 y_inc2 = 15;
-                addText(xpos, ypos, llformat("FPS: %3.1f", LLTrace::get_frame_recording().getPeriodMeanPerSec(LLStatViewer::FPS))); ypos += y_inc2;
+                std::string fps_text = llformat("FPS: %3.1f", LLTrace::get_frame_recording().getPeriodMeanPerSec(LLStatViewer::FPS));
+                const std::string fsr_text = gPipeline.getFSRStatusText();
+                if (!fsr_text.empty())
+                {
+                    fps_text += "  " + fsr_text;
+                }
+                addText(xpos, ypos, fps_text); ypos += y_inc2;
             }
             // </FS:Ansariel>
 
@@ -6176,6 +6182,27 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
     }
 
     // PRE SNAPSHOT
+    // render at full size for the picture; the screen buffers go back to the FSR / multiplier size on every exit
+    struct FullScaleScope
+    {
+        bool active = LLPipeline::getRenderScale() < 1.f;
+        FullScaleScope()
+        {
+            if (active)
+            {
+                LLPipeline::sSnapshotFullScale = true;
+                gPipeline.resizeScreenTexture();
+            }
+        }
+        ~FullScaleScope()
+        {
+            if (active)
+            {
+                LLPipeline::sSnapshotFullScale = false;
+                gResizeScreenTexture = true;
+            }
+        }
+    } full_scale_scope;
     gSnapshotNoPost = no_post;
     gDisplaySwapBuffers = false;
 

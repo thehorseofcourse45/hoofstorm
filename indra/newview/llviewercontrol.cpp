@@ -630,8 +630,17 @@ static bool handleRenderResolutionDivisorChanged(const LLSD&)
     return true;
 }
 
+static bool handleFSRQualityChanged(const LLSD&)
+{
+    // dynamic scaling starts from its floor again whenever the quality (the floor) or the mode changes
+    LLPipeline::resetFSRDynamic();
+    gResizeScreenTexture = true;
+    return true;
+}
+
 static bool handleFSREnabledChanged(const LLSD&)
 {
+    LLPipeline::resetFSRDynamic();
     gResizeScreenTexture = true;
     // the FSR programs are only built while the setting is on
     if (gPipeline.isInit() && gSavedSettings.getBOOL("RenderFSREnabled") && !gDeferredFSRRcasProgram.isComplete())
@@ -1362,8 +1371,9 @@ void settings_setup_listeners()
     setting_setup_signal_listener(gSavedSettings, "RenderResolutionMultiplier", handleRenderResolutionDivisorChanged);
 // [/SL:KB]
     setting_setup_signal_listener(gSavedSettings, "RenderFSREnabled", handleFSREnabledChanged);
-    setting_setup_signal_listener(gSavedSettings, "RenderFSRQuality", handleRenderResolutionDivisorChanged);
-    setting_setup_signal_listener(gSavedSettings, "RenderFSRCustomScale", handleRenderResolutionDivisorChanged);
+    setting_setup_signal_listener(gSavedSettings, "RenderFSRQuality", handleFSRQualityChanged);
+    setting_setup_signal_listener(gSavedSettings, "RenderFSRDynamic", handleFSRQualityChanged);
+    setting_setup_signal_listener(gSavedSettings, "RenderFSRCustomScale", handleFSRQualityChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeLevel", handleReflectionProbeDetailChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeDetail", handleReflectionProbeDetailChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeCount", handleReflectionProbeCountChanged);
