@@ -5,8 +5,7 @@
 - Spec `docs/superpowers/specs/2026-10-18-fsr-upscaling-design.md`, plan `docs/superpowers/plans/2026-10-18-fsr-upscaling.md`. Settings `RenderFSREnabled`, `RenderFSRQuality` (0-3: 0.77/0.67/0.59/0.50), `RenderFSRSharpness` (0 sharpest, 2 off); controls in Preferences, Graphics (Hardware tab) and in `graphic_preset_controls.xml`.
 - `LLPipeline::getRenderScale()` (`llfsr.h`) replaces the plain multiplier; with FSR on, `renderFinalize` runs EASU (`fsrEasuF.glsl`) into `mFSRMap`, then RCAS + noise + depth (`fsrRcasF.glsl`) to the screen. Probes and mirrors keep full size. FSR shaders are only built while the setting is on; a compile failure unticks the setting.
 - Tests: `fsr_scale_test` 9, `llvulkan_fsr_shader_test` 2, `llvulkan_fsr_pass_test` 9 (EASU ramp on the Vulkan backend, zero validation), frames 51, rgb10 41, activation 45 (render thread on and off).
-- GOTCHA: the `firestorm-bin` build does NOT refresh `build-vc170-64
-ewview\Releasepp_settings`, `skins` or `shaders`. After changing settings, shaders or XUI, copy them into `Release` by hand or the new exe fails on unknown settings. Done for the FSR files.
+- GOTCHA: the `firestorm-bin` build does NOT refresh `build-vc170-64/newview/Release/app_settings`, `skins` or `shaders`. After changing settings, shaders or XUI, copy them into `Release` by hand or the new exe fails on unknown settings. Done for the FSR files.
 - Known gaps: high-res snapshots with FSR on render at the preset scale and are upscaled (softer); GL 4.0/4.1 and 3.x drivers cannot compile the FSR shaders (`packHalf2x16`, `textureGather` need 4.2/4.0) and the checkbox unticks itself with only a log warning; the shader files are about 3500 lines each against the loader's 4096-line limit.
 - Next: user checks FSR in-world (all four presets, live toggle, window resize, snapshot).
 
