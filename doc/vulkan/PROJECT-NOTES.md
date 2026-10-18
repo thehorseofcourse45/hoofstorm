@@ -1,5 +1,11 @@
 # Vulkan project notes
 
+## Current status: teleport stalls investigated from logs, 2026-10-18
+
+- Teleports (Firestorm.log 04:51:23, Firestorm.old 22:24:58 22:40:40 23:03:00 00:16:14) each give 4-12 frames of 150-440 ms. FrameSpike splits them into `to Main:Display` (= `idle()`: 170-360 ms, region arrival and object/message work) and `to Display:Sky` (= `stateSort` + `rebuildPools`: 50-190 ms).
+- Not the render thread: sync wait ~0 ms and throttle wait 1-5 ms per frame, blocking readback 2-28 calls and 10-60 ms total per 300 frames, blocking query 0 calls after login, GPU max 10-110 ms, no render-thread record over 50 ms. The earlier readback/query suspicion is cleared.
+- Open: whether `idle()` and `stateSort`/`rebuildPools` cost more than on OpenGL. Needs a main-thread sample across a teleport: `python -I doc/vulkan/tools/mainprof.py <pid> 600 5` with `MAINPROF_PATH=stateSort`, then again with `MAINPROF_PATH=idle`.
+
 ## Current status: VRAM budget feeds texture discard bias, 2026-10-18
 
 - Added `VK_EXT_memory_budget` (`VkContext::deviceLocalBudget`, `getRenderBackendVRAMBudget` in `llrenderbackend.h`). `LLViewerTexture::updateClass` raises `over_pct` when real device-local use passes 90% of the OS budget, so the discard bias rises before VRAM runs out; recovery needs use below ~81%.
