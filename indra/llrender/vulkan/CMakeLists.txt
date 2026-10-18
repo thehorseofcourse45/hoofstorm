@@ -56,6 +56,10 @@ add_executable(llvulkan_upload_ring_test EXCLUDE_FROM_ALL tests/upload_ring_test
 target_include_directories(llvulkan_upload_ring_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_SOURCE_DIR}/../../llcommon")
 target_link_libraries(llvulkan_upload_ring_test PRIVATE llvulkan)
 
+add_executable(llvulkan_fsr_pass_test EXCLUDE_FROM_ALL tests/fsr_pass_test.cpp)
+target_include_directories(llvulkan_fsr_pass_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_SOURCE_DIR}/../../llcommon")
+target_link_libraries(llvulkan_fsr_pass_test PRIVATE llvulkan)
+
 add_executable(llvulkan_frames_test EXCLUDE_FROM_ALL tests/frames_test.cpp)
 target_include_directories(llvulkan_frames_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_SOURCE_DIR}/../../llcommon")
 target_link_libraries(llvulkan_frames_test PRIVATE llvulkan)
