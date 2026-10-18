@@ -54,12 +54,25 @@ void VulkanFramebufferBackend::attach(U32 framebuffer, U32 attachment, U32 targe
     if (!framebuffer || framebuffer != mDraw || level < 0) fail("invalid attachment binding or level");
     endRendering();
     Attachment a{texture, target, level};
-    if (texture) imageOf(a);
+    if (texture && hasStorage(a)) imageOf(a);     // a render target that ran out of memory attaches anyway; drawing to it is skipped
     if (attachment == DEPTH) object(framebuffer).depth = a;
     else if (attachment >= COLOR0 && attachment < COLOR0 + 4) object(framebuffer).color[attachment - COLOR0] = a;
     else fail("unsupported attachment");
 }
 
+bool VulkanFramebufferBackend::hasStorage(const Attachment& a) const
+{
+    if (!a.texture) return true;
+    auto it = mCtx->textures->mTextures.find(a.texture);
+    return it != mCtx->textures->mTextures.end() && it->second.image;
+}
+bool VulkanFramebufferBackend::drawable()
+{
+    if (!mDraw) return true;
+    const auto& f = object(mDraw);
+    for (U32 i = 0; i < f.drawCount; ++i) if (!hasStorage(f.color[i])) return false;
+    return hasStorage(f.depth);
+}
 VulkanFramebufferBackend::Image VulkanFramebufferBackend::imageOf(const Attachment& a)
 {
     if (!a.texture) return {};
@@ -120,7 +133,7 @@ VulkanFramebufferBackend::Image VulkanFramebufferBackend::readImage(bool depth)
 }
 U32 VulkanFramebufferBackend::checkStatus()
 {
-    if (!mDraw) return COMPLETE;
+    if (!mDraw || !drawable()) return COMPLETE;
     const auto& f = object(mDraw);
     VkExtent2D size{};
     bool any = false;
@@ -266,7 +279,7 @@ void VulkanFramebufferBackend::clear(U32 mask)
     prepareDraw();
     if (mask & ~(COLOR_BIT | DEPTH_BIT)) fail("stencil clears need a stencil attachment");
     if (!mask) return;
-    if (!ensureFrame()) return;     // minimized: nothing to clear
+    if (!ensureFrame() || !drawable()) return;     // minimized, or a render target without memory: nothing to clear
     const auto& s = mState->s;
     assert(!(mask & COLOR_BIT) || (s.colorMask[0] && s.colorMask[1] && s.colorMask[2] && s.colorMask[3]));
     assert(!(mask & DEPTH_BIT) || s.depthWrite);

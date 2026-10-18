@@ -31,6 +31,7 @@ public:
     void beginRendering(U32 clearMask = 0);
     void endRendering();
     bool isRendering() const { return mRendering; }
+    bool drawable();     // false when an attached texture has no image (out of memory): draws and clears are skipped
     VkExtent2D extent();
     std::array<VkFormat, 4> colorFormats();
     VkFormat depthFormat();
@@ -61,6 +62,7 @@ private:
         VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
         U32 texture = 0, level = 0, layer = 0;
     };
+    bool hasStorage(const Attachment& a) const;
     Image imageOf(const Attachment& a);
     Image colorImage(U32 framebuffer, U32 attachment);
     Image depthImage(U32 framebuffer);

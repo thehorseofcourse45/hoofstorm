@@ -821,6 +821,7 @@ void VulkanVertexBufferBackend::dropDeviceCopy(Buf& b)
 bool VulkanVertexBufferBackend::recordCommon(U32 mode, bool indexed, bool vertexInput)
 {
     if (!mCtx->framebuffers->ensureFrame()) throw std::runtime_error("Draw attempted while Vulkan window is minimized");
+    if (!mCtx->framebuffers->drawable()) { ++mCtx->pipelineDrawsSkipped; return false; }    // render target without memory
     if (!mCtx->program) throw std::runtime_error("Vulkan draw requires a bound shader");
     const RecordedState& st = mState->s;
     VkCommandBuffer cmd = mCtx->slot().cmd;
