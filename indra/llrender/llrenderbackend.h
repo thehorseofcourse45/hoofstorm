@@ -44,6 +44,8 @@ bool renderBackendObjectsCreated();
 class LLGLManager;
 bool initializeVulkanCapabilities(LLGLManager& manager);
 void waitRenderBackendIdle();
+// Real device-local memory use and OS budget in MB (VK_EXT_memory_budget); false when not Vulkan or unsupported.
+bool getRenderBackendVRAMBudget(std::uint32_t& usedMB, std::uint32_t& budgetMB);
 // Draws whose pipeline is still compiling are skipped unless a caller needs every draw (benchmarks): hold a scope around that work.
 void pushSyncPipelines();
 void popSyncPipelines();

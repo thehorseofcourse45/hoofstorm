@@ -578,6 +578,20 @@ bool initializeVulkanCapabilities(LLGLManager& m)
     (void)m; return false;
 #endif
 }
+bool getRenderBackendVRAMBudget(std::uint32_t& usedMB, std::uint32_t& budgetMB)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    std::uint64_t used = 0, budget = 0;
+    if (sNative && sNative->context.deviceLocalBudget(used, budget))
+    {
+        usedMB = static_cast<std::uint32_t>(used >> 20);
+        budgetMB = static_cast<std::uint32_t>(budget >> 20);
+        return true;
+    }
+#endif
+    (void)usedMB; (void)budgetMB;
+    return false;
+}
 std::uint32_t createRenderUniformBuffer()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE

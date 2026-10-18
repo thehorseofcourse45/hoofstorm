@@ -1,5 +1,11 @@
 # Vulkan project notes
 
+## Current status: VRAM budget feeds texture discard bias, 2026-10-18
+
+- Added `VK_EXT_memory_budget` (`VkContext::deviceLocalBudget`, `getRenderBackendVRAMBudget` in `llrenderbackend.h`). `LLViewerTexture::updateClass` raises `over_pct` when real device-local use passes 90% of the OS budget, so the discard bias rises before VRAM runs out; recovery needs use below ~81%.
+- Built OK, activation test passes (render thread on and off). Not checked in-world. Also uncommitted: texture OOM fallback and framebuffer copy guard.
+- Next: check in-world, then auto-fallback to OpenGL, degrade instead of abort in render-target alloc and `findMemoryType`.
+
 ## Current status: crowd hitches from VRAM vertex promotions, 2026-10-17
 - Crowd run (Vulkan, render thread, ~40 avatars): focused FPS ~35-40; zero `blocking readback`/`query`/`upload` calls, so the teleport readback stalls did not show (no teleport in the run). Avatars got appearance within ~40 s of login (no region re-enable in the run).
 - Hitches were the main thread waiting in `endRenderBackendFrame` -> `throttle(1)` (FrameSpike `to Main:Sleep`, 50-140 ms) while the render thread had 100-219 ms frames with no single record over 35 ms. Render-thread profile (`mainprof.py <pid> 1500 10 <VulkanRender tid>`): `VulkanVertexBufferBackend::promote` ~18% of busy time, inside the driver's `vkAllocateMemory` (`NtGdiDdDDICreateAllocation`, `WaitForSynchronizationObjectFromCpu`). Promotions came in bursts (~6000 per 300 frames), and ~60% were dropped again later.

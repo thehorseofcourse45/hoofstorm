@@ -33,6 +33,7 @@
 #include "llmath.h"
 #include "llerror.h"
 #include "llgl.h"
+#include "llrenderbackend.h"
 #include "llglheaders.h"
 #include "llhost.h"
 #include "llimage.h"
@@ -543,6 +544,14 @@ void LLViewerTexture::updateClass()
     sFreeVRAMMegabytes = llmax(target - used, 0.f);
 
     F32 over_pct = (used - target) / target;
+
+    // Vulkan reports the real device-local use against the OS budget (VK_EXT_memory_budget): the estimate above misses
+    // framebuffers and driver overhead. Treat more than 90% of the OS budget as over target, and block recovery above ~81%.
+    U32 real_used_mb = 0, real_budget_mb = 0;
+    if (getRenderBackendVRAMBudget(real_used_mb, real_budget_mb) && real_budget_mb > 0)
+    {
+        over_pct = llmax(over_pct, ((F32)real_used_mb / (F32)real_budget_mb - 0.9f) / 0.9f);
+    }
 
     bool is_sys_low = isSystemMemoryLow();
     bool is_low = is_sys_low || over_pct > 0.f;

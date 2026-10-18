@@ -92,6 +92,23 @@ VkShaderModule VkContext::loadShader(const char* path) const
     return module;
 }
 
+bool VkContext::deviceLocalBudget(uint64_t& usage, uint64_t& budget) const
+{
+    if (!memoryBudget) return false;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT mb{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 mp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+    mp.pNext = &mb;
+    vkGetPhysicalDeviceMemoryProperties2(phys, &mp);
+    usage = budget = 0;
+    for (uint32_t i = 0; i < mp.memoryProperties.memoryHeapCount; ++i)
+        if (mp.memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+        {
+            usage += mb.heapUsage[i];
+            budget += mb.heapBudget[i];
+        }
+    return budget != 0;
+}
+
 bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantDepthClipControl)
 {
     // ---- frames in flight
@@ -273,6 +290,11 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantD
             {
                 deviceExt.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
                 pushDescriptors = true;
+            }
+            else if (std::string(e.extensionName) == VK_EXT_MEMORY_BUDGET_EXTENSION_NAME)
+            {
+                deviceExt.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+                memoryBudget = true;
             }
     }
     // core features the viewer's shaders use: samplerCubeArray (reflection probes) needs imageCubeArray
