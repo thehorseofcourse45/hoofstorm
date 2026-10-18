@@ -4,7 +4,7 @@ rem Result: build-vc170-64\newview\Release\firestorm-bin.exe. The log is build-v
 rem ALWAYS read the log: the last line must be BUILD_EXIT=0 and "error C" / "error LNK" must not occur.
 rem The exit code of this wrapper only says the wrapper ran.
 rem Build number shown in the version (otherwise the git commit count); change it with each release.
-if not defined revision set revision=81831
+if not defined revision set revision=81886
 set AUTOBUILD_VSVER=170
 set AUTOBUILD_VARIABLES_FILE=C:\fs-build-variables\variables
 set PATH=C:\fs-build-venv\Scripts;C:\Program Files\CMake\bin;C:\cygwin64\bin;%PATH%
