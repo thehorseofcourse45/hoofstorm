@@ -437,7 +437,26 @@ void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t 
     VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     mai.allocationSize = req.size;
     mai.memoryTypeIndex = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VK_CHECK(vkAllocateMemory(mCtx->device, &mai, nullptr, &t.memory));
+    VkResult r = vkAllocateMemory(mCtx->device, &mai, nullptr, &t.memory);
+    // VRAM full: spill to any other allowed memory type, as GL drivers do, before giving up
+    for (uint32_t i = 0; r != VK_SUCCESS && i < mCtx->memProps.memoryTypeCount; ++i)
+    {
+        if ((req.memoryTypeBits & (1u << i)) && i != mai.memoryTypeIndex)
+        {
+            VkMemoryAllocateInfo spill = mai;
+            spill.memoryTypeIndex = i;
+            r = vkAllocateMemory(mCtx->device, &spill, nullptr, &t.memory);
+        }
+    }
+    if (r != VK_SUCCESS)
+    {
+        // out of memory: leave the texture without an image; binds use the fallback and uploads are skipped
+        fprintf(stderr, "WARNING: texture %ux%u (%llu bytes) not allocated, VkResult %d\n", w, h, (unsigned long long) req.size, (int) r);
+        vkDestroyImage(mCtx->device, t.image, nullptr);
+        t.image = VK_NULL_HANDLE;
+        t.memory = VK_NULL_HANDLE;
+        return;
+    }
     VK_CHECK(vkBindImageMemory(mCtx->device, t.image, t.memory, 0));
     ++imagesCreated;
 
@@ -1060,6 +1079,11 @@ void VulkanTextureBackend::replaceWithMipLevel(U32 target, S32 mip, S32 internal
     t.cView = VK_NULL_HANDLE;
     t.aView = VK_NULL_HANDLE;
     ensureImage(t, (uint32_t) width, (uint32_t) height, old.layers, internalFormat, old.cube, old.cubeArray, false);
+    if (!t.image)
+    {
+        destroyImage(old);
+        return;
+    }
     const VkImageAspectFlags aspect = aspectOf(t.info.format);
     submitNow([&](VkCommandBuffer cmd) {
         transition(t, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -1305,7 +1329,7 @@ void VulkanTextureBackend::unitDescriptor(uint32_t unit, int kind, const std::st
         if (!mCtx->feedbackSubstitutions++)
             fprintf(stderr, "WARNING: a draw samples its own render target; using a fallback texture (counted in VulkanPacing)\n");
     }
-    if (!sampleOk)
+    if (!sampleOk || !t->image)
     {
         t = &fallback(samplerType);
     }

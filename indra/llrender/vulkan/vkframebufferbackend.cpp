@@ -389,7 +389,8 @@ void VulkanFramebufferBackend::copyToTexture(U32 target, S32 level, S32 xoffset,
 {
     if (!ensureFrame()) return;     // minimized: no image to copy from
     auto* t = mCtx->textures->bound(target);
-    if (!t || !t->image || level < 0 || (U32) level >= t->levels || layer < 0 || (U32) layer >= t->layers)
+    if (t && !t->image) return;     // texture storage not allocated (out of memory): skip, as uploads do
+    if (!t || level < 0 || (U32) level >= t->levels || layer < 0 || (U32) layer >= t->layers)
         fail("invalid copy destination");
     if (target >= glc::TEXTURE_CUBE_MAP_POSITIVE_X && target <= glc::TEXTURE_CUBE_MAP_NEGATIVE_Z)
         layer = target - glc::TEXTURE_CUBE_MAP_POSITIVE_X;
