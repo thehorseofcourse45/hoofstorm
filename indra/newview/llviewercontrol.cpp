@@ -630,6 +630,17 @@ static bool handleRenderResolutionDivisorChanged(const LLSD&)
     return true;
 }
 
+static bool handleFSREnabledChanged(const LLSD&)
+{
+    gResizeScreenTexture = true;
+    // the FSR programs are only built while the setting is on
+    if (gPipeline.isInit() && gSavedSettings.getBOOL("RenderFSREnabled") && !gDeferredFSRRcasProgram.isComplete())
+    {
+        LLViewerShaderMgr::instance()->setShaders();
+    }
+    return true;
+}
+
 static bool handleDebugViewsChanged(const LLSD& newvalue)
 {
     LLView::sDebugRects = newvalue.asBoolean();
@@ -1350,7 +1361,7 @@ void settings_setup_listeners()
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
     setting_setup_signal_listener(gSavedSettings, "RenderResolutionMultiplier", handleRenderResolutionDivisorChanged);
 // [/SL:KB]
-    setting_setup_signal_listener(gSavedSettings, "RenderFSREnabled", handleRenderResolutionDivisorChanged);
+    setting_setup_signal_listener(gSavedSettings, "RenderFSREnabled", handleFSREnabledChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderFSRQuality", handleRenderResolutionDivisorChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeLevel", handleReflectionProbeDetailChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeDetail", handleReflectionProbeDetailChanged);

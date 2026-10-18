@@ -766,6 +766,7 @@ public:
 
     // FXAA helper target
     LLRenderTarget          mFXAAMap;
+    LLRenderTarget          mFSRMap;    // window-sized EASU output while FSR is active
     LLRenderTarget          mSMAABlendBuffer;
 
     // render ui to buffer target
@@ -1090,6 +1091,8 @@ public:
     static F32 RenderFSRSharpness;
     // Scene render scale per axis: the FSR preset when FSR is on, else RenderResolutionMultiplier.
     static F32 getRenderScale();
+    // FSR will upscale the final image: enabled, programs and target ready, scene smaller than the window.
+    bool fsrActive() const;
     static bool RenderUIBuffer;
     static S32 RenderShadowDetail;
     static S32 RenderShadowSplits;

@@ -306,6 +306,9 @@ LLTrace::BlockTimerStatHandle FTM_RENDER_UI_2D("2D");
 static LLTrace::BlockTimerStatHandle FTM_STATESORT_DRAWABLE("Sort Drawables");
 
 static LLStaticHashedString sTint("tint");
+static LLStaticHashedString sFsrInputSize("fsr_input_size");
+static LLStaticHashedString sFsrOutputSize("fsr_output_size");
+static LLStaticHashedString sFsrSharpness("fsr_sharpness");
 static LLStaticHashedString sAmbiance("ambiance");
 static LLStaticHashedString sAlphaScale("alpha_scale");
 static LLStaticHashedString sNormMat("norm_mat");
@@ -829,6 +832,13 @@ void LLPipeline::resizeShadowTexture()
     gResizeShadowTexture = false;
 }
 
+bool LLPipeline::fsrActive() const
+{
+    return RenderFSREnabled && !gCubeSnapshot && mFSRMap.isComplete() &&
+           gDeferredFSREasuProgram.isComplete() && gDeferredFSRRcasProgram.isComplete() &&
+           mRT && (mRT->screen.getWidth() < mRT->width || mRT->screen.getHeight() < mRT->height);
+}
+
 F32 LLPipeline::getRenderScale()
 {
     return effectiveRenderScale(RenderFSREnabled, RenderFSRQuality, RenderResolutionMultiplier);
@@ -1040,6 +1050,20 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         {
             mFXAAMap.release();
             mSMAABlendBuffer.release();
+        }
+
+        if (RenderFSREnabled && getRenderScale() < 1.f && mRT->width > 0 && mRT->height > 0)
+        {
+            LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("FSRBuffer");
+            if (!mFSRMap.allocate(mRT->width, mRT->height, GL_RGBA))
+            {
+                LL_WARNS() << "FSR target allocation failed; FSR upscaling is off for now" << LL_ENDL;
+                mFSRMap.release();
+            }
+        }
+        else
+        {
+            mFSRMap.release();
         }
 
         //water reflection texture (always needed as scratch space whether or not transparent water is enabled)
@@ -1375,6 +1399,7 @@ void LLPipeline::releaseGLBuffers()
     mPostPongMap.release();
 
     mFXAAMap.release();
+    mFSRMap.release();
 
     mUIScreen.release();
 
@@ -9127,13 +9152,38 @@ void LLPipeline::renderFinalize()
 
     // Present the screen target.
 
-    gDeferredPostNoDoFNoiseProgram.bind(); // Add noise as part of final render to screen pass to avoid damaging other post effects
+    // FSR: EASU upscales the finished image to window size, then RCAS (below) sharpens it onto the screen.
+    const bool use_fsr = fsrActive();
+    if (use_fsr)
+    {
+        LL_PROFILE_GPU_ZONE("FSR EASU");
+        mFSRMap.bindTarget();
+        gDeferredFSREasuProgram.bind();
+        gDeferredFSREasuProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, sourceBuffer);
+        gDeferredFSREasuProgram.uniform2f(sFsrInputSize, (GLfloat)sourceBuffer->getWidth(), (GLfloat)sourceBuffer->getHeight());
+        gDeferredFSREasuProgram.uniform2f(sFsrOutputSize, (GLfloat)mFSRMap.getWidth(), (GLfloat)mFSRMap.getHeight());
+        {
+            LLGLDepthTest depth_test(GL_FALSE);
+            mScreenTriangleVB->setBuffer();
+            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        }
+        gDeferredFSREasuProgram.unbind();
+        mFSRMap.flush();
+    }
+
+    LLGLSLShader& present_shader = use_fsr ? gDeferredFSRRcasProgram : gDeferredPostNoDoFNoiseProgram;
+    present_shader.bind(); // Add noise as part of final render to screen pass to avoid damaging other post effects
 
     // Whatever is last in the above post processing chain should _always_ be rendered directly here.  If not, expect problems.
-    gDeferredPostNoDoFNoiseProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, sourceBuffer);
-    gDeferredPostNoDoFNoiseProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
+    LLRenderTarget* present_source = use_fsr ? &mFSRMap : sourceBuffer;
+    present_shader.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, present_source);
+    present_shader.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
 
-    gDeferredPostNoDoFNoiseProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)sourceBuffer->getWidth(), (GLfloat)sourceBuffer->getHeight());
+    present_shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)present_source->getWidth(), (GLfloat)present_source->getHeight());
+    if (use_fsr)
+    {
+        present_shader.uniform1f(sFsrSharpness, RenderFSRSharpness);
+    }
 
     {
         LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_ALWAYS);
@@ -9141,7 +9191,7 @@ void LLPipeline::renderFinalize()
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
 
-    gDeferredPostNoDoFNoiseProgram.unbind();
+    present_shader.unbind();
 
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
 

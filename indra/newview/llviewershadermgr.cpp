@@ -213,6 +213,8 @@ LLGLSLShader            gCASProgram;
 LLGLSLShader            gCASLegacyGammaProgram;
 LLGLSLShader            gDeferredPostNoDoFProgram;
 LLGLSLShader            gDeferredPostNoDoFNoiseProgram;
+LLGLSLShader            gDeferredFSREasuProgram;
+LLGLSLShader            gDeferredFSRRcasProgram;
 LLGLSLShader            gDeferredWLSkyProgram;
 LLGLSLShader            gEnvironmentMapProgram;
 LLGLSLShader            gDeferredWLCloudProgram;
@@ -1179,6 +1181,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gSMAANeighborhoodBlendProgram[i].unload();
         }
         gCASProgram.unload();
+        gDeferredFSREasuProgram.unload();
+        gDeferredFSRRcasProgram.unload();
         gCASLegacyGammaProgram.unload();
         gEnvironmentMapProgram.unload();
         gDeferredWLSkyProgram.unload();
@@ -2881,6 +2885,40 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostNoDoFNoiseProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostNoDoFNoiseProgram.createShader();
         llassert(success);
+    }
+
+    if (success && gSavedSettings.getBOOL("RenderFSREnabled"))
+    {
+        gDeferredFSREasuProgram.mName = "Deferred FSR EASU Shader";
+        gDeferredFSREasuProgram.mFeatures.isDeferred = true;
+        gDeferredFSREasuProgram.mShaderFiles.clear();
+        gDeferredFSREasuProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gDeferredFSREasuProgram.mShaderFiles.push_back(make_pair("deferred/fsrEasuF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFSREasuProgram.clearPermutations();
+        gDeferredFSREasuProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        bool fsr_ok = gDeferredFSREasuProgram.createShader();
+
+        if (fsr_ok)
+        {
+            gDeferredFSRRcasProgram.mName = "Deferred FSR RCAS Shader";
+            gDeferredFSRRcasProgram.mFeatures.isDeferred = true;
+            gDeferredFSRRcasProgram.mShaderFiles.clear();
+            gDeferredFSRRcasProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+            gDeferredFSRRcasProgram.mShaderFiles.push_back(make_pair("deferred/fsrRcasF.glsl", GL_FRAGMENT_SHADER));
+            gDeferredFSRRcasProgram.clearPermutations();
+            gDeferredFSRRcasProgram.addPermutation("HAS_NOISE", "1");
+            gDeferredFSRRcasProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            fsr_ok = gDeferredFSRRcasProgram.createShader();
+        }
+
+        if (!fsr_ok)
+        {
+            // FSR is optional: fall back to the plain upscale rather than failing the whole shader set
+            LL_WARNS("ShaderLoading") << "FSR shaders failed to compile; FSR upscaling is disabled" << LL_ENDL;
+            gDeferredFSREasuProgram.unload();
+            gDeferredFSRRcasProgram.unload();
+            gSavedSettings.setBOOL("RenderFSREnabled", false);
+        }
     }
 
     if (success)
