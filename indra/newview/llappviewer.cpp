@@ -1580,6 +1580,8 @@ bool LLAppViewer::frame()
     return ret;
 }
 
+static S32 sTextureWorkPending = 0;     // texture cache/fetch/decode work left after the previous frame
+
 bool LLAppViewer::doFrame()
 {
     const float renderClear[4]={0,0,0,1};
@@ -1867,12 +1869,22 @@ bool LLAppViewer::doFrame()
                 // </FS:Ansariel>
                 // don't sleep when BackgroundYieldTime set to 0, since this will still yield to other threads
                 // of equal priority on Windows
+                // Texture fetch/decode still pending (avatars and objects loading): a short yield and no worker pause, so
+                // loading is not slowed to the background frame rate. Idle viewers keep the full yield.
+                const bool loading = sTextureWorkPending > 0;
+                if (loading && milliseconds_to_sleep > 2 && !(gViewerWindow && gViewerWindow->getWindow()->getMinimized()))
+                {
+                    milliseconds_to_sleep = 2;
+                }
                 if (milliseconds_to_sleep > 0)
                 {
                     LLPerfStats::RecordSceneTime T ( LLPerfStats::StatType_t::RENDER_SLEEP );
                     ms_sleep(milliseconds_to_sleep);
                     // also pause worker threads during this wait period
-                    LLAppViewer::getTextureCache()->pause();
+                    if (!loading)
+                    {
+                        LLAppViewer::getTextureCache()->pause();
+                    }
                 }
             }
 
@@ -1920,6 +1932,7 @@ bool LLAppViewer::doFrame()
                 gMeshRepo.update() ;
             }
 
+            sTextureWorkPending = total_work_pending;
             if(!total_work_pending) //pause texture fetching threads if nothing to process.
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df getTextureCache");
