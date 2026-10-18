@@ -241,6 +241,8 @@ public:
     void refresh(); // Refresh enable/disable
     // if the quality radio buttons are changed
     void onChangeQuality(const LLSD& data);
+    void onChangeFSR();
+    void updateFSRInfo();   // render size line and the custom scale slider state
     void onClickClearSettings();
     void onClickChatOnlineNotices();
     void onClickClearSpamList();

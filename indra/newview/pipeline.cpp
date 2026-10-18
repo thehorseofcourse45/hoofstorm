@@ -164,6 +164,7 @@ F32 LLPipeline::RenderResolutionMultiplier;
 // [/SL:KB]
 bool LLPipeline::RenderFSREnabled;
 U32 LLPipeline::RenderFSRQuality;
+F32 LLPipeline::RenderFSRCustomScale;
 F32 LLPipeline::RenderFSRSharpness;
 bool LLPipeline::RenderUIBuffer;
 S32 LLPipeline::RenderShadowDetail;
@@ -598,6 +599,7 @@ void LLPipeline::init()
 // [/SL:KB]
     connectRefreshCachedSettingsSafe("RenderFSREnabled");
     connectRefreshCachedSettingsSafe("RenderFSRQuality");
+    connectRefreshCachedSettingsSafe("RenderFSRCustomScale");
     connectRefreshCachedSettingsSafe("RenderFSRSharpness");
     connectRefreshCachedSettingsSafe("RenderUIBuffer");
     connectRefreshCachedSettingsSafe("RenderShadowDetail");
@@ -841,7 +843,7 @@ bool LLPipeline::fsrActive() const
 
 F32 LLPipeline::getRenderScale()
 {
-    return effectiveRenderScale(RenderFSREnabled, RenderFSRQuality, RenderResolutionMultiplier);
+    return effectiveRenderScale(RenderFSREnabled, RenderFSRQuality, RenderFSRCustomScale, RenderResolutionMultiplier);
 }
 
 void LLPipeline::resizeScreenTexture()
@@ -1259,6 +1261,7 @@ void LLPipeline::refreshCachedSettings()
 // [/SL:KB]
     RenderFSREnabled = gSavedSettings.getBOOL("RenderFSREnabled");
     RenderFSRQuality = gSavedSettings.getU32("RenderFSRQuality");
+    RenderFSRCustomScale = gSavedSettings.getF32("RenderFSRCustomScale");
     RenderFSRSharpness = gSavedSettings.getF32("RenderFSRSharpness");
     RenderUIBuffer = gSavedSettings.getBOOL("RenderUIBuffer");
     RenderShadowDetail = gSavedSettings.getS32("RenderShadowDetail");
@@ -9191,7 +9194,7 @@ void LLPipeline::renderFinalize()
     present_shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)present_source->getWidth(), (GLfloat)present_source->getHeight());
     if (use_fsr)
     {
-        present_shader.uniform1f(sFsrSharpness, RenderFSRSharpness);
+        present_shader.uniform1f(sFsrSharpness, fsrSharpnessStops(RenderFSRSharpness));
     }
 
     {

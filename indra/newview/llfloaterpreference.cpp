@@ -82,6 +82,7 @@
 #include "llviewereventrecorder.h"
 #include "llviewermessage.h"
 #include "llviewerwindow.h"
+#include "llfsr.h"
 #include "llviewerthrottle.h"
 #include "llvoavatarself.h"
 #include "llvotree.h"
@@ -507,6 +508,7 @@ LLFloaterPreference::LLFloaterPreference(const LLSD& key)
     mCommitCallbackRegistrar.add("Pref.WindowedMod",            boost::bind(&LLFloaterPreference::onCommitWindowedMode, this));
     mCommitCallbackRegistrar.add("Pref.UpdateSliderText",       boost::bind(&LLFloaterPreference::refreshUI,this));
     mCommitCallbackRegistrar.add("Pref.QualityPerformance",     boost::bind(&LLFloaterPreference::onChangeQuality, this, _2));
+    mCommitCallbackRegistrar.add("Pref.FSRChanged",             boost::bind(&LLFloaterPreference::onChangeFSR, this));
     mCommitCallbackRegistrar.add("Pref.applyUIColor",           boost::bind(&LLFloaterPreference::applyUIColor, this ,_1, _2));
     mCommitCallbackRegistrar.add("Pref.getUIColor",             boost::bind(&LLFloaterPreference::getUIColor, this ,_1, _2));
     mCommitCallbackRegistrar.add("Pref.MaturitySettings",       boost::bind(&LLFloaterPreference::onChangeMaturity, this));
@@ -2391,6 +2393,44 @@ void LLFloaterPreference::refresh()
     {
         mLanguageCombobox->selectByValue(LLSD(current_language));
     }
+
+    updateFSRInfo();
+}
+
+void LLFloaterPreference::onChangeFSR()
+{
+    updateFSRInfo();
+}
+
+void LLFloaterPreference::updateFSRInfo()
+{
+    LLUICtrl* enabled = findChild<LLUICtrl>("fsr_enabled");
+    LLUICtrl* quality = findChild<LLUICtrl>("fsr_quality");
+    LLUICtrl* custom = findChild<LLUICtrl>("fsr_custom_scale");
+    LLTextBox* info = findChild<LLTextBox>("fsr_info");
+    if (!enabled || !quality || !custom || !info)
+    {
+        return;
+    }
+
+    const bool on = enabled->getValue().asBoolean();
+    const U32 preset = (U32)quality->getValue().asInteger();
+    const F32 scale = effectiveRenderScale(true, preset, (F32)custom->getValue().asReal(), 1.f);
+    custom->setEnabled(on && preset == 4);
+
+    const U32 out_w = gViewerWindow ? (U32)gViewerWindow->getWorldViewWidthRaw() : 0;
+    const U32 out_h = gViewerWindow ? (U32)gViewerWindow->getWorldViewHeightRaw() : 0;
+    if (!on || out_w == 0 || out_h == 0)
+    {
+        info->setText(getString("fsr_hint_off"));
+        return;
+    }
+    LLStringUtil::format_map_t args;
+    args["[IW]"] = llformat("%u", (U32)(out_w * scale));
+    args["[IH]"] = llformat("%u", (U32)(out_h * scale));
+    args["[OW]"] = llformat("%u", out_w);
+    args["[OH]"] = llformat("%u", out_h);
+    info->setText(getString("fsr_hint_on", args));
 }
 
 void LLFloaterPreference::onCommitWindowedMode()

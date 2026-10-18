@@ -13175,7 +13175,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderFSRQuality</key>
   <map>
     <key>Comment</key>
-    <string>FSR preset: 0 Ultra Quality (0.77x), 1 Quality (0.67x), 2 Balanced (0.59x), 3 Performance (0.50x).</string>
+    <string>FSR preset: 0 Ultra Quality (0.77x), 1 Quality (0.67x), 2 Balanced (0.59x), 3 Performance (0.50x), 4 Custom (RenderFSRCustomScale).</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
@@ -13186,13 +13186,24 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderFSRSharpness</key>
   <map>
     <key>Comment</key>
-    <string>FSR RCAS sharpening attenuation in stops: 0 is sharpest, 2 is off.</string>
+    <string>FSR sharpening, 0 (off) to 1 (sharpest).</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
     <string>F32</string>
     <key>Value</key>
-    <real>0.2</real>
+    <real>0.9</real>
+  </map>
+  <key>RenderFSRCustomScale</key>
+  <map>
+    <key>Comment</key>
+    <string>FSR render scale per axis when RenderFSRQuality is 4 (Custom): 0.5 to 1.0.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0.67</real>
   </map>
   <key>RenderShaderLightingMaxLevel</key>
   <map>

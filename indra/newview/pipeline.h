@@ -1088,6 +1088,7 @@ public:
 // [/SL:KB]
     static bool RenderFSREnabled;
     static U32 RenderFSRQuality;
+    static F32 RenderFSRCustomScale;
     static F32 RenderFSRSharpness;
     // Scene render scale per axis: the FSR preset when FSR is on, else RenderResolutionMultiplier.
     static F32 getRenderScale();

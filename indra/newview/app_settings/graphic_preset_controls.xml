@@ -38,6 +38,7 @@
 		<string>RenderFSAASamples</string>
 		<string>RenderFSAAType</string>
 		<string>RenderFSREnabled</string>
+		<string>RenderFSRCustomScale</string>
 		<string>RenderFSRQuality</string>
 		<string>RenderFSRSharpness</string>
 		<string>RenderGlow</string>
