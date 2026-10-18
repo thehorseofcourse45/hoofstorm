@@ -307,6 +307,11 @@ bool activateVulkanRenderBackend(void* instance, void* window, bool validation, 
         error = "Vulkan activation requires a valid native instance and window";
         return false;
     }
+    if (!LoadLibraryA("vulkan-1.dll"))     // delay-loaded: no driver means fall back, not crash
+    {
+        error = "vulkan-1.dll not found; no Vulkan driver installed";
+        return false;
+    }
     // The GUI viewer has no stderr, so the backend's FATAL abort messages would vanish; keep them in the log folder.
     if (_fileno(stderr) < 0)
     {
