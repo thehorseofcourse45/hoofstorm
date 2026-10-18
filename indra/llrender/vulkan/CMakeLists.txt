@@ -21,6 +21,9 @@ target_link_libraries(llvulkan PRIVATE ll::glslang)
 # Stage notices independently of compiler binaries for viewer_manifest packaging.
 file(COPY "${LL_GLSLANG_ROOT}/LICENSES/glslang" DESTINATION "${CMAKE_BINARY_DIR}/shader-compiler-licenses")
 
+add_executable(llvulkan_fsr_shader_test EXCLUDE_FROM_ALL tests/fsr_shader_test.cpp)
+target_link_libraries(llvulkan_fsr_shader_test PRIVATE llvulkan)
+
 # This target uses the exact llvulkan archive built for the viewer; it never launches or logs into the viewer.
 add_executable(llvulkan_shader_test EXCLUDE_FROM_ALL tests/shader_runtime_test.cpp tests/shader_test.cpp)
 target_include_directories(llvulkan_shader_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_SOURCE_DIR}/../../llcommon")
