@@ -37,6 +37,9 @@
 		<string>RenderFlexTimeFactor</string>
 		<string>RenderFSAASamples</string>
 		<string>RenderFSAAType</string>
+		<string>RenderFSREnabled</string>
+		<string>RenderFSRQuality</string>
+		<string>RenderFSRSharpness</string>
 		<string>RenderGlow</string>
 		<string>RenderGlowHDR</string>
 		<string>RenderGlowIterations</string>

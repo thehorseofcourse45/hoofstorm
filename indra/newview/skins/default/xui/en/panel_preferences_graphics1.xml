@@ -1062,6 +1062,62 @@
         </combo_box>
 
         <check_box
+         control_name="RenderFSREnabled"
+         height="16"
+         label="FSR upscaling (render below window size, then upscale)"
+         layout="topleft"
+         left="10"
+         top_pad="15"
+         name="fsr_enabled"
+         tool_tip="Renders the 3D view at a lower resolution and upscales it with AMD FidelityFX Super Resolution 1.0. Faster, slightly softer."
+         width="400" />
+        <combo_box
+         control_name="RenderFSRQuality"
+         enabled_control="RenderFSREnabled"
+         height="22"
+         initial_value="1"
+         follows="left|top"
+         layout="topleft"
+         left="30"
+         name="fsr_quality"
+         top_pad="4"
+         width="150">
+            <combo_box.item
+             label="Ultra Quality (0.77x)"
+             name="FSRUltraQuality"
+             value="0" />
+            <combo_box.item
+             label="Quality (0.67x)"
+             name="FSRQuality"
+             value="1" />
+            <combo_box.item
+             label="Balanced (0.59x)"
+             name="FSRBalanced"
+             value="2" />
+            <combo_box.item
+             label="Performance (0.50x)"
+             name="FSRPerformance"
+             value="3" />
+        </combo_box>
+        <slider
+         control_name="RenderFSRSharpness"
+         enabled_control="RenderFSREnabled"
+         decimal_digits="1"
+         follows="left|top"
+         height="16"
+         increment="0.1"
+         initial_value="0.2"
+         label="FSR sharpening (0 = sharpest, 2 = off)"
+         label_width="230"
+         layout="topleft"
+         left="30"
+         max_val="2"
+         min_val="0"
+         name="fsr_sharpness"
+         top_pad="6"
+         width="430" />
+
+        <check_box
           control_name="FSLimitTextureVRAMUsage"
           height="16"
           label="Limit VRAM texture usage (MB)"
