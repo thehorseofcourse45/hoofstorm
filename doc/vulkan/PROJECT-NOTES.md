@@ -7,16 +7,16 @@
 - Spill (`vkbackends.cpp`): if a slab block fails in device memory it falls back to another host-visible coherent type. Throws only if every type fails. NOT exercised under real memory pressure.
 - Logging (every ~300 frames, `llrenderbackend_vulkan.cpp`): `VRAM used/budget MB` and `VRAM by owner MB: textures= render targets= host buffers= device buffers= upload staging=` (counts `vkAllocate` bytes only; a texture moves to render targets once a framebuffer attaches it).
 - In-world check (39 min, one teleport, 11.5 GB budget): used 5.2-5.3 GB and flat for the last 13 min, textures plateau at 4.4-4.5 GB, render targets about 290 MB, host buffers about 800 MB, device buffers 65-160 MB churn. No crash, no VK_ERROR. The teleport rise is the new region loading, not a leak. The old ~0.5 GB / 40 min creep did not reproduce.
-- Next: spill path untested; FSR in-world check and Upscaling tab crash check still open.
+- Next: spill path untested. A later VRAM drop (5.3 to 2.8 GB, 22:30-22:33Z) is normal texture discard.
 
-## Current status: FSR 1.0 upscaling built, not yet seen in-world, 2026-10-18
+## Current status: FSR 1.0 upscaling built, checked in-world 2026-10-19 (user), 2026-10-18
 
 - Spec `docs/superpowers/specs/2026-10-18-fsr-upscaling-design.md`, plan `docs/superpowers/plans/2026-10-18-fsr-upscaling.md`. Settings `RenderFSREnabled`, `RenderFSRQuality` (0-3: 0.77/0.67/0.59/0.50), `RenderFSRSharpness` (0 sharpest, 2 off); controls in Preferences, Graphics (Hardware tab) and in `graphic_preset_controls.xml`.
 - `LLPipeline::getRenderScale()` (`llfsr.h`) replaces the plain multiplier; with FSR on, `renderFinalize` runs EASU (`fsrEasuF.glsl`) into `mFSRMap`, then RCAS + noise + depth (`fsrRcasF.glsl`) to the screen. Probes and mirrors keep full size. FSR shaders are only built while the setting is on; a compile failure unticks the setting.
 - Tests: `fsr_scale_test` 9, `llvulkan_fsr_shader_test` 2, `llvulkan_fsr_pass_test` 9 (EASU ramp on the Vulkan backend, zero validation), frames 51, rgb10 41, activation 45 (render thread on and off).
 - GOTCHA: the `firestorm-bin` build does NOT refresh `build-vc170-64/newview/Release/app_settings`, `skins` or `shaders`. After changing settings, shaders or XUI, copy them into `Release` by hand or the new exe fails on unknown settings. Done for the FSR files.
 - Known gaps: high-res snapshots with FSR on render at the preset scale and are upscaled (softer); GL 4.0/4.1 and 3.x drivers cannot compile the FSR shaders (`packHalf2x16`, `textureGather` need 4.2/4.0) and the checkbox unticks itself with only a log warning; the shader files are about 3500 lines each against the loader's 4096-line limit.
-- Next: user checks FSR in-world (all four presets, live toggle, window resize, snapshot).
+- In-world check 2026-10-19: all passed (presets, live toggle, sharpness, resize, dynamic scaling, snapshot, Upscaling tab, failure message). Log: shaders loaded, no VK_ERROR/validation/crash.
 
 ## Current status: teleport stalls investigated from logs, 2026-10-18
 
