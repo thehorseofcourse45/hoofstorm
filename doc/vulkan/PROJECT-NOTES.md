@@ -4,10 +4,10 @@
 
 - Cause of the earlier `vkAllocateMemory` VkResult -2 crash: VRAM exhaustion (not FSR). 16 MiB slab blocks were never released.
 - Slab release (`vkbackends.cpp`): a block with all slots free is freed, except the last spare block per slot size and memory type. Long session: VRAM 4.5 GB down to 2.7 GB. Pool test `POOL_CHECKS=71 PASS`.
-- Spill (`vkbackends.cpp`): if a slab block fails in device memory it falls back to another host-visible coherent type. Throws only if every type fails. NOT exercised under real memory pressure.
+- Spill (`vkbackends.cpp`): if a slab block fails in device memory it falls back to another host-visible coherent type. Throws only if every type fails. Tested with the `VkContext::failMemoryTypes` hook in the pool test (73 checks): preferred type fails, another type takes the block; all types fail, still throws. On the RX 6700 XT the preferred type is system RAM and the spill target is the 256 MiB BAR.
 - Logging (every ~300 frames, `llrenderbackend_vulkan.cpp`): `VRAM used/budget MB` and `VRAM by owner MB: textures= render targets= host buffers= device buffers= upload staging=` (counts `vkAllocate` bytes only; a texture moves to render targets once a framebuffer attaches it).
 - In-world check (39 min, one teleport, 11.5 GB budget): used 5.2-5.3 GB and flat for the last 13 min, textures plateau at 4.4-4.5 GB, render targets about 290 MB, host buffers about 800 MB, device buffers 65-160 MB churn. No crash, no VK_ERROR. The teleport rise is the new region loading, not a leak. The old ~0.5 GB / 40 min creep did not reproduce.
-- Next: spill path untested. A later VRAM drop (5.3 to 2.8 GB, 22:30-22:33Z) is normal texture discard.
+- Next: A later VRAM drop (5.3 to 2.8 GB, 22:30-22:33Z) is normal texture discard.
 
 ## Current status: FSR 1.0 upscaling built, checked in-world 2026-10-19 (user), 2026-10-18
 

@@ -284,7 +284,7 @@ VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createStorag
             VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             mai.allocationSize = StorageSlabs::kBlock;
             mai.memoryTypeIndex = memoryType;
-            VkResult allocated = vkAllocateMemory(mCtx->device, &mai, nullptr, &block.memory);
+            VkResult allocated = (mCtx->failMemoryTypes >> memoryType) & 1 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : vkAllocateMemory(mCtx->device, &mai, nullptr, &block.memory);
             if (allocated != VK_SUCCESS)
             {
                 // VRAM peak (e.g. teleport overlap): spill to another host-visible type (system RAM) before giving up
@@ -292,12 +292,13 @@ VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createStorag
                 for (uint32_t i = 0; allocated != VK_SUCCESS && i < mCtx->memProps.memoryTypeCount; ++i)
                 {
                     if (i == memoryType || !(req.memoryTypeBits & (1u << i))) continue;
-                    if ((mCtx->memProps.memoryTypes[i].propertyFlags & want) != want) continue;
+                    if ((mCtx->memProps.memoryTypes[i].propertyFlags & want) != want || ((mCtx->failMemoryTypes >> i) & 1)) continue;
                     mai.memoryTypeIndex = i;
                     allocated = vkAllocateMemory(mCtx->device, &mai, nullptr, &block.memory);
                     if (allocated == VK_SUCCESS) block.memoryType = i;
                 }
             }
+            if (allocated != VK_SUCCESS) vkDestroyBuffer(mCtx->device, b.buffer, nullptr);
             VK_CHECK(allocated);
             mSlabs->device = mCtx->device;
             ++mCtx->bufferMemoryAllocations;

@@ -45,6 +45,16 @@ int main(int argc,char** argv)
             printf("POOL_MEMORY_ALLOCATIONS live_buffers=1000 allocations=%llu\n",ctx.bufferMemoryAllocations-memory);
             check(ctx.bufferMemoryAllocations-memory<=16,"1000 live small buffers share a few memory allocations");
             for(int i=0;i<1000;++i)vb.free(i%2?BufferKind::Index:BufferKind::Vertex,1024u+977u*(i%40),live[i],liveShadows[i]);ctx.collectReleasedResources();}
+            {   // spill: the preferred memory type fails, a different host-visible type must take the 16 MiB block
+                const uint32_t preferred=ctx.findMemoryType(0xFFFFFFFFu,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                const auto before=ctx.hostBufferMemBytes.load();BufferHandle spilled;U8* spillShadow=nullptr;ctx.failMemoryTypes=1u<<preferred;
+                vb.allocate(BufferKind::Vertex,200000,spilled,spillShadow);
+                check(ctx.hostBufferMemBytes.load()>before,"spill: preferred type failed, block allocated from another host-visible type");
+                vb.upload(BufferKind::Vertex,spilled,0,16,triangle);vb.free(BufferKind::Vertex,200000,spilled,spillShadow);
+                ctx.failMemoryTypes=0xFFFFFFFFu;bool threw=false;BufferHandle none;U8* noneShadow=nullptr;
+                try{vb.allocate(BufferKind::Vertex,400000,none,noneShadow);}catch(const std::exception&){threw=true;}
+                check(threw,"spill: every type failing still reports the error");ctx.failMemoryTypes=0;ctx.collectReleasedResources();
+            }
             shaders.use(0);shaders.deleteProgramAndObjects(program);
         }
         ctx.shutdown();check(!ctx.validationErrors && !ctx.validationWarnings,"zero validation messages including pool teardown");printf("POOL_CHECKS=%u PASS\n",checks);return 0;
