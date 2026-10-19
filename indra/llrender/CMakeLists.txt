@@ -141,6 +141,9 @@ endif()
 add_executable(fsr_scale_test EXCLUDE_FROM_ALL tests/fsr/fsr_scale_test.cpp)
 target_include_directories(fsr_scale_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
+add_executable(fsr2_helpers_test EXCLUDE_FROM_ALL tests/fsr/fsr2_helpers_test.cpp)
+target_include_directories(fsr2_helpers_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+
 if(WINDOWS AND LL_VULKAN_RUNTIME)
     add_executable(viewer_vulkan_activation_test EXCLUDE_FROM_ALL tests/native_activation/native_activation_test.cpp)
     target_link_libraries(viewer_vulkan_activation_test llrender llwindow)
