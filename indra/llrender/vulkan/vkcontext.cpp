@@ -299,8 +299,10 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantD
     }
     // core features the viewer's shaders use: samplerCubeArray (reflection probes) needs imageCubeArray
     VkPhysicalDeviceVulkan12Features supported12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceVulkan11Features supported11{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
     VkPhysicalDeviceFeatures2 supported2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     supported2.pNext = &supported12;
+    supported12.pNext = &supported11;
     vkGetPhysicalDeviceFeatures2(phys, &supported2);
     VkPhysicalDeviceFeatures2 enable2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     enable2.features.occlusionQueryPrecise = supported2.features.occlusionQueryPrecise;
@@ -319,6 +321,9 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantD
     enable2.features.largePoints = supported2.features.largePoints;
     enable2.features.textureCompressionBC = supported2.features.textureCompressionBC;      // S3TC / DXT textures
     enable2.features.samplerAnisotropy = supported2.features.samplerAnisotropy;
+    enable2.features.shaderStorageImageWriteWithoutFormat = supported2.features.shaderStorageImageWriteWithoutFormat;    // FidelityFX output image
+    enable2.features.shaderStorageImageReadWithoutFormat = supported2.features.shaderStorageImageReadWithoutFormat;
+    enable2.features.shaderInt16 = supported2.features.shaderInt16;
     samplerAnisotropy = supported2.features.samplerAnisotropy != VK_FALSE;
     {
         VkPhysicalDeviceProperties dp;
@@ -332,8 +337,15 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantD
     VkPhysicalDeviceVulkan12Features enable12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     hostQueryReset = supported12.hostQueryReset != VK_FALSE;
     enable12.hostQueryReset = supported12.hostQueryReset;
+    enable12.shaderFloat16 = supported12.shaderFloat16;
+    VkPhysicalDeviceVulkan11Features enable11{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
+    enable11.storageBuffer16BitAccess = supported11.storageBuffer16BitAccess;
+    enable11.uniformAndStorageBuffer16BitAccess = supported11.uniformAndStorageBuffer16BitAccess;
+    fp16Math = supported12.shaderFloat16 && supported2.features.shaderInt16 && supported11.storageBuffer16BitAccess &&
+               supported11.uniformAndStorageBuffer16BitAccess;
     enable12.pNext = &enable13;
-    enable2.pNext = &enable12;
+    enable11.pNext = &enable12;
+    enable2.pNext = &enable11;
 
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     dci.pNext = &enable2;

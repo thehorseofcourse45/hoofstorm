@@ -190,6 +190,9 @@ struct VkContext
 
     bool samplerAnisotropy = false;
     float maxAnisotropy = 1.0f;
+    // FidelityFX upscaler compute needs: storage-image writes without a format whenever supported; its FP16 shader variants only
+    // with fp16Math (shaderFloat16, shaderInt16 and the 16-bit buffer access features all enabled).
+    bool fp16Math = false;
 
     // GL clip depth is -1..1, Vulkan's is 0..1. With VK_EXT_depth_clip_control the pipeline can ask for GL's range.
     bool depthClipControl = false;

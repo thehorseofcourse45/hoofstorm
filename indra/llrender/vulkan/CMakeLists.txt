@@ -21,6 +21,29 @@ target_link_libraries(llvulkan PRIVATE ll::glslang)
 # Stage notices independently of compiler binaries for viewer_manifest packaging.
 file(COPY "${LL_GLSLANG_ROOT}/LICENSES/glslang" DESTINATION "${CMAKE_BINARY_DIR}/shader-compiler-licenses")
 
+# AMD FidelityFX SDK 1.1.4 (FSR 3.1 upscaler + Vulkan backend), vendored under ffx/; see ffx/README.
+# Headers are public as <FidelityFX/...>. AMD's offline shader compiler is replaced by ffx_blobgen, which compiles the GLSL
+# to SPIR-V with the glslang above and writes the blob table the backend asks for.
+set(FFX_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ffx")
+add_executable(ffx_blobgen ffx/tools/ffx_blobgen.cpp)
+target_compile_features(ffx_blobgen PRIVATE cxx_std_17)
+target_link_libraries(ffx_blobgen PRIVATE ll::glslang)
+file(GLOB_RECURSE FFX_SHADER_INPUTS CONFIGURE_DEPENDS "${FFX_DIR}/src/backends/vk/shaders/fsr3upscaler/*.glsl" "${FFX_DIR}/include/FidelityFX/gpu/*.h")
+set(FFX_BLOBS "${CMAKE_CURRENT_BINARY_DIR}/ffx_fsr3upscaler_blobs.cpp")
+add_custom_command(OUTPUT "${FFX_BLOBS}"
+    COMMAND ffx_blobgen "${FFX_DIR}" "${FFX_BLOBS}"
+    DEPENDS ffx_blobgen ${FFX_SHADER_INPUTS}
+    COMMENT "FidelityFX: compiling FSR 3.1 upscaler shaders to SPIR-V")
+set(FFX_SOURCES
+    ffx/src/backends/vk/ffx_vk.cpp
+    ffx/src/components/fsr3upscaler/ffx_fsr3upscaler.cpp
+    ffx/src/shared/ffx_assert.cpp ffx/src/shared/ffx_breadcrumbs_list.cpp ffx/src/shared/ffx_message.cpp ffx/src/shared/ffx_object_management.cpp)
+target_sources(llvulkan PRIVATE ${FFX_SOURCES} "${FFX_BLOBS}")
+target_include_directories(llvulkan PUBLIC "${FFX_DIR}/include")
+target_include_directories(llvulkan PRIVATE
+    "${FFX_DIR}/src/shared" "${FFX_DIR}/src/backends/shared" "${FFX_DIR}/src/components" "${FFX_DIR}/src/backends/vk")
+set_source_files_properties(${FFX_SOURCES} "${FFX_BLOBS}" PROPERTIES COMPILE_DEFINITIONS NOMINMAX)
+
 add_executable(llvulkan_fsr_shader_test EXCLUDE_FROM_ALL tests/fsr_shader_test.cpp)
 target_link_libraries(llvulkan_fsr_shader_test PRIVATE llvulkan)
 
@@ -63,3 +86,8 @@ target_link_libraries(llvulkan_fsr_pass_test PRIVATE llvulkan)
 add_executable(llvulkan_frames_test EXCLUDE_FROM_ALL tests/frames_test.cpp)
 target_include_directories(llvulkan_frames_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_SOURCE_DIR}/../../llcommon")
 target_link_libraries(llvulkan_frames_test PRIVATE llvulkan)
+
+# FidelityFX FSR 3.1 upscaler context create/destroy on a validated headless device.
+add_executable(llvulkan_fsr2_context_test EXCLUDE_FROM_ALL tests/fsr2_context_test.cpp)
+target_include_directories(llvulkan_fsr2_context_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_SOURCE_DIR}/../../llcommon")
+target_link_libraries(llvulkan_fsr2_context_test PRIVATE llvulkan)

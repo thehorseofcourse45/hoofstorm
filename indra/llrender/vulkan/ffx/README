@@ -1,0 +1,139 @@
+AMD FidelityFX SDK, vendored: FSR 3.1 upscaler + Vulkan backend
+================================================================
+
+SDK version : 1.1.4  (FSR 3 upscaler component 3.1.4, ffxFsr3UpscalerGetEffectVersion)
+Source      : https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK
+Tag         : v1.1.4, commit c6efa6bf7f2027b3ec94f28578bb5965eabb9e55 (shallow clone, depth 1)
+Vendored on : 2026-10-19
+License     : MIT, (C) 2024 Advanced Micro Devices, Inc. (LICENSE.txt). Every vendored file keeps its AMD header.
+Frozen copy : v1.1.4 is the last SDK release with a Vulkan backend (v2.x lists Vulkan as unsupported). We own any fix.
+
+What is vendored
+----------------
+Only the upscaler. Frame interpolation, optical flow, the frame-interpolation swapchain, the DX12 backend, the other effects
+(FSR1/FSR2 old component, CAS, SPD host side, ...), the FFX API DLL layer (ffx-api/), samples and the framework are NOT here.
+Paths mirror sdk/ in the SDK repository. Files are byte-identical to the tag except ffx/src/backends/vk/ffx_vk.cpp (see below).
+
+Sizes in bytes. 55 files from AMD (1,207,710 bytes) plus tools/ffx_blobgen.cpp (ours).
+
+    1136  LICENSE.txt
+   16164  include/FidelityFX/gpu/ffx_common_types.h
+    2522  include/FidelityFX/gpu/ffx_core.h
+   15402  include/FidelityFX/gpu/ffx_core_cpu.h
+   60377  include/FidelityFX/gpu/ffx_core_glsl.h
+   87724  include/FidelityFX/gpu/ffx_core_gpu_common.h
+   98319  include/FidelityFX/gpu/ffx_core_gpu_common_half.h
+   60833  include/FidelityFX/gpu/ffx_core_hlsl.h
+    1682  include/FidelityFX/gpu/ffx_core_portability.h
+   66494  include/FidelityFX/gpu/fsr1/ffx_fsr1.h
+    8766  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_accumulate.h
+   26949  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_callbacks_glsl.h
+   30705  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_callbacks_hlsl.h
+   13353  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_common.h
+    5729  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_debug_view.h
+    5322  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_luma_instability.h
+    6188  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_luma_pyramid.h
+    5840  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_prepare_inputs.h
+   12463  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_prepare_reactivity.h
+    3768  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_rcas.h
+    3253  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_reproject.h
+    7638  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_resources.h
+   28000  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_sample.h
+    2708  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_shading_change.h
+    9467  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_shading_change_pyramid.h
+   28487  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_upsample.h
+   42614  include/FidelityFX/gpu/spd/ffx_spd.h
+   18724  include/FidelityFX/host/backends/vk/ffx_vk.h
+    5322  include/FidelityFX/host/ffx_assert.h
+    4267  include/FidelityFX/host/ffx_error.h
+   37302  include/FidelityFX/host/ffx_fsr3upscaler.h
+   33472  include/FidelityFX/host/ffx_interface.h
+    2291  include/FidelityFX/host/ffx_message.h
+   61768  include/FidelityFX/host/ffx_types.h
+    6056  include/FidelityFX/host/ffx_util.h
+    1806  src/backends/shared/ffx_shader_blobs.h
+  234184  src/backends/vk/ffx_vk.cpp
+    3667  src/backends/vk/shaders/fsr3upscaler/ffx_fsr3upscaler_accumulate_pass.glsl
+    4171  src/backends/vk/shaders/fsr3upscaler/ffx_fsr3upscaler_autogen_reactive_pass.glsl
+    2837  src/backends/vk/shaders/fsr3upscaler/ffx_fsr3upscaler_debug_view_pass.glsl
+    3054  src/backends/vk/shaders/fsr3upscaler/ffx_fsr3upscaler_luma_instability_pass.glsl
+    3205  src/backends/vk/shaders/fsr3upscaler/ffx_fsr3upscaler_luma_pyramid_pass.glsl
+    3023  src/backends/vk/shaders/fsr3upscaler/ffx_fsr3upscaler_prepare_inputs_pass.glsl
+    3386  src/backends/vk/shaders/fsr3upscaler/ffx_fsr3upscaler_prepare_reactivity_pass.glsl
+    2743  src/backends/vk/shaders/fsr3upscaler/ffx_fsr3upscaler_rcas_pass.glsl
+    2561  src/backends/vk/shaders/fsr3upscaler/ffx_fsr3upscaler_shading_change_pass.glsl
+    3305  src/backends/vk/shaders/fsr3upscaler/ffx_fsr3upscaler_shading_change_pyramid_pass.glsl
+   91833  src/components/fsr3upscaler/ffx_fsr3upscaler.cpp
+    6390  src/components/fsr3upscaler/ffx_fsr3upscaler_private.h
+    2671  src/shared/ffx_assert.cpp
+    1884  src/shared/ffx_breadcrumbs_list.cpp
+    9634  src/shared/ffx_breadcrumbs_list.h
+    2288  src/shared/ffx_message.cpp
+    2171  src/shared/ffx_object_management.cpp
+    1792  src/shared/ffx_object_management.h
+
+The GLSL headers under include/FidelityFX/gpu/ are the closure of the #includes of the ten fsr3upscaler *_pass.glsl files
+(ffx_core*.h, fsr1/ffx_fsr1.h for RCAS, spd/ffx_spd.h, fsr3upscaler/*.h). ffx_core_cpu.h and ffx_core_hlsl.h are only reached
+through conditional includes; they are kept so the headers stay intact.
+
+Local modifications
+-------------------
+1. src/backends/vk/ffx_vk.cpp, ffxGetInterfaceVK: fpSwapChainConfigureFrameGeneration = nullptr. The frame-interpolation
+   swapchain (ffxSetFrameGenerationConfigToSwapchainVK) is not vendored; it belongs to the frame generation project.
+2. src/backends/vk/ffx_vk.cpp, CreateBackendContextVK: vkGetBufferMemoryRequirements2KHR falls back to the core
+   vkGetBufferMemoryRequirements2 when the KHR name resolves to null. The backend decides "dedicated allocation supported" from
+   the extensions the GPU LISTS, not the ones the app enabled, and then called the null pointer (crash in ffxFsr3UpscalerContextCreate).
+3. src/backends/vk/ffx_vk.cpp, CreatePipelineVK: a missing shader blob (permutation we do not build) returns
+   FFX_ERROR_INVALID_ARGUMENT instead of asserting; with asserts compiled out it dereferenced a null blob.
+Not from AMD, written here: tools/ffx_blobgen.cpp (below). AMD's src/backends/shared/ffx_shader_blobs.cpp and blob_accessors/ are
+not vendored; ffxGetPermutationBlobByIndex() and ffxIsWave64() come from the generated ffx_fsr3upscaler_blobs.cpp.
+
+Build integration (indra/llrender/vulkan/CMakeLists.txt)
+--------------------------------------------------------
+* llvulkan compiles ffx_vk.cpp, ffx_fsr3upscaler.cpp, src/shared/*.cpp and the generated ffx_fsr3upscaler_blobs.cpp.
+  Public include directory: ffx/include. So the headers are <FidelityFX/host/...>, not <ffx/...>.
+* AMD's FidelityFX_SC offline shader compiler is not used. tools/ffx_blobgen.cpp (target ffx_blobgen, built with the repo's
+  glslang package ll::glslang, so no new dependency) runs as a custom command, compiles the ten GLSL passes to SPIR-V 1.5
+  (Vulkan 1.2 target, -Os equivalent through SPIRV-Tools, with #include support), reads set/binding/name of every
+  resource back out of the SPIR-V, and writes <build>/llrender/vulkan/ffx_fsr3upscaler_blobs.cpp with the FfxShaderBlob table.
+  Identical permutations share one module: 44 table entries, 20 SPIR-V modules.
+* Permutations built (FSR3UPSCALER_SHADER_PERMUTATION_* in src/components/fsr3upscaler/ffx_fsr3upscaler_private.h):
+    always on : HDR color input, render-resolution motion vectors
+    always off: inverted depth, display-size motion vectors, motion-vector jitter cancellation
+    selectable: Lanczos LUT (the SDK picks it itself on 32/64-lane GPUs such as RDNA), FP16 (16-bit variant of 4 passes), sharpening
+                (accumulate-sharpen pass). Wave64 maps to the same SPIR-V (not a GLSL option).
+    Auto-exposure is not a permutation; it is a runtime flag.
+  So the context flags must be FFX_FSR3UPSCALER_ENABLE_HIGH_DYNAMIC_RANGE (required), optionally _AUTO_EXPOSURE,
+  _DYNAMIC_RESOLUTION, _DEBUG_CHECKING. _DEPTH_INVERTED, _DISPLAY_RESOLUTION_MOTION_VECTORS and
+  _MOTION_VECTORS_JITTER_CANCELLATION make ffxFsr3UpscalerContextCreate return an error (to enable one, add it to
+  ffx_blobgen.cpp, rebuild; call ffxFsr3UpscalerContextDestroy after a failed create).
+
+How to use it (for VulkanFsrUpscaler, indra/llrender/vulkan/vkfsr2.*)
+---------------------------------------------------------------------
+Headers:
+    #include <FidelityFX/host/ffx_fsr3upscaler.h>          // context, dispatch description, jitter, quality helpers
+    #include <FidelityFX/host/backends/vk/ffx_vk.h>        // Vulkan backend: device, command buffer, image wrapping
+Entry points, in order (see tests/fsr2_context_test.cpp for a working create/destroy):
+    VkDeviceContext dc{ctx.device, ctx.phys, vkGetDeviceProcAddr};
+    scratch = ffxGetScratchMemorySizeVK(ctx.phys, FFX_FSR3UPSCALER_CONTEXT_COUNT)    // caller owns this memory, zero it
+    ffxGetInterfaceVK(&desc.backendInterface, ffxGetDeviceVK(&dc), scratch, size, FFX_FSR3UPSCALER_CONTEXT_COUNT)
+    ffxFsr3UpscalerContextCreate(&upscaler, &desc)                 // desc.flags, maxRenderSize, maxUpscaleSize, fpMessage
+    ffxFsr3UpscalerContextGetGpuMemoryUsage(&upscaler, &usage)     // VRAM for the 'upscaler' owner of the VRAM log
+    per frame: ffxFsr3UpscalerContextDispatch(&upscaler, &dispatchDescription)
+               command list = ffxGetCommandListVK(cmd); inputs/outputs = ffxGetResourceVK(VkImage, ffxGetImageResourceDescriptionVK(...), name, state)
+    helpers  : ffxFsr3UpscalerGetJitterPhaseCount, ffxFsr3UpscalerGetJitterOffset, ffxFsr3UpscalerGetRenderResolutionFromQualityMode,
+               ffxFsr3UpscalerGetUpscaleRatioFromQualityMode, ffxFsr3UpscalerSetConstant
+    ffxFsr3UpscalerContextDestroy(&upscaler); the scratch memory must outlive the context.
+Gotchas found while bringing it up:
+* FP16 must be decided by the caller. The backend's fpGetDeviceCapabilities reports fp16Supported from the extension LIST, not from
+  what the device enabled. After ffxGetInterfaceVK, replace desc.backendInterface.fpGetDeviceCapabilities with a wrapper that calls
+  the original and then sets caps->fp16Supported = VkContext::fp16Math (done in the test).
+* VkContext now enables, when the GPU supports them: shaderStorageImageWriteWithoutFormat / ReadWithoutFormat (the output image
+  has no format qualifier), shaderInt16, shaderFloat16, storageBuffer16BitAccess, uniformAndStorageBuffer16BitAccess.
+  VkContext::fp16Math is true when all of the FP16 ones are enabled. The shaders declare the matching SPIR-V capabilities.
+* The backend keeps ONE static VkDeviceContext (ffxGetDeviceVK copies into a file-static), so one VkDevice per process, and it
+  manages its own descriptor sets, samplers and a constant-buffer ring inside the scratch memory (FFX_MAX_QUEUED_FRAMES frames).
+  It records its own barriers (addBarrier/flushBarriers, plain vkCmdPipelineBarrier, no synchronization2) from the
+  FfxResourceStates given to ffxGetResourceVK, so the caller must pass the true current state of every image it hands in
+  and put layouts back afterwards if it needs a different one (not yet exercised: the context test only creates and destroys).
+* ffxFsr3UpscalerContextCreate compiles 11 compute pipelines (about 17 MB of VRAM at 640x360 -> 960x540).
