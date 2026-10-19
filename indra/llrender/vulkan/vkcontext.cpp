@@ -851,6 +851,7 @@ uint8_t* VkContext::batchStage(VkDeviceSize bytes, VkBuffer& buffer, VkDeviceSiz
         VK_CHECK(vkBindBufferMemory(device, chunk.buffer, chunk.memory, 0));
         VK_CHECK(vkMapMemory(device, chunk.memory, 0, VK_WHOLE_SIZE, 0, (void**) &chunk.mapped));
         ++textureUploadAllocations;
+        stagingMemBytes += (int64_t) req.size;
     }
     chunk.used = bytes;
     batch.chunks.push_back(chunk);
@@ -873,10 +874,11 @@ VkCommandBuffer VkContext::takeBatch(std::function<void()>* releaseOut)
         {
             chunk.used = 0;
             if (chunk.size == kBatchChunk && freeChunks.size() < 4) { freeChunks.push_back(chunk); continue; }
-            reap([device = device, chunk] {
+            reap([this, device = device, chunk] {
                 vkUnmapMemory(device, chunk.memory);
                 vkDestroyBuffer(device, chunk.buffer, nullptr);
                 vkFreeMemory(device, chunk.memory, nullptr);
+                stagingMemBytes -= (int64_t) chunk.size;
             });
         }
     };

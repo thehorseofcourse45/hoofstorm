@@ -247,6 +247,13 @@ struct NativeRenderer
         LL_INFOS("VulkanPacing") << "texture staging alloc/ring=" << context.textureUploadAllocations-previousTextureUploadAllocations
             << "/" << context.textureRingUploads-previousTextureRingUploads << LL_ENDL;
         previousTextureUploadAllocations=context.textureUploadAllocations; previousTextureRingUploads=context.textureRingUploads;
+        uint64_t vramUsed = 0, vramBudget = 0;
+        if (context.deviceLocalBudget(vramUsed, vramBudget))
+            LL_INFOS("VulkanPacing") << "VRAM used/budget MB=" << (vramUsed >> 20) << "/" << (vramBudget >> 20)
+                << "; buffer memory allocations=" << context.bufferMemoryAllocations << LL_ENDL;
+        LL_INFOS("VulkanPacing") << "VRAM by owner MB: textures=" << (context.textureMemBytes >> 20) << " render targets=" << (context.targetMemBytes >> 20)
+            << " host buffers=" << (context.hostBufferMemBytes >> 20) << " device buffers=" << (context.bufferVramBytes >> 20)
+            << " upload staging=" << (context.stagingMemBytes >> 20) << LL_ENDL;
         previousStalls=context.stallCounts; previousStallMs=context.stallMs;
         previousCacheHits=context.pipelineCacheHits;
         previousBlocking = context.blockingSubmissions;

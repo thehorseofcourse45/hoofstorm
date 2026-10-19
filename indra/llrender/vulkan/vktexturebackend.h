@@ -115,6 +115,8 @@ private:
         VkDeviceMemory memory = VK_NULL_HANDLE;
         VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
         bool attachmentCapable = false;
+        bool asTarget = false;          // attached to a framebuffer at least once; memBytes moves to targetMemBytes
+        VkDeviceSize memBytes = 0;      // counted in textureMemBytes, or targetMemBytes once asTarget
         FormatInfo info;
         U32 glInternal = 0;
         uint32_t width = 0, height = 0, layers = 1, levels = 1;

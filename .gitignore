@@ -130,3 +130,6 @@ firestorm.code-workspace
 .github/release.yaml
 
 checks.json
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

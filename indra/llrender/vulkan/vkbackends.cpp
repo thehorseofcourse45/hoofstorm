@@ -172,6 +172,7 @@ VulkanVertexBufferBackend::StorageSlabs::~StorageSlabs()
 {
     for (const auto& b : blocks)
     {
+        if (b.memory == VK_NULL_HANDLE) continue;
         vkUnmapMemory(device, b.memory);
         vkFreeMemory(device, b.memory, nullptr);
     }
@@ -183,11 +184,28 @@ void VulkanVertexBufferBackend::destroyStorage(VkDevice device, StorageSlabs& sl
     if (storage.block >= 0)
     {
         std::lock_guard<std::mutex> lock(slabs.mutex);
-        slabs.blocks[storage.block].free.push_back(storage.slot);
+        auto& blocks = slabs.blocks;
+        auto& block = blocks[storage.block];
+        block.free.push_back(storage.slot);
+        if (block.free.size() == StorageSlabs::kBlock / block.slotSize)
+        {
+            // Wholly idle: give the memory back unless it is the class's only spare, so a burst does not pin its peak forever.
+            // The index stays in `blocks` (storage.block values are indices); createStorage reuses the emptied entry.
+            const bool otherSpare = std::any_of(blocks.begin(), blocks.end(), [&](const StorageSlabs::Block& o)
+                { return &o != &block && o.slotSize == block.slotSize && o.memoryType == block.memoryType && !o.free.empty(); });
+            if (otherSpare)
+            {
+                vkUnmapMemory(device, block.memory);
+                vkFreeMemory(device, block.memory, nullptr);
+                if (slabs.liveBytes) *slabs.liveBytes -= (int64_t) StorageSlabs::kBlock;
+                block = StorageSlabs::Block();
+            }
+        }
         return;
     }
     vkUnmapMemory(device, storage.memory);
     vkFreeMemory(device, storage.memory, nullptr);
+    if (slabs.liveBytes) *slabs.liveBytes -= (int64_t) storage.allocationBytes;
 }
 
 void VulkanVertexBufferBackend::recycleStorage(BufferKind kind, const BufferStorage& storage)
@@ -247,6 +265,7 @@ VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createStorag
     VkMemoryRequirements req;
     vkGetBufferMemoryRequirements(mCtx->device, b.buffer, &req);
     const uint32_t memoryType = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    mSlabs->liveBytes = &mCtx->hostBufferMemBytes;
     if (req.size <= StorageSlabs::kMaxSlot && req.alignment <= StorageSlabs::kMaxSlot)
     {
         VkDeviceSize slotSize = StorageSlabs::kMinSlot;
@@ -254,21 +273,39 @@ VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createStorag
         std::lock_guard<std::mutex> lock(mSlabs->mutex);
         auto& blocks = mSlabs->blocks;
         size_t index = 0;
-        while (index < blocks.size() && (blocks[index].slotSize != slotSize || blocks[index].memoryType != memoryType || blocks[index].free.empty())) ++index;
+        while (index < blocks.size() && (blocks[index].slotSize != slotSize || !(req.memoryTypeBits & (1u << blocks[index].memoryType)) || (mCtx->memProps.memoryTypes[blocks[index].memoryType].propertyFlags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) != (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) || blocks[index].free.empty())) ++index;
         if (index == blocks.size())
         {
+            size_t released = 0;
+            while (released < blocks.size() && blocks[released].memory != VK_NULL_HANDLE) ++released;
             StorageSlabs::Block block;
             block.slotSize = slotSize;
             block.memoryType = memoryType;
             VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             mai.allocationSize = StorageSlabs::kBlock;
             mai.memoryTypeIndex = memoryType;
-            VK_CHECK(vkAllocateMemory(mCtx->device, &mai, nullptr, &block.memory));
+            VkResult allocated = vkAllocateMemory(mCtx->device, &mai, nullptr, &block.memory);
+            if (allocated != VK_SUCCESS)
+            {
+                // VRAM peak (e.g. teleport overlap): spill to another host-visible type (system RAM) before giving up
+                const VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+                for (uint32_t i = 0; allocated != VK_SUCCESS && i < mCtx->memProps.memoryTypeCount; ++i)
+                {
+                    if (i == memoryType || !(req.memoryTypeBits & (1u << i))) continue;
+                    if ((mCtx->memProps.memoryTypes[i].propertyFlags & want) != want) continue;
+                    mai.memoryTypeIndex = i;
+                    allocated = vkAllocateMemory(mCtx->device, &mai, nullptr, &block.memory);
+                    if (allocated == VK_SUCCESS) block.memoryType = i;
+                }
+            }
+            VK_CHECK(allocated);
             mSlabs->device = mCtx->device;
             ++mCtx->bufferMemoryAllocations;
+            mCtx->hostBufferMemBytes += (int64_t) StorageSlabs::kBlock;
             VK_CHECK(vkMapMemory(mCtx->device, block.memory, 0, VK_WHOLE_SIZE, 0, (void**) &block.mapped));
             for (uint32_t slot = (uint32_t) (StorageSlabs::kBlock / slotSize); slot-- > 0;) block.free.push_back(slot);
-            blocks.push_back(std::move(block));
+            if (released < blocks.size()) { blocks[released] = std::move(block); index = released; }
+            else blocks.push_back(std::move(block));
         }
         auto& block = blocks[index];
         b.block = (int32_t) index;
@@ -286,6 +323,7 @@ VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createStorag
     mai.memoryTypeIndex = memoryType;
     VK_CHECK(vkAllocateMemory(mCtx->device, &mai, nullptr, &b.memory));
     ++mCtx->bufferMemoryAllocations;
+    mCtx->hostBufferMemBytes += (int64_t) req.size;
     VK_CHECK(vkBindBufferMemory(mCtx->device, b.buffer, b.memory, 0));
     VK_CHECK(vkMapMemory(mCtx->device, b.memory, 0, VK_WHOLE_SIZE, 0, (void**) &b.mapped));
 

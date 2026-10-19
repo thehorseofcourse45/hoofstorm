@@ -132,8 +132,9 @@ private:
         };
         ~StorageSlabs();
         VkDevice device = VK_NULL_HANDLE;     // set with the first block
+        std::atomic<int64_t>* liveBytes = nullptr;   // VkContext::hostBufferMemBytes
         std::mutex mutex;              // the reaper returns slots from its own thread
-        std::vector<Block> blocks;     // ponytail: kept until shutdown, free empty blocks if host memory matters
+        std::vector<Block> blocks;     // emptied blocks are freed by destroyStorage (memory null) and reused
     };
     struct Buf : BufferStorage
     {

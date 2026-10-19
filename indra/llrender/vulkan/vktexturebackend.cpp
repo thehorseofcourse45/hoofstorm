@@ -380,14 +380,18 @@ void VulkanTextureBackend::destroyImage(Tex& t)
     const auto device = mCtx->device;
     const auto image = t.image;
     const auto memory = t.memory;
+    auto& counter = t.asTarget ? mCtx->targetMemBytes : mCtx->textureMemBytes;
+    const int64_t bytes = (int64_t) t.memBytes;
+    t.memBytes = 0;
     auto views = std::move(t.views);
     t.views.clear();
     t.cView = VK_NULL_HANDLE;
     t.aView = VK_NULL_HANDLE;
-    mCtx->deferFree([device, image, memory, views] {
+    mCtx->deferFree([device, image, memory, views, &counter, bytes] {
         for (const auto& view : views) vkDestroyImageView(device, view.second, nullptr);
         vkDestroyImage(device, image, nullptr);
         vkFreeMemory(device, memory, nullptr);
+        counter -= bytes;
     });
     t.layout = VK_IMAGE_LAYOUT_UNDEFINED;
     t.image = VK_NULL_HANDLE;
@@ -458,6 +462,9 @@ void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t 
         return;
     }
     VK_CHECK(vkBindImageMemory(mCtx->device, t.image, t.memory, 0));
+    t.memBytes = req.size;
+    t.asTarget = false;
+    mCtx->textureMemBytes += (int64_t) req.size;
     ++imagesCreated;
 
     // GL starts a level out as zeros, Vulkan as garbage: clear the image, then leave it ready for sampling

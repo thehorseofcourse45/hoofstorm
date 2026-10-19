@@ -80,6 +80,12 @@ VulkanFramebufferBackend::Image VulkanFramebufferBackend::imageOf(const Attachme
     if (it == mCtx->textures->mTextures.end() || !it->second.image) fail("attachment texture has no storage");
     auto& t = it->second;
     if ((U32) a.level >= t.levels || !t.attachmentCapable) fail("texture level or format is not renderable");
+    if (!t.asTarget)
+    {
+        t.asTarget = true;
+        mCtx->textureMemBytes -= (int64_t) t.memBytes;
+        mCtx->targetMemBytes += (int64_t) t.memBytes;
+    }
     U32 layer = 0;
     if (a.target >= glc::TEXTURE_CUBE_MAP_POSITIVE_X && a.target <= glc::TEXTURE_CUBE_MAP_NEGATIVE_Z)
         layer = a.target - glc::TEXTURE_CUBE_MAP_POSITIVE_X;

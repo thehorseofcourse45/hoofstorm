@@ -278,6 +278,8 @@ struct VkContext
     bool tolerateFeedback = false;
     uint64_t feedbackSubstitutions = 0;
     uint64_t bufferAllocations = 0, bufferPoolHits = 0, bufferPoolEvictions = 0;
+    // Live vkAllocateMemory bytes by owner, for the VulkanPacing log; atomic because the reaper thread frees.
+    std::atomic<int64_t> textureMemBytes{0}, targetMemBytes{0}, hostBufferMemBytes{0}, stagingMemBytes{0};
     uint64_t bufferMemoryAllocations = 0;   // vkAllocateMemory calls behind vertex/index storage
     uint64_t textureUploadAllocations = 0, textureRingUploads = 0;
     std::chrono::steady_clock::time_point recordingStarted;
