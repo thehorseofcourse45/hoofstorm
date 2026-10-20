@@ -109,6 +109,15 @@ int main()
         check(repeats, "jitter repeats after the phase count");
     }
 
+    // camera history: a frame without a usable previous frame resets (mPrevViewProj = current, zero motion)
+    check(!fsr2HistoryCut(true, 1280, 720, 1280, 720, false, 0.5f), "same size, small move keeps history");
+    check(fsr2HistoryCut(false, 1280, 720, 1280, 720, false, 0.f), "no history is a cut");
+    check(fsr2HistoryCut(true, 1129, 635, 1280, 720, false, 0.f), "new render width is a cut");
+    check(fsr2HistoryCut(true, 1280, 719, 1280, 720, false, 0.f), "new render height is a cut");
+    check(fsr2HistoryCut(true, 1280, 720, 1280, 720, true, 0.f), "region shift is a cut");
+    check(fsr2HistoryCut(true, 1280, 720, 1280, 720, false, 40.f), "teleport-sized jump is a cut");
+    check(!fsr2HistoryCut(true, 1280, 720, 1280, 720, false, kFsr2CameraCutMeters), "jump at the limit keeps history");
+
     printf("FSR2_HELPERS %s checks=%d\n", failed ? "FAIL" : "PASS", checks);
     return failed ? 1 : 0;
 }

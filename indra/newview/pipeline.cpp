@@ -885,14 +885,11 @@ void LLPipeline::beginFsr2Frame()
         return;
     }
 
-    // a new render size, a region shift (agent coordinates move) or a teleport-sized jump leaves no usable previous frame
-    constexpr F32 FSR2_CAMERA_CUT_METERS = 32.f;
+    // the screen targets were resized for this frame's render scale before this call (display()), so a scale change
+    // is seen here: a new render size, a region shift or a teleport-sized jump leaves no usable previous frame
     const LLVector3 origin = LLViewerCamera::getInstance()->getOrigin();
-    if (render_w != mFsr2RenderW || render_h != mFsr2RenderH || gShiftFrame ||
-        dist_vec(origin, mFsr2LastOrigin) > FSR2_CAMERA_CUT_METERS)
-    {
-        mFsr2PrevValid = false;
-    }
+    mFsr2PrevValid = !fsr2HistoryCut(mFsr2PrevValid, render_w, render_h, mFsr2RenderW, mFsr2RenderH, gShiftFrame,
+                                     dist_vec(origin, mFsr2LastOrigin));
     mFsr2RenderW = render_w;
     mFsr2RenderH = render_h;
     mFsr2LastOrigin = origin;

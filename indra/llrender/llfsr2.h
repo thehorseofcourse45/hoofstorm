@@ -74,6 +74,17 @@ inline void fsr2JitterOffset(int phase, int count, float& outX, float& outY)
     outY = fsr2Halton(index, 3) - 0.5f;
 }
 
+// Camera moves larger than this in one displayed frame (teleports) are treated as cuts.
+constexpr float kFsr2CameraCutMeters = 32.0f;
+
+// The previous frame cannot be reprojected: no history, a new render size, a region shift (agent coordinates moved)
+// or a teleport-sized camera jump. The caller then sets the previous view-projection to the current one.
+inline bool fsr2HistoryCut(bool hadHistory, unsigned renderW, unsigned renderH, unsigned lastW, unsigned lastH,
+                           bool regionShift, float cameraJumpMeters)
+{
+    return !hadHistory || renderW != lastW || renderH != lastH || regionShift || cameraJumpMeters > kFsr2CameraCutMeters;
+}
+
 // Column-major projection offset (a translation in NDC) applying a sub-pixel jitter given in render pixels.
 inline void fsr2JitterProjection(float jx, float jy, float renderW, float renderH, float out[16])
 {
