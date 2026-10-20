@@ -12,7 +12,8 @@ What is vendored
 ----------------
 Only the upscaler. Frame interpolation, optical flow, the frame-interpolation swapchain, the DX12 backend, the other effects
 (FSR1/FSR2 old component, CAS, SPD host side, ...), the FFX API DLL layer (ffx-api/), samples and the framework are NOT here.
-Paths mirror sdk/ in the SDK repository. Files are byte-identical to the tag except ffx/src/backends/vk/ffx_vk.cpp (see below).
+Paths mirror sdk/ in the SDK repository. Files are byte-identical to the tag except ffx/src/backends/vk/ffx_vk.cpp and
+ffx_fsr3upscaler_callbacks_glsl.h (see below).
 
 Sizes in bytes. 55 files from AMD (1,207,710 bytes) plus tools/ffx_blobgen.cpp (ours).
 
@@ -27,7 +28,7 @@ Sizes in bytes. 55 files from AMD (1,207,710 bytes) plus tools/ffx_blobgen.cpp (
     1682  include/FidelityFX/gpu/ffx_core_portability.h
    66494  include/FidelityFX/gpu/fsr1/ffx_fsr1.h
     8766  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_accumulate.h
-   26949  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_callbacks_glsl.h
+   26951  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_callbacks_glsl.h
    30705  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_callbacks_hlsl.h
    13353  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_common.h
     5729  include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_debug_view.h
@@ -85,6 +86,9 @@ Local modifications
    the extensions the GPU LISTS, not the ones the app enabled, and then called the null pointer (crash in ffxFsr3UpscalerContextCreate).
 3. src/backends/vk/ffx_vk.cpp, CreatePipelineVK: a missing shader blob (permutation we do not build) returns
    FFX_ERROR_INVALID_ARGUMENT instead of asserting; with asserts compiled out it dereferenced a null blob.
+4. include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_callbacks_glsl.h: rw_luma_history is declared rgba16f, not rgba8. The
+   image is R16G16B16A16_FLOAT (LUMA_HISTORY_1/2 in ffx_fsr3upscaler.cpp); rgba8 made every store undefined and the validation
+   layer warned on each accumulate dispatch (found by tests/fsr2_test.cpp, the first real dispatch).
 Not from AMD, written here: tools/ffx_blobgen.cpp (below). AMD's src/backends/shared/ffx_shader_blobs.cpp and blob_accessors/ are
 not vendored; ffxGetPermutationBlobByIndex() and ffxIsWave64() come from the generated ffx_fsr3upscaler_blobs.cpp.
 
@@ -135,5 +139,10 @@ Gotchas found while bringing it up:
   manages its own descriptor sets, samplers and a constant-buffer ring inside the scratch memory (FFX_MAX_QUEUED_FRAMES frames).
   It records its own barriers (addBarrier/flushBarriers, plain vkCmdPipelineBarrier, no synchronization2) from the
   FfxResourceStates given to ffxGetResourceVK, so the caller must pass the true current state of every image it hands in
-  and put layouts back afterwards if it needs a different one (not yet exercised: the context test only creates and destroys).
+  and put layouts back afterwards if it needs a different one. Its barriers start from that state (src access = SHADER_READ), so
+  the caller must make earlier writes visible first; VulkanFsrUpscaler::dispatch does that (vkfsr2.cpp).
+* The upscaler does not allocate dilatedDepth, dilatedMotionVectors and reconstructedPrevNearestDepth: the dispatch description
+  takes them from the caller (ffxFsr3UpscalerGetSharedResourceDescriptions). VulkanFsrUpscaler creates them through a second
+  backend context (FFX_EFFECT_SHAREDRESOURCES), so the scratch memory is sized for FFX_FSR3UPSCALER_CONTEXT_COUNT + 1.
+* FfxFsr3UpscalerContext is 512 KB (FFX_SDK_DEFAULT_CONTEXT_SIZE uint32s): keep it off the stack.
 * ffxFsr3UpscalerContextCreate compiles 11 compute pipelines (about 17 MB of VRAM at 640x360 -> 960x540).

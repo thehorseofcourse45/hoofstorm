@@ -1,5 +1,13 @@
 # Vulkan project notes
 
+## Current status: FSR 3.1 temporal upscaler, wrapper dispatches, 2026-10-19
+
+- Spec `docs/superpowers/specs/2026-10-19-fsr-temporal-upscaler-design.md`. SDK vendored under `indra/llrender/vulkan/ffx/` (see its README); pure helpers in `llfsr2.h`.
+- `VulkanFsrUpscaler` (`vkfsr2.h/.cpp`, in `llvulkan`): create/resize/dispatch/destroy, FP16 shaders when `VkContext::fp16Math`. Takes `Fsr2Image` (VkImage, format, size, current layout), not image views: the SDK makes its own views. After a dispatch the inputs and the output are in SHADER_READ_ONLY_OPTIMAL. VRAM in `VkContext::upscalerMemBytes` (20 MB at 640x360 to 960x540), test hook `VkContext::failFsr2Create`.
+- Test `llvulkan_fsr2_test` (21 checks, `FSR2_WRAPPER PASS`): 8 jittered dispatches plus a reset frame, FP16 and FP32, output read back, zero validation messages.
+- Fixed in the SDK: `rw_luma_history` was declared `rgba8` in GLSL for an RGBA16F image (validation warning on every dispatch).
+- Next: viewer integration (renderFinalize, jitter, motion vectors, reactive mask, settings, fallback); add `upscaler=` to the VRAM-by-owner log line.
+
 ## Current status: VRAM growth fixed and instrumented, 2026-10-19
 
 - Cause of the earlier `vkAllocateMemory` VkResult -2 crash: VRAM exhaustion (not FSR). 16 MiB slab blocks were never released.

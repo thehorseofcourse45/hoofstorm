@@ -38,7 +38,7 @@ set(FFX_SOURCES
     ffx/src/backends/vk/ffx_vk.cpp
     ffx/src/components/fsr3upscaler/ffx_fsr3upscaler.cpp
     ffx/src/shared/ffx_assert.cpp ffx/src/shared/ffx_breadcrumbs_list.cpp ffx/src/shared/ffx_message.cpp ffx/src/shared/ffx_object_management.cpp)
-target_sources(llvulkan PRIVATE ${FFX_SOURCES} "${FFX_BLOBS}")
+target_sources(llvulkan PRIVATE ${FFX_SOURCES} "${FFX_BLOBS}" vkfsr2.cpp)
 target_include_directories(llvulkan PUBLIC "${FFX_DIR}/include")
 target_include_directories(llvulkan PRIVATE
     "${FFX_DIR}/src/shared" "${FFX_DIR}/src/backends/shared" "${FFX_DIR}/src/components" "${FFX_DIR}/src/backends/vk")
@@ -91,3 +91,8 @@ target_link_libraries(llvulkan_frames_test PRIVATE llvulkan)
 add_executable(llvulkan_fsr2_context_test EXCLUDE_FROM_ALL tests/fsr2_context_test.cpp)
 target_include_directories(llvulkan_fsr2_context_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_SOURCE_DIR}/../../llcommon")
 target_link_libraries(llvulkan_fsr2_context_test PRIVATE llvulkan)
+
+# VulkanFsrUpscaler: synthetic jittered dispatches with output readback on a validated headless device.
+add_executable(llvulkan_fsr2_test EXCLUDE_FROM_ALL tests/fsr2_test.cpp)
+target_include_directories(llvulkan_fsr2_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_SOURCE_DIR}/../../llcommon")
+target_link_libraries(llvulkan_fsr2_test PRIVATE llvulkan)

@@ -283,7 +283,9 @@ struct VkContext
     uint64_t bufferAllocations = 0, bufferPoolHits = 0, bufferPoolEvictions = 0;
     // Live vkAllocateMemory bytes by owner, for the VulkanPacing log; atomic because the reaper thread frees.
     std::atomic<int64_t> textureMemBytes{0}, targetMemBytes{0}, hostBufferMemBytes{0}, stagingMemBytes{0};
+    std::atomic<int64_t> upscalerMemBytes{0};   // VulkanFsrUpscaler: SDK history, internal targets and pipelines
     uint32_t failMemoryTypes = 0;           // test hook: bit i makes slab-block allocation from memory type i fail
+    bool failFsr2Create = false;            // test hook: VulkanFsrUpscaler::create/resize fail as if the SDK had refused
     uint64_t bufferMemoryAllocations = 0;   // vkAllocateMemory calls behind vertex/index storage
     uint64_t textureUploadAllocations = 0, textureRingUploads = 0;
     std::chrono::steady_clock::time_point recordingStarted;
