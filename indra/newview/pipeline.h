@@ -768,6 +768,7 @@ public:
     LLRenderTarget          mFXAAMap;
     LLRenderTarget          mFSRMap;    // window-sized EASU output while FSR is active
     LLRenderTarget          mFSR2MotionMap; // FSR 2: render-size RG16F camera motion (UV units, one mip level) while isFsr2Active()
+    LLRenderTarget          mFSR2ReactiveMap; // FSR 2: render-size R8 reactive mask (0..0.9, one mip level) while isFsr2Active()
     LLRenderTarget          mSMAABlendBuffer;
 
     // render ui to buffer target
@@ -1135,6 +1136,11 @@ public:
     // depth of depthSource with mCurViewProjUnjittered and mPrevViewProj; zero on a camera cut. Does nothing without the
     // program or a complete dest. Call after endFsr2Frame (Task 9: at the start of renderFinalize).
     void generateFsr2Motion(LLRenderTarget* depthSource, LLRenderTarget* dest);
+    // Reactive mask for FSR 2 into dest (mFSR2ReactiveMap) from the G-buffer of mRT->deferredScreen: kFsr2ReactiveMax where
+    // normal.w equals kFsr2ReactiveFlag, exactly 0 elsewhere (v1 marks nothing: no G-buffer code exists for avatars or
+    // alpha-blended surfaces, see fsr2ReactiveF.glsl). Does nothing without the program or a complete dest. Task 9 calls it
+    // next to generateFsr2Motion.
+    void generateFsr2Reactive(LLRenderTarget* dest);
     glm::mat4 mPrevViewProj = glm::mat4(1.f);           // previous displayed frame's unjittered projection * modelview
     glm::mat4 mCurViewProjUnjittered = glm::mat4(1.f);  // this frame's unjittered projection * modelview
     int mFsr2Phase = 0;                                 // jitter phase, advanced once per displayed frame

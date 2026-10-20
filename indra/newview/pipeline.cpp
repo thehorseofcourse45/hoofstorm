@@ -324,6 +324,8 @@ static LLStaticHashedString sInvViewProjCur("inv_view_proj_cur");
 static LLStaticHashedString sViewProjCur("view_proj_cur");
 static LLStaticHashedString sViewProjPrev("view_proj_prev");
 static LLStaticHashedString sMotionYSign("motion_y_sign");
+static LLStaticHashedString sReactiveFlag("reactive_flag");
+static LLStaticHashedString sReactiveValue("reactive_value");
 static LLStaticHashedString sAmbiance("ambiance");
 static LLStaticHashedString sAlphaScale("alpha_scale");
 static LLStaticHashedString sNormMat("norm_mat");
@@ -983,11 +985,36 @@ void LLPipeline::generateFsr2Motion(LLRenderTarget* depthSource, LLRenderTarget*
     gDeferredFSR2MotionProgram.uniform1f(sMotionYSign, kFsr2MotionYSign);
     {
         LLGLDepthTest depth_test(GL_FALSE);
+        LLGLDisable blend(GL_BLEND);
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
     gDeferredFSR2MotionProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
     gDeferredFSR2MotionProgram.unbind();
+    dest->flush();
+}
+
+void LLPipeline::generateFsr2Reactive(LLRenderTarget* dest)
+{
+    LL_PROFILE_GPU_ZONE("FSR 2 reactive");
+    LLRenderTarget* gbuffer = &mRT->deferredScreen;
+    if (!dest || !dest->isComplete() || !gbuffer->getTexture(2) || !gDeferredFSR2ReactiveProgram.isComplete())
+    {
+        return;
+    }
+    dest->bindTarget();
+    gDeferredFSR2ReactiveProgram.bind();
+    gDeferredFSR2ReactiveProgram.bindTexture(LLShaderMgr::NORMAL_MAP, gbuffer, false, LLTexUnit::TFO_POINT, 2); // frag_data[2]
+    gDeferredFSR2ReactiveProgram.uniform1f(sReactiveFlag, kFsr2ReactiveFlag);
+    gDeferredFSR2ReactiveProgram.uniform1f(sReactiveValue, kFsr2ReactiveMax);
+    {
+        LLGLDepthTest depth_test(GL_FALSE);
+        LLGLDisable blend(GL_BLEND);
+        mScreenTriangleVB->setBuffer();
+        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    }
+    gDeferredFSR2ReactiveProgram.unbindTexture(LLShaderMgr::NORMAL_MAP);
+    gDeferredFSR2ReactiveProgram.unbind();
     dest->flush();
 }
 
@@ -1303,6 +1330,22 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         else
         {
             mFSR2MotionMap.release();
+        }
+
+        // FSR 2 reactive mask: render size, R8, one mip level, only while the upscaler runs
+        if (isFsr2Active() && resX > 0 && resY > 0)
+        {
+            LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("FSR2ReactiveBuffer");
+            mFSR2ReactiveMap.setStorageImage(true);
+            if (!mFSR2ReactiveMap.allocate(resX, resY, GL_R8))
+            {
+                LL_WARNS() << "FSR 2 reactive mask target allocation failed" << LL_ENDL;
+                mFSR2ReactiveMap.release();
+            }
+        }
+        else
+        {
+            mFSR2ReactiveMap.release();
         }
 
         //water reflection texture (always needed as scratch space whether or not transparent water is enabled)
@@ -1647,6 +1690,7 @@ void LLPipeline::releaseGLBuffers()
     mFXAAMap.release();
     mFSRMap.release();
     mFSR2MotionMap.release();
+    mFSR2ReactiveMap.release();
 
     mUIScreen.release();
 

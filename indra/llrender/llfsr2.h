@@ -91,6 +91,14 @@ inline bool fsr2HistoryCut(bool hadHistory, unsigned renderW, unsigned renderH, 
 // if the in-world check shows vertical reprojection going the wrong way.
 constexpr float kFsr2MotionYSign = 1.0f;
 
+// Reactive mask (fsr2ReactiveF.glsl). kFsr2ReactiveMax is the value for marked pixels (the shader also clamps to it);
+// kFsr2ReactiveFlag is the G-buffer normal.w code to mark, negative for none. The G-buffer has no code for avatars or
+// alpha-blended surfaces, so v1 marks nothing (see the shader); an existing GBUFFER_FLAG_* value can be set here if the
+// in-world check shows ghosting on that class.
+constexpr float kFsr2ReactiveMax = 0.9f;
+constexpr float kFsr2ReactiveFlagNone = -1.0f;
+constexpr float kFsr2ReactiveFlag = kFsr2ReactiveFlagNone;
+
 // Column-major projection offset (a translation in NDC) applying a sub-pixel jitter given in render pixels.
 inline void fsr2JitterProjection(float jx, float jy, float renderW, float renderH, float out[16])
 {

@@ -665,7 +665,8 @@ static bool handleFSR2EnabledChanged(const LLSD& newvalue)
     LLPipeline::resetFSRDynamic();
     gResizeScreenTexture = true;
     // the FSR 2 programs are only built while the setting is on (Vulkan only)
-    if (gPipeline.isInit() && newvalue.asBoolean() && isVulkanRenderBackendActive() && !gDeferredFSR2MotionProgram.isComplete())
+    if (gPipeline.isInit() && newvalue.asBoolean() && isVulkanRenderBackendActive()
+        && (!gDeferredFSR2MotionProgram.isComplete() || !gDeferredFSR2ReactiveProgram.isComplete()))
     {
         LLViewerShaderMgr::instance()->setShaders();
     }

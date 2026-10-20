@@ -495,6 +495,115 @@ int main(int argc, char** argv)
                 textures.destroy(4, names);
                 VK_CHECK(vkDeviceWaitIdle(ctx.device));
             }
+            // FSR 2 reactive mask through the viewer's fsr2ReactiveF.glsl: a synthetic G-buffer normal target whose alpha holds the
+            // four GBUFFER_FLAG_* codes in repeating columns (0.0, 0.34, 0.67, 1.0), in both normal formats the viewer allocates
+            // (RGBA16 with HDR, RGB10_A2 without). The R8 mask must be exactly 0 everywhere with the pipeline's v1 flag (none), and
+            // 0.9 (clamped) on the marked code's columns, exactly 0 on the others, when a code is selected.
+            {
+                constexpr U32 RW = 64, RH = 48;
+                const float codes[4] = {0.0f, 0.34f, 0.67f, 1.0f};   // llshadermgr.cpp GBUFFER_FLAG_SKIP_ATMOS/HAS_ATMOS/HAS_PBR/HAS_HDRI
+                auto makeImage = [&](U32 internal, U32 format, U32 type, bool fsrImage) {
+                    U32 name; textures.generate(1, &name);
+                    if (fsrImage) textures.setStorageImage(name);
+                    textures.bind(glc::TEXTURE_2D, name);
+                    textures.image2D(glc::TEXTURE_2D, 0, internal, RW, RH, format, type, nullptr);
+                    textures.setFilter(glc::TEXTURE_2D, glc::NEAREST, glc::NEAREST);
+                    return name;
+                };
+                const U32 reactiveTex = makeImage(glc::R8, glc::RED, glc::UNSIGNED_BYTE, true);
+                VulkanTextureBackend::ImageInfo info;
+                check(textures.imageInfo(reactiveTex, info) && info.levels == 1 && info.format == VK_FORMAT_R8_UNORM,
+                      "reactive target is R8 with one level");
+                U32 reactiveFb = fb.createFramebuffer(); fb.bind(reactiveFb); fb.attach(reactiveFb, 0x8CE0, glc::TEXTURE_2D, reactiveTex, 0);
+                fb.bind(0);
+
+                auto build = [&](const std::string& vs, const std::string& fs, const char* label) {
+                    U32 p = shaders.createProgram();
+                    const char* src[] = {vs.c_str(), fs.c_str()};
+                    for (int i = 0; i < 2; ++i)
+                    {
+                        U32 object = shaders.createObject(i ? 0x8B30 : 0x8B31); std::string log;
+                        const bool ok = shaders.compileObject(object, 1, &src[i], log);
+                        if (!ok) printf("%s\n", log.c_str());
+                        check(ok, label); shaders.attachObject(p, object);
+                    }
+                    shaders.bindAttribLocation(p, 0, "position");
+                    check(shaders.link(p), label);
+                    return p;
+                };
+                const U32 gbufferProg = build("#version 330\nin vec4 position;\nvoid main(){gl_Position=vec4(position.xy,0.0,1.0);}",
+                                              "#version 330\nout vec4 color;\nuniform vec4 codes;\n"
+                                              "void main(){int band=int(gl_FragCoord.x)%4;color=vec4(0.5,0.5,0.0,codes[band]);}",
+                                              "synthetic G-buffer program");
+                std::string vertexBody, fragmentBody;
+                check(readViewerShader("postDeferredNoTCV.glsl", vertexBody) && readViewerShader("fsr2ReactiveF.glsl", fragmentBody),
+                      "viewer reactive shaders readable");
+                const U32 reactiveProg = build("#version 400\n#define VERTEX_SHADER 1\n" + vertexBody,
+                                               "#version 400\n#define FRAGMENT_SHADER 1\n" + fragmentBody, "fsr2ReactiveF.glsl program");
+                const S32 locNormal = shaders.getUniformLocation(reactiveProg, "normalMap");
+                const S32 locFlag = shaders.getUniformLocation(reactiveProg, "reactive_flag");
+                const S32 locValue = shaders.getUniformLocation(reactiveProg, "reactive_value");
+
+                std::vector<float> mask(RW * RH * 4);
+                auto runReactive = [&](U32 gbufferFb, U32 normalTex, float flag, float value) {
+                    check(ctx.beginFrame(clear), "reactive frame acquired");
+                    fb.bind(gbufferFb); state.setViewport(0, 0, RW, RH);
+                    shaders.use(gbufferProg);
+                    shaders.uniform4f(gbufferProg, shaders.getUniformLocation(gbufferProg, "codes"), codes[0], codes[1], codes[2], codes[3]);
+                    vb.drawArrays(0, 6, 3);
+                    fb.bind(reactiveFb); fb.setClearColor(1, 1, 1, 1); fb.clear(0x4000);   // a skipped pass leaves 255
+                    shaders.use(reactiveProg);
+                    textures.activateUnit(0); textures.bind(glc::TEXTURE_2D, normalTex);
+                    shaders.uniform1i(reactiveProg, locNormal, 0);
+                    shaders.uniform1f(reactiveProg, locFlag, flag);
+                    shaders.uniform1f(reactiveProg, locValue, value);
+                    vb.drawArrays(0, 6, 3);
+                    fb.readPixels(0, 0, RW, RH, glc::RGBA, glc::FLOAT, mask.data());
+                    fb.bind(0); ctx.endFrame(false);
+                };
+                // marked: 0.9 to within one R8 step where the column's code is `flag` (the GPU rounds 229.5 either way; an unclamped
+                // 1.0 would read 255); everything else must be exactly 0
+                auto score = [&](float flag, U32& marked, U32& wrong) {
+                    marked = wrong = 0;
+                    for (U32 y = 0; y < RH; ++y)
+                        for (U32 x = 0; x < RW; ++x)
+                        {
+                            const float v = mask[(y * RW + x) * 4];
+                            const bool flagged = flag >= 0.f && std::fabs(codes[x % 4] - flag) < 0.1f;
+                            if (flagged && std::fabs(v - kFsr2ReactiveMax) <= 1.f / 255.f) ++marked;
+                            else if (flagged || v != 0.f) ++wrong;
+                        }
+                };
+                const struct { U32 internal, format, type; const char* name; } normalFormats[] = {
+                    {glc::RGBA16, glc::RGBA, glc::UNSIGNED_BYTE, "RGBA16"}, {glc::RGB10_A2, glc::RGBA, glc::UNSIGNED_BYTE, "RGB10_A2"}};
+                U32 normalTexs[2], gbufferFbs[2];
+                for (int f = 0; f < 2; ++f)
+                {
+                    const auto& nf = normalFormats[f];
+                    const U32 normalTex = normalTexs[f] = makeImage(nf.internal, nf.format, nf.type, false);
+                    const U32 gbufferFb = gbufferFbs[f] = fb.createFramebuffer();
+                    fb.bind(gbufferFb); fb.attach(gbufferFb, 0x8CE0, glc::TEXTURE_2D, normalTex, 0); fb.bind(0);
+                    U32 marked = 0, wrong = 0;
+                    // 1. the pipeline's v1 values: no G-buffer code is marked, the mask is exactly 0
+                    runReactive(gbufferFb, normalTex, kFsr2ReactiveFlag, kFsr2ReactiveMax);
+                    score(kFsr2ReactiveFlag, marked, wrong);
+                    printf("  reactive %s, v1 flag %g: %u marked, %u non-zero\n", nf.name, kFsr2ReactiveFlag, marked, wrong);
+                    check(kFsr2ReactiveFlag < 0.f && marked == 0 && wrong == 0, "reactive v1 (no flag) is exactly 0 everywhere");
+                    // 2. the HAS_PBR code selected and a value above the cap: 0.9 on its columns, exactly 0 on the other three codes
+                    runReactive(gbufferFb, normalTex, codes[2], 1.0f);
+                    score(codes[2], marked, wrong);
+                    printf("  reactive %s, flag %.2f value 1.0: %u of %u marked (column 2 reads %.6f = %ld/255), %u wrong\n", nf.name,
+                           codes[2], marked, RW * RH / 4, mask[2 * 4], std::lround(mask[2 * 4] * 255.f), wrong);
+                    check(marked == RW * RH / 4 && wrong == 0, "reactive flagged code is 0.9 (clamped), others exactly 0");
+                }
+
+                shaders.use(0);
+                for (U32 p : {gbufferProg, reactiveProg}) shaders.deleteProgramAndObjects(p);
+                for (U32 f : {reactiveFb, gbufferFbs[0], gbufferFbs[1]}) fb.destroyFramebuffer(f);
+                const U32 names[] = {reactiveTex, normalTexs[0], normalTexs[1]};
+                textures.destroy(3, names);
+                VK_CHECK(vkDeviceWaitIdle(ctx.device));
+            }
             check(ctx.validationErrors == 0 && ctx.validationWarnings == 0, "zero Vulkan validation messages");
         }
         printf("FRAMES_CHECKS=%u PASS\n", checks);

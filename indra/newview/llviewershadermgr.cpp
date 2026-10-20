@@ -218,6 +218,7 @@ LLGLSLShader            gDeferredPostNoDoFNoiseProgram;
 LLGLSLShader            gDeferredFSREasuProgram;
 LLGLSLShader            gDeferredFSRRcasProgram;
 LLGLSLShader            gDeferredFSR2MotionProgram;   // FSR 2 camera motion vectors (Vulkan, while FSR 2 is on)
+LLGLSLShader            gDeferredFSR2ReactiveProgram; // FSR 2 reactive mask (Vulkan, while FSR 2 is on)
 LLGLSLShader            gDeferredWLSkyProgram;
 LLGLSLShader            gEnvironmentMapProgram;
 LLGLSLShader            gDeferredWLCloudProgram;
@@ -1187,6 +1188,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFSREasuProgram.unload();
         gDeferredFSRRcasProgram.unload();
         gDeferredFSR2MotionProgram.unload();
+        gDeferredFSR2ReactiveProgram.unload();
         gCASLegacyGammaProgram.unload();
         gEnvironmentMapProgram.unload();
         gDeferredWLSkyProgram.unload();
@@ -2940,6 +2942,19 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             // optional like FSR 1.0; generateFsr2Motion skips an incomplete program (the fallback to FSR 1.0 is Task 10)
             LL_WARNS("ShaderLoading") << "FSR 2 motion vector shader failed to compile" << LL_ENDL;
             gDeferredFSR2MotionProgram.unload();
+        }
+
+        gDeferredFSR2ReactiveProgram.mName = "Deferred FSR 2 Reactive Mask Shader";
+        gDeferredFSR2ReactiveProgram.mShaderFiles.clear();
+        gDeferredFSR2ReactiveProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gDeferredFSR2ReactiveProgram.mShaderFiles.push_back(make_pair("deferred/fsr2ReactiveF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFSR2ReactiveProgram.clearPermutations();
+        gDeferredFSR2ReactiveProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gDeferredFSR2ReactiveProgram.createShader())
+        {
+            // optional like the motion pass; generateFsr2Reactive skips an incomplete program (the fallback is Task 10)
+            LL_WARNS("ShaderLoading") << "FSR 2 reactive mask shader failed to compile" << LL_ENDL;
+            gDeferredFSR2ReactiveProgram.unload();
         }
     }
 

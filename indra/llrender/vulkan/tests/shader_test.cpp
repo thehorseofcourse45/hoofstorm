@@ -199,6 +199,41 @@ bool test_shaders(VkContext& ctx, VulkanRenderStateBackend& st, VulkanVertexBuff
             shaders.deleteProgramAndObjects(motion);
         }
     }
+
+    // FSR 2 reactive mask: the viewer's fsr2ReactiveF.glsl, the same way, with the uniforms LLPipeline::generateFsr2Reactive sets.
+    {
+        std::string vertexBody, fragmentBody;
+        const bool found = readViewerShader("postDeferredNoTCV.glsl", vertexBody) && readViewerShader("fsr2ReactiveF.glsl", fragmentBody);
+        expect("fsr2ReactiveF.glsl and its vertex shader are readable", found);
+        if (found)
+        {
+            const std::string vertexSource = "#version 400\n#define VERTEX_SHADER 1\n" + vertexBody;
+            const std::string fragmentSource = "#version 400\n#define FRAGMENT_SHADER 1\n" + fragmentBody;
+            const char* stageSources[] = {vertexSource.c_str(), fragmentSource.c_str()};
+            U32 reactive = shaders.createProgram();
+            bool compiled = true;
+            for (int i = 0; i < 2; ++i)
+            {
+                U32 object = shaders.createObject(i ? 0x8B30 : 0x8B31);
+                std::string log;
+                if (!shaders.compileObject(object, 1, &stageSources[i], log))
+                {
+                    compiled = false;
+                    fprintf(stderr, "%s\n", log.c_str());
+                }
+                shaders.attachObject(reactive, object);
+            }
+            expect("fsr2ReactiveF.glsl compiles", compiled);
+            shaders.bindAttribLocation(reactive, 0, "position");
+            const bool reactiveLinked = compiled && shaders.link(reactive);
+            expect("FSR 2 reactive program links", reactiveLinked);
+            bool uniforms = reactiveLinked;
+            for (const char* name : {"normalMap", "reactive_flag", "reactive_value"})
+                uniforms = reactiveLinked && shaders.getUniformLocation(reactive, name) >= 0 && uniforms;
+            expect("FSR 2 reactive program exposes its uniforms", uniforms);
+            shaders.deleteProgramAndObjects(reactive);
+        }
+    }
     printf("shader geometry/cache: %d checks, %s\n",checks,passed?"PASS":"FAIL");
     return passed;
 }
