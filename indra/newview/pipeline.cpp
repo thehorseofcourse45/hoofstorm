@@ -1231,6 +1231,18 @@ F32 LLPipeline::getRenderScale()
 
 std::string LLPipeline::getFSRStatusText() const
 {
+    if (isFsr2Active() && mRT)
+    {
+        // "FSR 2 Quality, 67% (1280x720)": the mode, the scale and the render size the scene is drawn at. With dynamic scaling the
+        // mode is the lowest scale, the percentage the current one.
+        static const char* const kMode[5] = { "Native AA", "Quality", "Balanced", "Performance", "Ultra Performance" };
+        const char* mode = kMode[RenderFSR2Quality > 4 ? 4 : RenderFSR2Quality];
+        const S32 percent = (S32)(getRenderScale() * 100.f + 0.5f);
+        const S32 w = (S32)mRT->screen.getWidth();
+        const S32 h = (S32)mRT->screen.getHeight();
+        return RenderFSR2Dynamic ? llformat("FSR 2 dynamic (min %s), %d%% (%dx%d)", mode, percent, w, h)
+                                 : llformat("FSR 2 %s, %d%% (%dx%d)", mode, percent, w, h);
+    }
     if (!fsrActive())
     {
         return std::string();

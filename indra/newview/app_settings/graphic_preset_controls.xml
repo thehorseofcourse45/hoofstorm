@@ -41,6 +41,10 @@
 		<string>RenderFSRCustomScale</string>
 		<string>RenderFSRQuality</string>
 		<string>RenderFSRSharpness</string>
+		<string>RenderFSR2Enabled</string>
+		<string>RenderFSR2Quality</string>
+		<string>RenderFSR2Sharpness</string>
+		<string>RenderFSR2Dynamic</string>
 		<string>RenderGlow</string>
 		<string>RenderGlowHDR</string>
 		<string>RenderGlowIterations</string>
