@@ -60,6 +60,7 @@ public:
     // Frees the upscaler and its history, sets upscalerMemBytes to 0 and clears the failure state.
     void releaseFsr2();
     bool fsr2Failed() const { return mFsr2Failed; }
+    bool fsr2LastOk() const { return mFsr2LastOk; }     // the last dispatchFsr2 call returned true
 
 private:
     struct Attachment { U32 texture = 0, target = 0; S32 level = 0; };
@@ -103,4 +104,5 @@ private:
     uint64_t mFsr2Serial = ~0ull;       // VkContext::cmdSerial of the recording that holds the last dispatch
     int mFsr2Failures = 0;              // in a row
     std::atomic<bool> mFsr2Failed{false};     // read from the viewer thread while the render thread runs
+    std::atomic<bool> mFsr2LastOk{false};     // same
 };

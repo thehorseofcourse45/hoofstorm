@@ -280,11 +280,15 @@ int main(int argc, char** argv)
             const float clear[4]={0,0,0,1};
             bool ok=beginRenderBackendFrame(clear) && dispatchRenderBackendFsr2(p) && frame();
             waitRenderBackendIdle();
-            ok=ok && !isRenderBackendFsr2Failed();
+            // set by the backend (the render thread when it is on) only when the dispatch was recorded and the SDK accepted it
+            ok=ok && lastRenderBackendFsr2Succeeded() && !isRenderBackendFsr2Failed();
+            RenderBackendFsr2Params larger=p;larger.renderW=800;larger.renderH=600;     // render size above the display size
+            const bool refused=beginRenderBackendFrame(clear) && !dispatchRenderBackendFsr2(larger) && frame();
             releaseRenderBackendFsr2();
             tex.destroy(4,names);
             waitRenderBackendIdle();
-            expect("FSR 2 upscale through the global entry; drawing and presentation go on after it",ok);
+            expect("FSR 2 upscale through the global entry was accepted by the backend; drawing and presentation go on after it",ok);
+            expect("FSR 2 render size above display size answers false, render thread on or off",refused);
         }
         if(argc>1 && !strcmp(argv[1],"--pacing"))
         {

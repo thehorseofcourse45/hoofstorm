@@ -492,10 +492,12 @@ void VulkanFramebufferBackend::releaseFsr2()
     mCtx->upscalerMemBytes = 0;
     mFsr2Failures = 0;
     mFsr2Failed = false;
+    mFsr2LastOk = false;
 }
 
 bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
 {
+    mFsr2LastOk = false;
     // not failures: no frame (minimized), or a size the caller has to skip anyway
     if (mFsr2Failed || !mCtx->recording) return false;
     if (!p.renderW || !p.renderH || !p.displayW || !p.displayH || p.renderW > p.displayW || p.renderH > p.displayH) return false;
@@ -563,5 +565,6 @@ bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &after, 0, nullptr, 0, nullptr);
     if (!ok) return fsr2Fail("the SDK refused the dispatch");
     mFsr2Failures = 0;
+    mFsr2LastOk = true;
     return true;
 }

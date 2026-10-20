@@ -75,6 +75,9 @@ struct RenderBackendFsr2Params
 bool dispatchRenderBackendFsr2(const RenderBackendFsr2Params& params);
 void releaseRenderBackendFsr2();     // frees the upscaler and its history, VRAM count to 0, failure state cleared
 bool isRenderBackendFsr2Failed();    // three dispatches in a row failed; nothing is attempted until releaseRenderBackendFsr2()
+// The last dispatch that reached the backend was recorded and accepted by the SDK. With the render thread on, read it after
+// waitRenderBackendIdle() (tests).
+bool lastRenderBackendFsr2Succeeded();
 // Call after generating the texture name and before defining its storage: one mip level, plus storage usage where the format
 // allows it (for FSR 2 images). No effect with OpenGL.
 void setRenderBackendStorageTexture(unsigned texture);

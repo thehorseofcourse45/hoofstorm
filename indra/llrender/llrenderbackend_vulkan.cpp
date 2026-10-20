@@ -796,7 +796,9 @@ bool dispatchRenderBackendFsr2(const RenderBackendFsr2Params& params)
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
     if (!sNative || sNative->framebuffers->fsr2Failed()) return false;
-    if (!params.renderW || !params.renderH || !params.displayW || !params.displayH) return false;
+    // the size checks dispatchFsr2 skips without counting a failure: made here too, so they answer false with the thread on
+    if (!params.renderW || !params.renderH || !params.displayW || !params.displayH ||
+        params.renderW > params.displayW || params.renderH > params.displayH) return false;
     if (sNative->thread)
     {
         // The texture state the checks need lives on the render thread: queue the work instead of waiting for its answer.
@@ -823,6 +825,13 @@ bool isRenderBackendFsr2Failed()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
     if (sNative) return sNative->framebuffers->fsr2Failed();     // atomic: set on the render thread when threaded
+#endif
+    return false;
+}
+bool lastRenderBackendFsr2Succeeded()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) return sNative->framebuffers->fsr2LastOk();     // atomic, as above
 #endif
     return false;
 }
