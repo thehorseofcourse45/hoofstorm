@@ -190,6 +190,7 @@ struct VkContext
 
     bool samplerAnisotropy = false;
     float maxAnisotropy = 1.0f;
+    float maxSamplerLodBias = 2.0f;     // device limit (2 is the minimum Vulkan guarantees)
     // FidelityFX upscaler compute needs: storage-image writes without a format whenever supported; its FP16 shader variants only
     // with fp16Math (shaderFloat16, shaderInt16 and the 16-bit buffer access features all enabled).
     bool fp16Math = false;

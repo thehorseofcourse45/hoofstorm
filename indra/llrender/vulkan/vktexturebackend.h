@@ -61,7 +61,8 @@ public:
     void setStorageImage(U32 name);
     // Texture LOD bias added to the samplers of sampled 2D textures that filter through mips (not render targets, cube maps or
     // depth-compare samplers), for the temporal upscaler: the scene renders below display size but textures should keep display
-    // detail. Rounded to 1/8 and clamped to the device limit; 0 gives the plain samplers back.
+    // detail. Rounded to 1/8 and clamped to the device limit; 0 gives the plain samplers back. Read per draw (the sampler is
+    // picked when a draw resolves its textures), so setting it around a group of draws biases only those draws.
     void setLodBias(F32 bias);
     F32 lodBias() const { return mLodBias; }
 

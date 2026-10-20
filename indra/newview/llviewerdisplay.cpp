@@ -1109,6 +1109,10 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         gGL.setColorMask(true, true);
 
+        // FSR 2: the texture LOD bias covers the main-scene geometry from here to endFsr2Frame (shadows and impostors above
+        // are already drawn without it)
+        gPipeline.beginFsr2SceneTextures();
+
         gPipeline.mRT->deferredScreen.bindTarget();
         if (gUseWireframe)
         {

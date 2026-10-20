@@ -329,6 +329,7 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantD
         VkPhysicalDeviceProperties dp;
         vkGetPhysicalDeviceProperties(phys, &dp);
         maxAnisotropy = dp.limits.maxSamplerAnisotropy;
+        maxSamplerLodBias = dp.limits.maxSamplerLodBias;
     }
     if (!supported2.features.imageCubeArray)
     {

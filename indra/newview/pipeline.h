@@ -1154,6 +1154,9 @@ public:
     // the setting toggled. Consumed by the next dispatch; camera cuts (mFsr2CameraCut) and a recreated swapchain (backend)
     // reset as well.
     void requestFsr2Reset() { mFsr2ResetPending = true; }
+    // Texture LOD bias bracket: display() calls this right before the main-scene geometry; endFsr2Frame (and beginFsr2Frame,
+    // the top of renderFinalize, any reallocation) sets it back to 0. Biased only for the jittered main scene of an upscaled frame.
+    void beginFsr2SceneTextures();
 private:
     // renderFinalize: motion, reactive (cleared once while v1 marks nothing), the upscale into mFSR2Map and the glow alpha
     // copied back. False, with mFSR2Map unused, when this frame takes the plain path (no jittered scene, sizes skipped,
@@ -1161,13 +1164,13 @@ private:
     bool renderFsr2Upscale();
     // Frees the backend upscaler (posted in order, before the targets it saw are freed) when one may exist.
     void releaseFsr2Upscaler();
-    void setFsr2LodBias(F32 bias);                      // applies the texture LOD bias when it changes
+    void setFsr2LodBias(F32 bias);                      // applies the texture LOD bias when it changes (posted in order)
     bool mFsr2ResetPending = true;
     bool mFsr2PostDisplaySize = false;                  // the FSR 2 targets exist and the post chain targets are display size
     bool mFsr2InputsSingleLevel = false;                // mMainRT.screen and its depth were made for the upscaler (one mip level)
     bool mFsr2Dispatched = false;                       // a dispatch was issued since the last release
     bool mFsr2ReactiveCleared = false;                  // mFSR2ReactiveMap holds the constant 0 mask
-    F32 mFsr2LodBias = 0.f;                             // texture LOD bias in effect for the upscaler (0: none)
+    F32 mFsr2LodBias = 0.f;                             // texture LOD bias in effect (0 outside the main-scene bracket)
     bool mFsr2SceneView = false;                        // between beginFsr2Frame and endFsr2Frame with FSR 2 active
     bool mFsr2PrevValid = false;                        // mCurViewProjUnjittered holds the last displayed frame
     U32 mFsr2RenderW = 0, mFsr2RenderH = 0;             // render size the history was made at

@@ -82,7 +82,8 @@ bool lastRenderBackendFsr2Succeeded();
 // allows it (for FSR 2 images). No effect with OpenGL.
 void setRenderBackendStorageTexture(unsigned texture);
 // Texture LOD bias for the temporal upscaler (fsr2MipBias), on sampled 2D textures that filter through mips; render targets,
-// cube maps and shadow samplers keep theirs. 0 is the plain state. Applied in order with the draws. No effect with OpenGL.
+// cube maps and shadow samplers keep theirs. 0 is the plain state. Applied in order with the draws, so the viewer sets it around
+// the jittered main-scene passes only (LLPipeline::beginFsr2SceneTextures / endFsr2Frame). No effect with OpenGL.
 void setRenderBackendTextureLodBias(float bias);
 
 bool renderQuerySupported(std::uint32_t target);

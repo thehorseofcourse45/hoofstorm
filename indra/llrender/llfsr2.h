@@ -43,6 +43,15 @@ inline float fsr2MipBias(float renderW, float displayW)
     return std::log2(renderW / displayW) - 1.0f;
 }
 
+// Texture LOD bias for one pass: fsr2MipBias only for the jittered main-scene geometry (G-buffer, lighting, forward alpha and
+// water) of a frame the upscaler handles; 0 for everything else (shadow maps, probe and mirror cube snapshots, impostors, HUD,
+// UI, previews, snapshots and plain-path frames), and for zero sizes.
+inline float fsr2SceneLodBias(bool jitteredMainScene, bool upscalerTargets, float renderW, float displayW)
+{
+    if (!jitteredMainScene || !upscalerTargets || renderW <= 0.0f || displayW <= 0.0f) return 0.0f;
+    return fsr2MipBias(renderW, displayW);
+}
+
 // The jitter phase after `phase`: wraps at `count`, never negative (a phase left over from a longer sequence wraps into range).
 inline int fsr2NextPhase(int phase, int count)
 {

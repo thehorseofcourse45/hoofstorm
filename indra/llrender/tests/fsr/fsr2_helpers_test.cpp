@@ -125,6 +125,12 @@ int main()
     check(!fsr2UseUpscaler(1, 0, 480, 1280, 720) && !fsr2UseUpscaler(0, 1280, 720, 0, 0), "a zero size (minimized) is skipped");
     check(!fsr2UseUpscaler(0, 1300, 720, 1280, 720) && !fsr2UseUpscaler(1, 640, 800, 1280, 720), "render above display on an axis is skipped");
 
+    // LOD bias only inside the jittered main scene of an upscaled frame
+    check(near(fsr2SceneLodBias(true, true, 640.f, 960.f), fsr2MipBias(640.f, 960.f), 1e-6f), "scene bias inside the bracket");
+    check(fsr2SceneLodBias(false, true, 640.f, 960.f) == 0.f, "no bias outside the jittered main scene (shadows, probes, UI)");
+    check(fsr2SceneLodBias(true, false, 640.f, 960.f) == 0.f, "no bias without the upscaler targets (plain path)");
+    check(fsr2SceneLodBias(true, true, 0.f, 960.f) == 0.f && fsr2SceneLodBias(true, true, 640.f, 0.f) == 0.f, "no bias for a zero size");
+
     // one Y decision: the jitter Y sign is the opposite of the motion Y sign, X is never flipped
     {
         float jx = 0, jy = 0;

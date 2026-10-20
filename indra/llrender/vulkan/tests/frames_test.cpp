@@ -892,10 +892,55 @@ int main(int argc, char** argv)
                 printf("  LOD bias: level %d plain, %d with -1, render target %d, %d restored\n", plain, biased, target, restored);
                 check(plain == 2 && biased == 1 && target == 2 && restored == 2,
                       "LOD bias moves sampled textures one level, leaves render targets, and 0 restores");
+
+                // The bracket as display() runs it, inside one recording: a pass before the main scene (shadow maps, impostors),
+                // the main scene with fsr2SceneLodBias set (beginFsr2SceneTextures), and a pass after endFsr2Frame set it back to
+                // 0 (post, HUD, UI). The bias is picked up per draw, so only the bracketed draw is biased. A frame without a
+                // jittered scene (snapshot, plain path) gets fsr2SceneLodBias 0.
+                U32 passTex[3], passFb[3];
+                for (int i = 0; i < 3; ++i)
+                {
+                    textures.generate(1, &passTex[i]); textures.bind(glc::TEXTURE_2D, passTex[i]);
+                    textures.image2D(glc::TEXTURE_2D, 0, glc::RGBA8, 4, 4, glc::RGBA, glc::UNSIGNED_BYTE, nullptr);
+                    passFb[i] = fb.createFramebuffer(); fb.bind(passFb[i]); fb.attach(passFb[i], 0x8CE0, glc::TEXTURE_2D, passTex[i], 0);
+                }
+                fb.bind(0);
+                const float sceneBias = fsr2SceneLodBias(true, true, 8.f, 16.f);           // half resolution: -2
+                const float plainFrameBias = fsr2SceneLodBias(false, true, 8.f, 16.f);     // no jittered scene: 0
+                auto bracketFrame = [&](float bias, int levels[3]) {
+                    check(ctx.beginFrame(clear), "LOD bias bracket frame acquired");
+                    shaders.use(lodProg); shaders.uniform1i(lodProg, shaders.getUniformLocation(lodProg, "tex"), 0);
+                    textures.activateUnit(0);
+                    for (int i = 0; i < 3; ++i)
+                    {
+                        textures.setLodBias(i == 1 ? bias : 0.f);       // bracket on for the scene pass only, off after it
+                        fb.bind(passFb[i]); state.setViewport(0, 0, 4, 4);
+                        textures.bind(glc::TEXTURE_2D, sampled);
+                        vb.drawArrays(0, 6, 3);
+                    }
+                    textures.setLodBias(0.f);
+                    for (int i = 0; i < 3; ++i)
+                    {
+                        uint8_t px[4]{}; fb.bind(passFb[i]); fb.readPixels(1, 1, 1, 1, glc::RGBA, glc::UNSIGNED_BYTE, px);
+                        levels[i] = int(px[0]) / 50;
+                    }
+                    fb.bind(0); ctx.endFrame(false);
+                };
+                int upscaled[3], plainFrame[3];
+                bracketFrame(sceneBias, upscaled);
+                bracketFrame(plainFrameBias, plainFrame);
+                printf("  LOD bias bracket (bias %.2f): before %d, scene %d, after %d; plain-path frame %d %d %d; bias now %.2f\n", sceneBias,
+                       upscaled[0], upscaled[1], upscaled[2], plainFrame[0], plainFrame[1], plainFrame[2], textures.lodBias());
+                check(sceneBias == -2.f && upscaled[0] == 2 && upscaled[1] == 0 && upscaled[2] == 2 && textures.lodBias() == 0.f,
+                      "LOD bias applies only to draws inside the scene bracket of one recording, 0 before and after");
+                check(plainFrameBias == 0.f && plainFrame[0] == 2 && plainFrame[1] == 2 && plainFrame[2] == 2,
+                      "a frame without a jittered main scene is never biased");
+
                 shaders.use(0); shaders.deleteProgramAndObjects(lodProg);
                 fb.destroyFramebuffer(probeFb); fb.destroyFramebuffer(targetFb);
-                const U32 names[] = {sampled, targetTex, probeTex};
-                textures.destroy(3, names);
+                for (int i = 0; i < 3; ++i) fb.destroyFramebuffer(passFb[i]);
+                const U32 names[] = {sampled, targetTex, probeTex, passTex[0], passTex[1], passTex[2]};
+                textures.destroy(6, names);
                 VK_CHECK(vkDeviceWaitIdle(ctx.device));
             }
             check(ctx.validationErrors == 0 && ctx.validationWarnings == 0, "zero Vulkan validation messages");

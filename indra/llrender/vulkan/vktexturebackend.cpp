@@ -1262,9 +1262,7 @@ F32 VulkanTextureBackend::biasFor(const Tex& t) const
 
 void VulkanTextureBackend::setLodBias(F32 bias)
 {
-    VkPhysicalDeviceProperties props;
-    vkGetPhysicalDeviceProperties(mCtx->phys, &props);
-    const F32 limit = props.limits.maxSamplerLodBias;
+    const F32 limit = mCtx->maxSamplerLodBias;     // set per frame by the upscaler's bracket: no device query here
     // a fixed step keeps the sampler cache small when dynamic scaling moves the bias
     mLodBias = std::round(std::min(std::max(bias, -limit), limit) * 8.f) / 8.f;
 }

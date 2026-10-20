@@ -880,6 +880,7 @@ bool LLPipeline::isFsr2Active()
 
 void LLPipeline::beginFsr2Frame()
 {
+    setFsr2LodBias(0.f);    // every frame starts without the texture LOD bias
     const U32 render_w = mMainRT.screen.getWidth();
     const U32 render_h = mMainRT.screen.getHeight();
     mFsr2SceneJittered = false;
@@ -912,8 +913,18 @@ void LLPipeline::beginFsr2Frame()
     }
 }
 
+void LLPipeline::beginFsr2SceneTextures()
+{
+    // texture detail for the display resolution (AMD: log2(render / display) - 1), only for the jittered main-scene geometry
+    // of a frame the upscaler handles. Shadows and impostors (earlier in the window), probes and mirrors (gCubeSnapshot,
+    // outside the window), snapshots and plain-path frames (no jittered scene) keep 0.
+    const bool scene = mFsr2SceneView && mFsr2SceneJittered && !gCubeSnapshot && !sRenderingHUDs && mRT == &mMainRT && isFsr2Active();
+    setFsr2LodBias(fsr2SceneLodBias(scene, mFsr2PostDisplaySize, (F32)mMainRT.screen.getWidth(), (F32)mFSR2Map.getWidth()));
+}
+
 void LLPipeline::endFsr2Frame()
 {
+    setFsr2LodBias(0.f);    // the main-scene bracket ends here: post, UI, HUD and everything after are unbiased
     // the post chain, 3D UI, HUD text and picking after the scene use the unjittered projection
     if (mFsr2SceneView && mFsr2SceneJittered)
     {
@@ -1106,7 +1117,8 @@ void LLPipeline::releaseFsr2Upscaler()
 
 void LLPipeline::setFsr2LodBias(F32 bias)
 {
-    // the viewer has no texture LOD bias setting of its own: the upscaler's bias is the only one, and 0 restores the samplers
+    // the viewer has no texture LOD bias setting of its own: the upscaler's bias is the only one, and 0 restores the samplers.
+    // Posted in order with the draws, only on a change (twice per upscaled frame: the scene bracket on and off)
     if (bias != mFsr2LodBias)
     {
         setRenderBackendTextureLodBias(bias);
@@ -1485,8 +1497,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             mFSR2PostMap.release();
         }
         mFsr2PostDisplaySize = fsr2_targets;
-        // texture detail for the display resolution while upscaling (AMD: log2(render / display) - 1); 0 restores
-        setFsr2LodBias(fsr2_targets ? fsr2MipBias((F32)resX, (F32)mRT->width) : 0.f);
+        setFsr2LodBias(0.f);    // the bias exists only inside the main-scene bracket (beginFsr2SceneTextures)
 
         //water reflection texture (always needed as scratch space whether or not transparent water is enabled)
         mWaterDis.allocate(resX, resY, screenFormat, true);
@@ -9475,6 +9486,7 @@ void LLPipeline::renderFinalize()
 
     gGL.setColorMask(true, true);
     getFramebufferBackend().setClearColor(0, 0, 0, 0);
+    setFsr2LodBias(0.f);    // never biased past the scene (endFsr2Frame already cleared it; kept for any other route here)
 
     // FSR 2 temporal upscaler: while its targets exist the post chain targets are display size. The upscale runs first, on the
     // lit linear HDR scene (mRT->screen, before tonemap); tonemap onward then reads the display-size mFSR2Map. A frame that
