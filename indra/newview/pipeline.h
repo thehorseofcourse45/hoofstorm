@@ -1092,8 +1092,17 @@ public:
     static F32 RenderFSRSharpness;
     static bool RenderFSRDynamic;
     static U32 RenderFSRTargetFPS;
-    // Scene render scale per axis: the FSR preset when FSR is on, else RenderResolutionMultiplier.
+    static bool RenderFSR2Enabled;
+    static U32 RenderFSR2Quality;
+    static F32 RenderFSR2Sharpness;
+    static bool RenderFSR2Dynamic;
+    // Scene render scale per axis: the temporal upscaler mode when it is selected, else the FSR preset when FSR is on,
+    // else RenderResolutionMultiplier. Dynamic scaling (either upscaler) replaces the preset.
     static F32 getRenderScale();
+    // RenderFSR2Enabled is on and the Vulkan renderer is running (the setting picks the render scale).
+    static bool fsr2Selected();
+    // The temporal upscaler should run this frame: selected, not a cube snapshot, render scale below 1, backend not failed.
+    static bool isFsr2Active();
     // Set while a snapshot renders: the scene is drawn at full size so FSR / the render multiplier do not soften the picture.
     static bool sSnapshotFullScale;
     // FSR will upscale the final image: enabled, programs and target ready, scene smaller than the window.

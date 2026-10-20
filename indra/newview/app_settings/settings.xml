@@ -13227,6 +13227,50 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <real>0.67</real>
   </map>
+  <key>RenderFSR2Enabled</key>
+  <map>
+    <key>Comment</key>
+    <string>Render the 3D scene below window size and upscale it with the AMD FidelityFX FSR 3.1 temporal upscaler (Vulkan renderer only). Turning it on turns off RenderFSREnabled, and the reverse.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderFSR2Quality</key>
+  <map>
+    <key>Comment</key>
+    <string>Temporal upscaler mode (render scale per axis): 0 Native AA (1.0x), 1 Quality (0.67x), 2 Balanced (0.59x), 3 Performance (0.50x), 4 Ultra Performance (0.33x).</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>U32</string>
+    <key>Value</key>
+    <integer>1</integer>
+  </map>
+  <key>RenderFSR2Sharpness</key>
+  <map>
+    <key>Comment</key>
+    <string>Temporal upscaler sharpening, 0 (off) to 1 (sharpest).</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0.5</real>
+  </map>
+  <key>RenderFSR2Dynamic</key>
+  <map>
+    <key>Comment</key>
+    <string>Temporal upscaler dynamic scaling: lower the render scale when the frame rate is under RenderFSRTargetFPS, raise it again when there is headroom. The chosen mode is the lowest scale used.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+  </map>
   <key>RenderShaderLightingMaxLevel</key>
   <map>
     <key>Comment</key>

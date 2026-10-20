@@ -14,6 +14,12 @@ inline float fsr2RenderScale(unsigned quality)
     return 1.0f / fsr2QualityDivisor(quality);
 }
 
+// FSR 2 on: the preset scale wins (Native AA is 1.0). Off: the scale from the other paths, passed through.
+inline float effectiveRenderScaleFsr2(bool fsr2Enabled, unsigned quality, float multiplier)
+{
+    return fsr2Enabled ? fsr2RenderScale(quality) : multiplier;
+}
+
 // Number of Halton jitter phases before the sequence repeats: AMD's 8 * (display / render)^2, rounded up.
 // The preset divisors use AMD's fixed tabulated counts (native 1.0 gives ceil(8) = 8).
 inline int fsr2JitterPhaseCount(float divisor)

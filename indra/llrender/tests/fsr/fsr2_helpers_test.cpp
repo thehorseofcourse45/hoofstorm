@@ -38,6 +38,13 @@ int main()
     }
     check(ident, "jitter matrix is identity elsewhere");
 
+    check(near(effectiveRenderScaleFsr2(true, 1, 0.8f), 1.0f / 1.5f, 1e-5f), "fsr2 on, quality is 1/1.5");
+    check(near(effectiveRenderScaleFsr2(true, 3, 0.8f), 0.5f, 1e-5f), "fsr2 on, performance is 1/2");
+    check(near(effectiveRenderScaleFsr2(true, 4, 1.0f), 1.0f / 3.0f, 1e-5f), "fsr2 on, ultra performance is 1/3");
+    check(effectiveRenderScaleFsr2(true, 0, 0.8f) == 1.0f, "fsr2 on, native AA is 1.0");
+    check(effectiveRenderScaleFsr2(false, 1, 0.8f) == 0.8f, "fsr2 off returns the multiplier");
+    check(effectiveRenderScaleFsr2(false, 3, 1.0f) == 1.0f, "fsr2 off, multiplier 1");
+
     printf("FSR2_HELPERS %s checks=%d\n", failed ? "FAIL" : "PASS", checks);
     return failed ? 1 : 0;
 }

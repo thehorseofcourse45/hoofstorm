@@ -638,8 +638,13 @@ static bool handleFSRQualityChanged(const LLSD&)
     return true;
 }
 
-static bool handleFSREnabledChanged(const LLSD&)
+static bool handleFSREnabledChanged(const LLSD& newvalue)
 {
+    // FSR 1.0 and the temporal upscaler are mutually exclusive; the other one's listener reallocates as well
+    if (newvalue.asBoolean() && gSavedSettings.getBOOL("RenderFSR2Enabled"))
+    {
+        gSavedSettings.setBOOL("RenderFSR2Enabled", false);
+    }
     LLPipeline::resetFSRDynamic();
     gResizeScreenTexture = true;
     // the FSR programs are only built while the setting is on
@@ -647,6 +652,17 @@ static bool handleFSREnabledChanged(const LLSD&)
     {
         LLViewerShaderMgr::instance()->setShaders();
     }
+    return true;
+}
+
+static bool handleFSR2EnabledChanged(const LLSD& newvalue)
+{
+    if (newvalue.asBoolean() && gSavedSettings.getBOOL("RenderFSREnabled"))
+    {
+        gSavedSettings.setBOOL("RenderFSREnabled", false);
+    }
+    LLPipeline::resetFSRDynamic();
+    gResizeScreenTexture = true;
     return true;
 }
 
@@ -1374,6 +1390,14 @@ void settings_setup_listeners()
     setting_setup_signal_listener(gSavedSettings, "RenderFSRQuality", handleFSRQualityChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderFSRDynamic", handleFSRQualityChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderFSRCustomScale", handleFSRQualityChanged);
+    // a settings file with both upscalers on (edited by hand) keeps FSR 1.0, as before the temporal upscaler existed
+    if (gSavedSettings.getBOOL("RenderFSREnabled") && gSavedSettings.getBOOL("RenderFSR2Enabled"))
+    {
+        gSavedSettings.setBOOL("RenderFSR2Enabled", false);
+    }
+    setting_setup_signal_listener(gSavedSettings, "RenderFSR2Enabled", handleFSR2EnabledChanged);
+    setting_setup_signal_listener(gSavedSettings, "RenderFSR2Quality", handleFSRQualityChanged);
+    setting_setup_signal_listener(gSavedSettings, "RenderFSR2Dynamic", handleFSRQualityChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeLevel", handleReflectionProbeDetailChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeDetail", handleReflectionProbeDetailChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeCount", handleReflectionProbeCountChanged);

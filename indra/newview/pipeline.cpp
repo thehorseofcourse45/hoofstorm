@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 #include "llrenderbackend.h"
 #include "llfsr.h"
+#include "llfsr2.h"
 #include "fscommon.h"
 #include "llframebufferbackend.h"
 #include "lltexturebackend.h"
@@ -170,6 +171,10 @@ F32 LLPipeline::RenderFSRCustomScale;
 F32 LLPipeline::RenderFSRSharpness;
 bool LLPipeline::RenderFSRDynamic;
 U32 LLPipeline::RenderFSRTargetFPS;
+bool LLPipeline::RenderFSR2Enabled;
+U32 LLPipeline::RenderFSR2Quality;
+F32 LLPipeline::RenderFSR2Sharpness;
+bool LLPipeline::RenderFSR2Dynamic;
 static FsrDynamicScaler sFSRDynamic;
 bool LLPipeline::RenderUIBuffer;
 S32 LLPipeline::RenderShadowDetail;
@@ -608,6 +613,10 @@ void LLPipeline::init()
     connectRefreshCachedSettingsSafe("RenderFSRSharpness");
     connectRefreshCachedSettingsSafe("RenderFSRDynamic");
     connectRefreshCachedSettingsSafe("RenderFSRTargetFPS");
+    connectRefreshCachedSettingsSafe("RenderFSR2Enabled");
+    connectRefreshCachedSettingsSafe("RenderFSR2Quality");
+    connectRefreshCachedSettingsSafe("RenderFSR2Sharpness");
+    connectRefreshCachedSettingsSafe("RenderFSR2Dynamic");
     connectRefreshCachedSettingsSafe("RenderUIBuffer");
     connectRefreshCachedSettingsSafe("RenderShadowDetail");
     connectRefreshCachedSettingsSafe("RenderShadowSplits");
@@ -850,17 +859,30 @@ bool LLPipeline::fsrActive() const
 
 bool LLPipeline::sSnapshotFullScale = false;
 
+bool LLPipeline::fsr2Selected()
+{
+    // the temporal upscaler only exists in the Vulkan renderer: with OpenGL the setting changes nothing
+    return RenderFSR2Enabled && isVulkanRenderBackendActive();
+}
+
+bool LLPipeline::isFsr2Active()
+{
+    return fsr2Selected() && !gCubeSnapshot && getRenderScale() < 1.f && !isRenderBackendFsr2Failed();
+}
+
 F32 LLPipeline::getRenderScale()
 {
     if (sSnapshotFullScale)
     {
         return 1.f;
     }
-    if (RenderFSREnabled && RenderFSRDynamic)
+    const bool fsr2 = fsr2Selected();
+    if (fsr2 ? RenderFSR2Dynamic : (RenderFSREnabled && RenderFSRDynamic))
     {
         return sFSRDynamic.scale;
     }
-    return effectiveRenderScale(RenderFSREnabled, RenderFSRQuality, RenderFSRCustomScale, RenderResolutionMultiplier);
+    return effectiveRenderScaleFsr2(fsr2, RenderFSR2Quality,
+                                    effectiveRenderScale(RenderFSREnabled, RenderFSRQuality, RenderFSRCustomScale, RenderResolutionMultiplier));
 }
 
 std::string LLPipeline::getFSRStatusText() const
@@ -875,18 +897,24 @@ std::string LLPipeline::getFSRStatusText() const
 
 void LLPipeline::resetFSRDynamic()
 {
-    sFSRDynamic.reset(fsrQualityScale(gSavedSettings.getU32("RenderFSRQuality"), gSavedSettings.getF32("RenderFSRCustomScale")));
+    // read the settings, not the cached copies: this runs from setting listeners, which can fire before the cache refresh
+    const bool fsr2 = gSavedSettings.getBOOL("RenderFSR2Enabled") && isVulkanRenderBackendActive();
+    sFSRDynamic.reset(fsr2 ? fsr2RenderScale(gSavedSettings.getU32("RenderFSR2Quality"))
+                           : fsrQualityScale(gSavedSettings.getU32("RenderFSRQuality"), gSavedSettings.getF32("RenderFSRCustomScale")));
 }
 
 void LLPipeline::updateFSRDynamic(F32 frameSeconds)
 {
+    // dynamic scaling serves whichever upscaler is on; the chosen quality is the floor
+    const bool fsr2 = fsr2Selected();
+    const bool dynamic = fsr2 ? RenderFSR2Dynamic : (RenderFSREnabled && RenderFSRDynamic);
     // an unfocused or still-loading viewer has throttled, hitchy frame times that say nothing about the GPU
-    if (!RenderFSREnabled || !RenderFSRDynamic || !gFocusMgr.getAppHasFocus() ||
-        LLStartUp::getStartupState() != STATE_STARTED)
+    if (!dynamic || !gFocusMgr.getAppHasFocus() || LLStartUp::getStartupState() != STATE_STARTED)
     {
         return;
     }
-    if (sFSRDynamic.update(frameSeconds, (F32)RenderFSRTargetFPS, fsrQualityScale(RenderFSRQuality, RenderFSRCustomScale)))
+    const F32 floor_scale = fsr2 ? fsr2RenderScale(RenderFSR2Quality) : fsrQualityScale(RenderFSRQuality, RenderFSRCustomScale);
+    if (sFSRDynamic.update(frameSeconds, (F32)RenderFSRTargetFPS, floor_scale))
     {
         gResizeScreenTexture = true;
     }
@@ -1038,9 +1066,9 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         resY /= res_mod;
     }
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
-    else if (const F32 render_scale = (RenderFSREnabled && mRT != &mMainRT) ? 1.f : getRenderScale(); render_scale < 1.f)
+    else if (const F32 render_scale = ((RenderFSREnabled || fsr2Selected()) && mRT != &mMainRT) ? 1.f : getRenderScale(); render_scale < 1.f)
     {
-        // FSR only upscales the main view: reflection probes and mirrors keep full size
+        // FSR 1.0 and the temporal upscaler only upscale the main view: reflection probes and mirrors keep full size
         resX = (GLuint)(resX * render_scale);
         resY = (GLuint)(resY * render_scale);
     }
@@ -1312,6 +1340,10 @@ void LLPipeline::refreshCachedSettings()
     RenderFSRSharpness = gSavedSettings.getF32("RenderFSRSharpness");
     RenderFSRDynamic = gSavedSettings.getBOOL("RenderFSRDynamic");
     RenderFSRTargetFPS = gSavedSettings.getU32("RenderFSRTargetFPS");
+    RenderFSR2Enabled = gSavedSettings.getBOOL("RenderFSR2Enabled");
+    RenderFSR2Quality = gSavedSettings.getU32("RenderFSR2Quality");
+    RenderFSR2Sharpness = gSavedSettings.getF32("RenderFSR2Sharpness");
+    RenderFSR2Dynamic = gSavedSettings.getBOOL("RenderFSR2Dynamic");
     RenderUIBuffer = gSavedSettings.getBOOL("RenderUIBuffer");
     RenderShadowDetail = gSavedSettings.getS32("RenderShadowDetail");
     RenderShadowSplits = gSavedSettings.getS32("RenderShadowSplits");
