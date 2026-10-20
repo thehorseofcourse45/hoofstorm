@@ -51,6 +51,64 @@ int main()
     check(!fsr2ShouldUpscale(1, 1.0f), "quality at scale 1.0 does not upscale");
     check(!fsr2ShouldUpscale(3, 1.2f), "performance above scale 1 does not upscale");
 
+    // phase counter: one step per displayed frame, wraps at the count, never negative
+    check(fsr2NextPhase(0, 8) == 1, "next phase 0 -> 1");
+    check(fsr2NextPhase(7, 8) == 0, "next phase wraps at the count");
+    check(fsr2NextPhase(71, 72) == 0, "next phase wraps at 72");
+    check(fsr2NextPhase(30, 18) == 13, "phase past a smaller count wraps into range");
+    check(fsr2NextPhase(-3, 8) >= 0 && fsr2NextPhase(-3, 8) < 8, "negative phase gives a phase in range");
+    check(fsr2NextPhase(2147483647, 32) >= 0 && fsr2NextPhase(2147483647, 32) < 32, "largest int phase does not overflow");
+    check(fsr2NextPhase(5, 0) == 0, "zero count gives phase 0");
+
+    // jitter translation applied to an identity projection shifts a point by exactly one jitter in NDC
+    {
+        const float jx = 0.3125f, jy = -0.1875f, w = 640.f, h = 360.f;
+        float t[16];
+        fsr2JitterProjection(jx, jy, w, h, t);
+        auto mul = [&](const float p[4], float out[4]) {
+            for (int r = 0; r < 4; ++r)
+                out[r] = t[0 * 4 + r] * p[0] + t[1 * 4 + r] * p[1] + t[2 * 4 + r] * p[2] + t[3 * 4 + r] * p[3];
+        };
+        const float p1[4] = {0.25f, -0.5f, 0.3f, 1.0f};
+        const float p2[4] = {-0.8f, 0.6f, 0.7f, 2.0f};    // a perspective point: the shift scales with w, so NDC moves the same
+        float c1[4], c2[4];
+        mul(p1, c1);
+        mul(p2, c2);
+        check(near(c1[0] / c1[3] - p1[0] / p1[3], 2.f * jx / w, 1e-6f) && near(c1[1] / c1[3] - p1[1] / p1[3], -2.f * jy / h, 1e-6f),
+              "jittered identity point moves one jitter in NDC");
+        check(near(c2[0] / c2[3] - p2[0] / p2[3], 2.f * jx / w, 1e-6f) && near(c2[1] / c2[3] - p2[1] / p2[3], -2.f * jy / h, 1e-6f),
+              "jittered point with w=2 moves one jitter in NDC");
+        check(c1[2] == p1[2] && c1[3] == p1[3] && c2[2] == p2[2] && c2[3] == p2[3], "jitter leaves depth and w alone");
+    }
+
+    // jitter offsets: AMD's Halton(2,3) at index phase+1, centred, in render pixels
+    {
+        float x = 0.f, y = 0.f;
+        fsr2JitterOffset(0, 8, x, y);
+        check(near(x, 0.0f, 1e-6f) && near(y, 1.f / 3.f - 0.5f, 1e-6f), "jitter phase 0 is (0, -1/6)");
+        fsr2JitterOffset(1, 8, x, y);
+        check(near(x, -0.25f, 1e-6f) && near(y, 2.f / 3.f - 0.5f, 1e-6f), "jitter phase 1 is (-1/4, 1/6)");
+        fsr2JitterOffset(2, 8, x, y);
+        check(near(x, 0.25f, 1e-6f) && near(y, 1.f / 9.f - 0.5f, 1e-6f), "jitter phase 2 is (1/4, -7/18)");
+        bool nonzero = true, inRange = true, repeats = true;
+        for (unsigned q = 0; q < 5; ++q)
+        {
+            const int count = kPhases[q];
+            for (int i = 0; i < count; ++i)
+            {
+                float ax, ay, bx, by;
+                fsr2JitterOffset(i, count, ax, ay);
+                fsr2JitterOffset(i + count, count, bx, by);
+                nonzero = nonzero && !(ax == 0.f && ay == 0.f);
+                inRange = inRange && ax >= -0.5f && ax < 0.5f && ay >= -0.5f && ay < 0.5f;
+                repeats = repeats && ax == bx && ay == by;
+            }
+        }
+        check(nonzero, "jitter is never (0, 0)");
+        check(inRange, "jitter stays within half a pixel");
+        check(repeats, "jitter repeats after the phase count");
+    }
+
     printf("FSR2_HELPERS %s checks=%d\n", failed ? "FAIL" : "PASS", checks);
     return failed ? 1 : 0;
 }

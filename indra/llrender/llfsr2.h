@@ -43,6 +43,37 @@ inline float fsr2MipBias(float renderW, float displayW)
     return std::log2(renderW / displayW) - 1.0f;
 }
 
+// The jitter phase after `phase`: wraps at `count`, never negative (a phase left over from a longer sequence wraps into range).
+inline int fsr2NextPhase(int phase, int count)
+{
+    if (count <= 0) return 0;
+    int p = phase % count;
+    if (p < 0) p += count;
+    return (p + 1 == count) ? 0 : p + 1;
+}
+
+// Radical inverse of index in base: the Halton sequence, same arithmetic as the FidelityFX SDK's.
+inline float fsr2Halton(int index, int base)
+{
+    float f = 1.0f, result = 0.0f;
+    for (int i = index; i > 0;)
+    {
+        f /= (float)base;
+        result = result + f * (float)(i % base);
+        i = (int)std::floor((float)i / (float)base);
+    }
+    return result;
+}
+
+// Sub-pixel jitter in render pixels for a phase, as ffxFsr3UpscalerGetJitterOffset: Halton(2, 3) at index phase + 1, centred.
+// Never (0, 0): base 2 gives 0.5 only at index 1, where base 3 gives 1/3.
+inline void fsr2JitterOffset(int phase, int count, float& outX, float& outY)
+{
+    const int index = (count > 0 ? ((phase % count) + count) % count : 0) + 1;
+    outX = fsr2Halton(index, 2) - 0.5f;
+    outY = fsr2Halton(index, 3) - 0.5f;
+}
+
 // Column-major projection offset (a translation in NDC) applying a sub-pixel jitter given in render pixels.
 inline void fsr2JitterProjection(float jx, float jy, float renderW, float renderH, float out[16])
 {

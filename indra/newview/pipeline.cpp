@@ -872,6 +872,120 @@ bool LLPipeline::isFsr2Active()
            fsr2ShouldUpscale(RenderFSR2Quality, getRenderScale());
 }
 
+void LLPipeline::beginFsr2Frame()
+{
+    const U32 render_w = mMainRT.screen.getWidth();
+    const U32 render_h = mMainRT.screen.getHeight();
+    mFsr2SceneJittered = false;
+    mFsr2SceneView = !gSnapshot && isFsr2Active() && render_w > 0 && render_h > 0;
+    if (!mFsr2SceneView)
+    {
+        mFsr2PrevValid = false; // the next jittered frame starts without camera history
+        mFsr2CameraCut = true;
+        return;
+    }
+
+    // a new render size, a region shift (agent coordinates move) or a teleport-sized jump leaves no usable previous frame
+    constexpr F32 FSR2_CAMERA_CUT_METERS = 32.f;
+    const LLVector3 origin = LLViewerCamera::getInstance()->getOrigin();
+    if (render_w != mFsr2RenderW || render_h != mFsr2RenderH || gShiftFrame ||
+        dist_vec(origin, mFsr2LastOrigin) > FSR2_CAMERA_CUT_METERS)
+    {
+        mFsr2PrevValid = false;
+    }
+    mFsr2RenderW = render_w;
+    mFsr2RenderH = render_h;
+    mFsr2LastOrigin = origin;
+
+    const F32 render_scale = getRenderScale();
+    mFsr2PhaseCount = fsr2JitterPhaseCount(render_scale > 0.f ? 1.f / render_scale : 1.f);
+    mFsr2Phase = fsr2NextPhase(mFsr2Phase, mFsr2PhaseCount);
+
+    // previous displayed frame; without history setFsr2SceneMatrices makes it equal to the current one (zero motion)
+    mFsr2CameraCut = !mFsr2PrevValid;
+    if (mFsr2PrevValid)
+    {
+        mPrevViewProj = mCurViewProjUnjittered;
+    }
+}
+
+void LLPipeline::endFsr2Frame()
+{
+    // the post chain, 3D UI, HUD text and picking after the scene use the unjittered projection
+    if (mFsr2SceneView && mFsr2SceneJittered)
+    {
+        if (gGL.getProjectionMatrix() == mFsr2JitteredProj)
+        {
+            const LLRender::eMatrixMode mode = gGL.getMatrixMode();
+            gGL.matrixMode(LLRender::MM_PROJECTION);
+            gGL.loadMatrix(glm::value_ptr(mFsr2UnjitteredProj));
+            gGL.matrixMode(mode);
+        }
+        if (get_current_projection() == mFsr2JitteredProj)
+        {
+            set_current_projection(mFsr2UnjitteredProj);
+        }
+    }
+    mFsr2SceneView = false;
+}
+
+bool LLPipeline::fsr2JitterThisView() const
+{
+    return mFsr2SceneView && !gCubeSnapshot && !sRenderingHUDs;
+}
+
+glm::mat4 LLPipeline::getFsr2JitterMatrix() const
+{
+    const glm::vec2 jitter = getFsr2Jitter();
+    glm::mat4 m;
+    fsr2JitterProjection(jitter.x, jitter.y, (F32)mFsr2RenderW, (F32)mFsr2RenderH, glm::value_ptr(m));
+    return m;
+}
+
+void LLPipeline::setFsr2SceneMatrices(const glm::mat4& unjittered_proj, const glm::mat4& jittered_proj, const glm::mat4& modelview)
+{
+    mFsr2SceneJittered = true;
+    mFsr2UnjitteredProj = unjittered_proj;
+    mFsr2JitteredProj = jittered_proj;
+    mCurViewProjUnjittered = unjittered_proj * modelview;
+    if (!mFsr2PrevValid)
+    {
+        mPrevViewProj = mCurViewProjUnjittered;
+        mFsr2PrevValid = true;
+    }
+}
+
+glm::vec2 LLPipeline::getFsr2Jitter() const
+{
+    glm::vec2 jitter;
+    fsr2JitterOffset(mFsr2Phase, mFsr2PhaseCount, jitter.x, jitter.y);
+    return jitter;
+}
+
+LLPipeline::Fsr2UnjitteredScope::Fsr2UnjitteredScope()
+    : mActive(gPipeline.mFsr2SceneView && gPipeline.mFsr2SceneJittered && gGL.getProjectionMatrix() == gPipeline.mFsr2JitteredProj)
+{
+    if (mActive)
+    {
+        const LLRender::eMatrixMode mode = gGL.getMatrixMode();
+        gGL.matrixMode(LLRender::MM_PROJECTION);
+        gGL.pushMatrix();
+        gGL.loadMatrix(glm::value_ptr(gPipeline.mFsr2UnjitteredProj));
+        gGL.matrixMode(mode);
+    }
+}
+
+LLPipeline::Fsr2UnjitteredScope::~Fsr2UnjitteredScope()
+{
+    if (mActive)
+    {
+        const LLRender::eMatrixMode mode = gGL.getMatrixMode();
+        gGL.matrixMode(LLRender::MM_PROJECTION);
+        gGL.popMatrix();
+        gGL.matrixMode(mode);
+    }
+}
+
 F32 LLPipeline::getRenderScale()
 {
     if (sSnapshotFullScale)
@@ -9632,6 +9746,8 @@ void LLPipeline::renderDeferredLighting()
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("deferred");
+        // FSR 2: sun/SSAO, shadow blur, soften (SSR, atmospherics) and local lights read the unjittered projection
+        Fsr2UnjitteredScope fsr2_unjittered;
         LLViewerCamera *camera = LLViewerCamera::getInstance();
 
         if (gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_HUD))
@@ -10156,6 +10272,7 @@ void LLPipeline::doAtmospherics()
         LLGLSLShader& haze_shader = gHazeProgram;
 
         LL_PROFILE_GPU_ZONE("haze");
+        Fsr2UnjitteredScope fsr2_unjittered;    // full-screen fog rebuilds positions from depth
         bindDeferredShader(haze_shader, nullptr, sample_depth_directly ? nullptr : &mWaterDis);
 
         LLEnvironment& environment = LLEnvironment::instance();
@@ -10235,6 +10352,7 @@ void LLPipeline::doWaterHaze()
         if (LLPipeline::sUnderWaterRender)
         {
             LLGLDepthTest depth(GL_FALSE);
+            Fsr2UnjitteredScope fsr2_unjittered;    // full-screen underwater fog; the above-water patches stay jittered geometry
 
             // full screen blit
             mScreenTriangleVB->setBuffer();

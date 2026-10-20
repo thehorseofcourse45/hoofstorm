@@ -3,6 +3,8 @@
 #include "vkcontext.h"
 #include <FidelityFX/host/backends/vk/ffx_vk.h>
 #include <FidelityFX/host/ffx_fsr3upscaler.h>
+#include "llfsr2.h"
+#include <cmath>
 #include <cstring>
 
 static bool g_fp16;
@@ -30,6 +32,20 @@ int main()
         check(ctx.init(GetModuleHandle(nullptr), nullptr, true) && ctx.validation, "validated GPU initialized");
         check(ffxFsr3UpscalerGetEffectVersion() == FFX_SDK_MAKE_VERSION(3, 1, 4), "upscaler component is FSR 3.1.4");
         check(ffxFsr3UpscalerGetJitterPhaseCount(640, 960) > 0, "jitter sequence available");
+        {
+            // the viewer's jitter (llfsr2.h) must be the sequence the SDK expects
+            bool same = true;
+            const int counts[] = {8, 18, 23, 32, 72};
+            for (int count : counts)
+                for (int i = 0; i < 2 * count; ++i)
+                {
+                    float sx = 0, sy = 0, vx = 0, vy = 0;
+                    same = same && ffxFsr3UpscalerGetJitterOffset(&sx, &sy, i, count) == FFX_OK;
+                    fsr2JitterOffset(i, count, vx, vy);
+                    same = same && std::fabs(sx - vx) <= 1e-6f && std::fabs(sy - vy) <= 1e-6f;
+                }
+            check(same, "llfsr2.h jitter offsets match ffxFsr3UpscalerGetJitterOffset");
+        }
 
         VkDeviceContext deviceContext{ctx.device, ctx.phys, vkGetDeviceProcAddr};
         const size_t scratchBytes = ffxGetScratchMemorySizeVK(ctx.phys, FFX_FSR3UPSCALER_CONTEXT_COUNT);

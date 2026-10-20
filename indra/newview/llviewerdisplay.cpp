@@ -866,6 +866,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         }
 
         stop_glerror();
+        gPipeline.beginFsr2Frame(); // FSR 2: next jitter phase; the main camera set up below is jittered
         display_update_camera();
         stop_glerror();
 
@@ -1173,6 +1174,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             gPipeline.renderDeferredLighting();
         }
+        gPipeline.endFsr2Frame();   // post, UI and picking use the unjittered projection
 
         LLPipeline::sUnderWaterRender = false;
 

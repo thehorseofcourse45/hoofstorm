@@ -1106,6 +1106,44 @@ public:
     static bool isFsr2Active();
     // Set while a snapshot renders: the scene is drawn at full size so FSR / the render multiplier do not soften the picture.
     static bool sSnapshotFullScale;
+
+    // FSR 2 jitter and camera history. A displayed frame calls beginFsr2Frame() before the main camera is set up and
+    // endFsr2Frame() after the 3D scene; only LLViewerCamera::setPerspective calls between them jitter (never picking,
+    // tiled or full snapshots, cube snapshots for probes and mirrors, previews or the UI, which run outside or are excluded).
+    void beginFsr2Frame();
+    void endFsr2Frame();
+    // The camera setup in progress is the main scene view and gets the jitter.
+    bool fsr2JitterThisView() const;
+    // Column-major translation for this frame's jitter (fsr2JitterProjection at the main render size).
+    glm::mat4 getFsr2JitterMatrix() const;
+    // Called by setPerspective after it jittered the main view: keeps the unjittered matrices for reprojection.
+    void setFsr2SceneMatrices(const glm::mat4& unjittered_proj, const glm::mat4& jittered_proj, const glm::mat4& modelview);
+    // This frame's sub-pixel jitter in render pixels (AMD Halton 2,3 over mFsr2Phase); never (0, 0).
+    glm::vec2 getFsr2Jitter() const;
+    // While the main scene is jittered: puts the unjittered projection on the gGL stack so full-screen passes that rebuild
+    // positions from depth (inv_proj, SSR's projection_matrix) do not shimmer. Does nothing for any other projection.
+    class Fsr2UnjitteredScope
+    {
+    public:
+        Fsr2UnjitteredScope();
+        ~Fsr2UnjitteredScope();
+    private:
+        bool mActive;
+    };
+    glm::mat4 mPrevViewProj = glm::mat4(1.f);           // previous displayed frame's unjittered projection * modelview
+    glm::mat4 mCurViewProjUnjittered = glm::mat4(1.f);  // this frame's unjittered projection * modelview
+    int mFsr2Phase = 0;                                 // jitter phase, advanced once per displayed frame
+    int mFsr2PhaseCount = 8;                            // sequence length for this frame's render scale
+    bool mFsr2CameraCut = true;                         // this frame has no usable previous frame: mPrevViewProj == current
+    bool mFsr2SceneJittered = false;                    // this displayed frame's main scene was rendered with the jitter
+private:
+    bool mFsr2SceneView = false;                        // between beginFsr2Frame and endFsr2Frame with FSR 2 active
+    bool mFsr2PrevValid = false;                        // mCurViewProjUnjittered holds the last displayed frame
+    U32 mFsr2RenderW = 0, mFsr2RenderH = 0;             // render size the history was made at
+    LLVector3 mFsr2LastOrigin;                          // camera origin of the last displayed frame
+    glm::mat4 mFsr2UnjitteredProj = glm::mat4(1.f);
+    glm::mat4 mFsr2JitteredProj = glm::mat4(1.f);
+public:
     // FSR will upscale the final image: enabled, programs and target ready, scene smaller than the window.
     bool fsrActive() const;
     // Dynamic FSR scaling: call once per frame; flags a render target resize when the scale changes.
