@@ -320,6 +320,10 @@ static LLStaticHashedString sTint("tint");
 static LLStaticHashedString sFsrInputSize("fsr_input_size");
 static LLStaticHashedString sFsrOutputSize("fsr_output_size");
 static LLStaticHashedString sFsrSharpness("fsr_sharpness");
+static LLStaticHashedString sInvViewProjCur("inv_view_proj_cur");
+static LLStaticHashedString sViewProjCur("view_proj_cur");
+static LLStaticHashedString sViewProjPrev("view_proj_prev");
+static LLStaticHashedString sMotionYSign("motion_y_sign");
 static LLStaticHashedString sAmbiance("ambiance");
 static LLStaticHashedString sAlphaScale("alpha_scale");
 static LLStaticHashedString sNormMat("norm_mat");
@@ -959,6 +963,34 @@ glm::vec2 LLPipeline::getFsr2Jitter() const
     return jitter;
 }
 
+void LLPipeline::generateFsr2Motion(LLRenderTarget* depthSource, LLRenderTarget* dest)
+{
+    LL_PROFILE_GPU_ZONE("FSR 2 motion");
+    if (!depthSource || !depthSource->getDepth() || !dest || !dest->isComplete() || !gDeferredFSR2MotionProgram.isComplete())
+    {
+        return;
+    }
+    // a camera cut has no previous frame: the same matrix on both ends gives exactly zero motion in the shader
+    const glm::mat4& prev = mFsr2CameraCut ? mCurViewProjUnjittered : mPrevViewProj;
+    const glm::mat4 inv_cur = glm::inverse(mCurViewProjUnjittered);
+
+    dest->bindTarget();
+    gDeferredFSR2MotionProgram.bind();
+    gDeferredFSR2MotionProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, depthSource, true, LLTexUnit::TFO_POINT);
+    gDeferredFSR2MotionProgram.uniformMatrix4fv(sInvViewProjCur, 1, GL_FALSE, glm::value_ptr(inv_cur));
+    gDeferredFSR2MotionProgram.uniformMatrix4fv(sViewProjCur, 1, GL_FALSE, glm::value_ptr(mCurViewProjUnjittered));
+    gDeferredFSR2MotionProgram.uniformMatrix4fv(sViewProjPrev, 1, GL_FALSE, glm::value_ptr(prev));
+    gDeferredFSR2MotionProgram.uniform1f(sMotionYSign, kFsr2MotionYSign);
+    {
+        LLGLDepthTest depth_test(GL_FALSE);
+        mScreenTriangleVB->setBuffer();
+        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    }
+    gDeferredFSR2MotionProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+    gDeferredFSR2MotionProgram.unbind();
+    dest->flush();
+}
+
 LLPipeline::Fsr2UnjitteredScope::Fsr2UnjitteredScope()
     : mActive(gPipeline.mFsr2SceneView && gPipeline.mFsr2SceneJittered && gGL.getProjectionMatrix() == gPipeline.mFsr2JitteredProj)
 {
@@ -1255,6 +1287,22 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         else
         {
             mFSRMap.release();
+        }
+
+        // FSR 2 motion vectors: render size, one mip level (the upscaler refuses mip chains), only while the upscaler runs
+        if (isFsr2Active() && resX > 0 && resY > 0)
+        {
+            LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("FSR2MotionBuffer");
+            mFSR2MotionMap.setStorageImage(true);
+            if (!mFSR2MotionMap.allocate(resX, resY, GL_RG16F))
+            {
+                LL_WARNS() << "FSR 2 motion vector target allocation failed" << LL_ENDL;
+                mFSR2MotionMap.release();
+            }
+        }
+        else
+        {
+            mFSR2MotionMap.release();
         }
 
         //water reflection texture (always needed as scratch space whether or not transparent water is enabled)
@@ -1598,6 +1646,7 @@ void LLPipeline::releaseGLBuffers()
 
     mFXAAMap.release();
     mFSRMap.release();
+    mFSR2MotionMap.release();
 
     mUIScreen.release();
 

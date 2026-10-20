@@ -7,9 +7,78 @@
 #include "vktexturebackend.h"
 #include "vkframebufferbackend.h"
 #include "glconsts.h"
+#include "llfsr2.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <fstream>
+#include <sstream>
+
+// Column-major 4x4 helpers (GL layout, as glm) for the FSR 2 motion-vector case.
+struct Mat4 { float m[16]; };
+static Mat4 identity4() { Mat4 r{}; for (int i = 0; i < 4; ++i) r.m[i * 5] = 1.f; return r; }
+static Mat4 mul4(const Mat4& a, const Mat4& b)
+{
+    Mat4 r{};
+    for (int c = 0; c < 4; ++c)
+        for (int row = 0; row < 4; ++row)
+        {
+            double s = 0;
+            for (int k = 0; k < 4; ++k) s += (double) a.m[k * 4 + row] * b.m[c * 4 + k];
+            r.m[c * 4 + row] = (float) s;
+        }
+    return r;
+}
+static Mat4 perspective4(float fovy, float aspect, float zn, float zf)
+{
+    Mat4 r{};
+    const float f = 1.f / std::tan(fovy * 0.5f);
+    r.m[0] = f / aspect; r.m[5] = f; r.m[10] = (zf + zn) / (zn - zf); r.m[11] = -1.f; r.m[14] = 2.f * zf * zn / (zn - zf);
+    return r;
+}
+static Mat4 translate4(float x, float y, float z) { Mat4 r = identity4(); r.m[12] = x; r.m[13] = y; r.m[14] = z; return r; }
+static Mat4 rotateY4(float a)
+{
+    Mat4 r = identity4();
+    r.m[0] = std::cos(a); r.m[2] = -std::sin(a); r.m[8] = std::sin(a); r.m[10] = std::cos(a);
+    return r;
+}
+static Mat4 inverse4(const Mat4& a)   // Gauss-Jordan in double
+{
+    double w[4][8];
+    for (int row = 0; row < 4; ++row)
+        for (int c = 0; c < 8; ++c) w[row][c] = c < 4 ? a.m[c * 4 + row] : (c - 4 == row ? 1.0 : 0.0);
+    for (int c = 0; c < 4; ++c)
+    {
+        int pivot = c;
+        for (int row = c + 1; row < 4; ++row) if (std::fabs(w[row][c]) > std::fabs(w[pivot][c])) pivot = row;
+        for (int k = 0; k < 8; ++k) std::swap(w[c][k], w[pivot][k]);
+        const double d = w[c][c];
+        for (int k = 0; k < 8; ++k) w[c][k] /= d;
+        for (int row = 0; row < 4; ++row)
+            if (row != c) { const double f = w[row][c]; for (int k = 0; k < 8; ++k) w[row][k] -= f * w[c][k]; }
+    }
+    Mat4 r{};
+    for (int row = 0; row < 4; ++row) for (int c = 0; c < 4; ++c) r.m[c * 4 + row] = (float) w[row][c + 4];
+    return r;
+}
+static void transform4(const Mat4& a, const double v[4], double out[4])
+{
+    for (int row = 0; row < 4; ++row)
+    {
+        out[row] = 0;
+        for (int k = 0; k < 4; ++k) out[row] += (double) a.m[k * 4 + row] * v[k];
+    }
+}
+static bool readViewerShader(const char* name, std::string& text)
+{
+    std::ifstream in(std::string(LL_VIEWER_DEFERRED_SHADERS) + "/" + name, std::ios::binary);
+    if (!in) return false;
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    text = buffer.str();
+    return true;
+}
 
 int main(int argc, char** argv)
 {
@@ -263,6 +332,167 @@ int main(int argc, char** argv)
                 fb.destroyFramebuffer(renderFb); fb.destroyFramebuffer(outFb);
                 const U32 names[] = {color, depth, motion, output, mipped, srgb};
                 textures.destroy(6, names);
+                VK_CHECK(vkDeviceWaitIdle(ctx.device));
+            }
+            // FSR 2 motion vectors through the viewer's fsr2MotionF.glsl: a plane is drawn into a render-size depth target the way the
+            // scene is (offscreen, GL clip depth), then the motion pass writes UV-unit camera motion into an RG16F target.
+            {
+                constexpr U32 MW = 80, MH = 60;
+                auto makeImage = [&](U32 internal, U32 format, U32 type, bool fsrImage) {
+                    U32 name; textures.generate(1, &name);
+                    if (fsrImage) textures.setStorageImage(name);
+                    textures.bind(glc::TEXTURE_2D, name);
+                    textures.image2D(glc::TEXTURE_2D, 0, internal, MW, MH, format, type, nullptr);
+                    textures.setFilter(glc::TEXTURE_2D, glc::NEAREST, glc::NEAREST);
+                    return name;
+                };
+                const U32 depthTex = makeImage(glc::DEPTH_COMPONENT32F, glc::DEPTH_COMPONENT, glc::FLOAT, true);
+                const U32 sceneTex = makeImage(glc::RGBA8, glc::RGBA, glc::UNSIGNED_BYTE, false);
+                const U32 motionTex = makeImage(glc::RG16F, glc::RG, glc::FLOAT, true);
+                const U32 markerTex = makeImage(glc::RGBA8, glc::RGBA, glc::UNSIGNED_BYTE, false);
+                VulkanTextureBackend::ImageInfo info;
+                check(textures.imageInfo(motionTex, info) && info.levels == 1 && info.format == VK_FORMAT_R16G16_SFLOAT,
+                      "motion target is RG16F with one level");
+                U32 sceneFb = fb.createFramebuffer(); fb.bind(sceneFb);
+                fb.attach(sceneFb, 0x8CE0, glc::TEXTURE_2D, sceneTex, 0); fb.attach(sceneFb, 0x8D00, glc::TEXTURE_2D, depthTex, 0);
+                U32 motionFb = fb.createFramebuffer(); fb.bind(motionFb); fb.attach(motionFb, 0x8CE0, glc::TEXTURE_2D, motionTex, 0);
+                U32 markerFb = fb.createFramebuffer(); fb.bind(markerFb); fb.attach(markerFb, 0x8CE0, glc::TEXTURE_2D, markerTex, 0);
+                fb.bind(0);
+
+                auto build = [&](const std::string& vs, const std::string& fs, const char* label) {
+                    U32 p = shaders.createProgram();
+                    const char* src[] = {vs.c_str(), fs.c_str()};
+                    for (int i = 0; i < 2; ++i)
+                    {
+                        U32 object = shaders.createObject(i ? 0x8B30 : 0x8B31); std::string log;
+                        const bool ok = shaders.compileObject(object, 1, &src[i], log);
+                        if (!ok) printf("%s\n", log.c_str());
+                        check(ok, label); shaders.attachObject(p, object);
+                    }
+                    shaders.bindAttribLocation(p, 0, "position");
+                    check(shaders.link(p), label);
+                    return p;
+                };
+                const std::string white = "#version 330\nout vec4 color;\nvoid main(){color=vec4(1.0);}";
+                const U32 planeProg = build("#version 330\nin vec4 position;\nuniform float plane_z;\n"
+                                            "void main(){gl_Position=vec4(position.xy,plane_z,1.0);}", white, "depth plane program");
+                const U32 markerProg = build("#version 330\nin vec4 position;\nuniform vec4 place;\n"
+                                             "void main(){gl_Position=vec4(position.xy*place.zw+place.xy,0.0,1.0);}", white, "marker program");
+                std::string vertexBody, fragmentBody;
+                check(readViewerShader("postDeferredNoTCV.glsl", vertexBody) && readViewerShader("fsr2MotionF.glsl", fragmentBody),
+                      "viewer motion shaders readable");
+                const U32 motionProg = build("#version 400\n#define VERTEX_SHADER 1\n" + vertexBody,
+                                             "#version 400\n#define FRAGMENT_SHADER 1\n" + fragmentBody, "fsr2MotionF.glsl program");
+                const S32 locDepth = shaders.getUniformLocation(motionProg, "depthMap");
+                const S32 locInvCur = shaders.getUniformLocation(motionProg, "inv_view_proj_cur");
+                const S32 locCur = shaders.getUniformLocation(motionProg, "view_proj_cur");
+                const S32 locPrev = shaders.getUniformLocation(motionProg, "view_proj_prev");
+                const S32 locSign = shaders.getUniformLocation(motionProg, "motion_y_sign");
+
+                // camera at (1.5, 0.75, 2) looking down -z; 60 degree vertical field of view; the plane 10 m in front of it
+                const float kPi = 3.14159265358979f;
+                const Mat4 proj = perspective4(kPi / 3.f, float(MW) / float(MH), 0.5f, 100.f);
+                const Mat4 viewCur = translate4(-1.5f, -0.75f, -2.f);
+                const Mat4 vpCur = mul4(proj, viewCur);
+                const Mat4 invCur = inverse4(vpCur);
+                constexpr double kPlaneDistance = 10.0;
+                const float planeZ = float((proj.m[10] * -kPlaneDistance + proj.m[14]) / kPlaneDistance);
+                printf("  motion: depth clip control %s\n", ctx.depthClipControl ? "on" : "OFF (GL depth reconstruction is wrong)");
+                check(ctx.depthClipControl, "GL clip depth range (VK_EXT_depth_clip_control) for the depth convention");
+
+                std::vector<float> motion(MW * MH * 4);
+                auto at = [&](U32 x, U32 y) { return &motion[(y * MW + x) * 4]; };
+                auto runMotion = [&](bool drawPlane, const Mat4& vpPrev) {
+                    check(ctx.beginFrame(clear), "motion frame acquired");
+                    fb.bind(sceneFb); state.setViewport(0, 0, MW, MH); state.setDepthMask(true);
+                    fb.setClearColor(0, 0, 0, 1); fb.setClearDepth(1.0); fb.clear(0x4000 | 0x100);
+                    if (drawPlane)
+                    {
+                        state.setDepthTest(true); state.setDepthFunc(0x0207);   // GL_ALWAYS
+                        shaders.use(planeProg); shaders.uniform1f(planeProg, shaders.getUniformLocation(planeProg, "plane_z"), planeZ);
+                        vb.drawArrays(0, 6, 3);
+                        state.setDepthTest(false);
+                    }
+                    fb.bind(motionFb); fb.setClearColor(9, 9, 0, 0); fb.clear(0x4000);   // a skipped pass leaves 9s
+                    shaders.use(motionProg);
+                    textures.activateUnit(0); textures.bind(glc::TEXTURE_2D, depthTex);
+                    shaders.uniform1i(motionProg, locDepth, 0);
+                    shaders.uniformMatrix4fv(motionProg, locInvCur, 1, false, invCur.m);
+                    shaders.uniformMatrix4fv(motionProg, locCur, 1, false, vpCur.m);
+                    shaders.uniformMatrix4fv(motionProg, locPrev, 1, false, vpPrev.m);
+                    shaders.uniform1f(motionProg, locSign, kFsr2MotionYSign);
+                    vb.drawArrays(0, 6, 3);
+                    fb.readPixels(0, 0, MW, MH, glc::RGBA, glc::FLOAT, motion.data());
+                    fb.bind(0); ctx.endFrame(false);
+                };
+                const U32 cx = MW / 2, cy = MH / 2;
+                const double curUv[2] = {(cx + 0.5) / MW, (cy + 0.5) / MH};
+
+                // 1. static camera: previous == current gives exactly zero, everywhere
+                runMotion(true, vpCur);
+                int nonzero = 0;
+                for (U32 i = 0; i < MW * MH; ++i) nonzero += motion[i * 4] != 0.f || motion[i * 4 + 1] != 0.f;
+                printf("  static camera: centre %g %g, %d non-zero pixels\n", at(cx, cy)[0], at(cx, cy)[1], nonzero);
+                check(at(cx, cy)[0] == 0.f && at(cx, cy)[1] == 0.f && nonzero == 0, "static camera gives exactly zero motion");
+
+                // 2. previous camera 0.4 m right and 0.5 m up of the current one, same direction. For a plane facing the camera the
+                // motion is the same at every pixel: prevNdc - curNdc = -P * shift / distance, in UV units half of that.
+                const float shiftX = 0.4f, shiftY = 0.5f;
+                const Mat4 vpShift = mul4(proj, translate4(-1.5f - shiftX, -0.75f - shiftY, -2.f));
+                runMotion(true, vpShift);
+                const double expectX = -0.5 * proj.m[0] * shiftX / kPlaneDistance;
+                const double expectY = -0.5 * proj.m[5] * shiftY / kPlaneDistance * kFsr2MotionYSign;
+                printf("  shifted camera: centre %.6f %.6f, expected %.6f %.6f (%.2f, %.2f px)\n", at(cx, cy)[0], at(cx, cy)[1], expectX,
+                       expectY, expectX * MW, expectY * MH);
+                bool uniform = true;
+                const U32 probes[3][2] = {{cx, cy}, {3, 4}, {MW - 2, MH - 3}};
+                for (const auto& p : probes)
+                    uniform = std::fabs(at(p[0], p[1])[0] - expectX) < 1e-4 && std::fabs(at(p[0], p[1])[1] - expectY) < 1e-4 && uniform;
+                check(uniform, "shifted previous camera gives the analytic UV motion (centre and corners)");
+
+                // The sign, end to end: draw a marker where the previous camera saw the centre pixel's point, in the same offscreen
+                // way. FSR 3.1 looks for the previous frame at uv + motion in memory UV; the marker must be there, not at uv - motion.
+                const double ndc[4] = {curUv[0] * 2 - 1, curUv[1] * 2 - 1, planeZ, 1};
+                double world[4], prevClip[4];
+                transform4(invCur, ndc, world);
+                transform4(vpShift, world, prevClip);
+                check(ctx.beginFrame(clear), "marker frame acquired");
+                fb.bind(markerFb); state.setViewport(0, 0, MW, MH); fb.setClearColor(0, 0, 0, 1); fb.clear(0x4000);
+                shaders.use(markerProg);
+                shaders.uniform4f(markerProg, shaders.getUniformLocation(markerProg, "place"), float(prevClip[0] / prevClip[3]),
+                                  float(prevClip[1] / prevClip[3]), 1.f / MW, 1.f / MH);   // half a pixel
+                vb.drawArrays(0, 6, 3);
+                const float* mv = at(cx, cy);
+                const S32 px = S32(std::floor((curUv[0] + mv[0]) * MW)), py = S32(std::floor((curUv[1] + mv[1]) * MH));
+                const S32 wrongY = S32(std::floor((curUv[1] - mv[1]) * MH));
+                uint8_t hit[4]{}, miss[4]{};
+                fb.readPixels(px, py, 1, 1, glc::RGBA, glc::UNSIGNED_BYTE, hit);
+                fb.readPixels(px, wrongY, 1, 1, glc::RGBA, glc::UNSIGNED_BYTE, miss);
+                fb.bind(0); ctx.endFrame(false);
+                printf("  marker: centre pixel %u,%u + motion -> %d,%d lit %u; flipped row %d lit %u\n", cx, cy, px, py, hit[0], wrongY, miss[0]);
+                check(hit[0] == 255 && miss[0] == 0 && py != wrongY, "uv + motion finds the previous position in memory rows (Y sign)");
+
+                // 3. sky: no geometry (depth 1.0, the far plane) and a 2 degree turn: finite everywhere, matches the reference
+                const Mat4 vpTurn = mul4(proj, mul4(rotateY4(2.f * kPi / 180.f), viewCur));
+                runMotion(false, vpTurn);
+                bool finite = true;
+                for (U32 i = 0; i < MW * MH; ++i) finite = std::isfinite(motion[i * 4]) && std::isfinite(motion[i * 4 + 1]) && finite;
+                const double farNdc[4] = {curUv[0] * 2 - 1, curUv[1] * 2 - 1, 1, 1};
+                double farWorld[4], cur[4], prev[4];
+                transform4(invCur, farNdc, farWorld);
+                transform4(vpCur, farWorld, cur);
+                transform4(vpTurn, farWorld, prev);
+                const double skyX = (prev[0] / prev[3] - cur[0] / cur[3]) * 0.5;
+                const double skyY = (prev[1] / prev[3] - cur[1] / cur[3]) * 0.5 * kFsr2MotionYSign;
+                printf("  sky turn: centre %.6f %.6f, expected %.6f %.6f\n", at(cx, cy)[0], at(cx, cy)[1], skyX, skyY);
+                check(finite && std::fabs(skyX) > 0.01 && std::fabs(at(cx, cy)[0] - skyX) < 2e-4 && std::fabs(at(cx, cy)[1] - skyY) < 2e-4,
+                      "far-plane pixels reproject under rotation without NaN");
+
+                shaders.use(0);
+                for (U32 p : {planeProg, markerProg, motionProg}) shaders.deleteProgramAndObjects(p);
+                for (U32 f : {sceneFb, motionFb, markerFb}) fb.destroyFramebuffer(f);
+                const U32 names[] = {depthTex, sceneTex, motionTex, markerTex};
+                textures.destroy(4, names);
                 VK_CHECK(vkDeviceWaitIdle(ctx.device));
             }
             check(ctx.validationErrors == 0 && ctx.validationWarnings == 0, "zero Vulkan validation messages");

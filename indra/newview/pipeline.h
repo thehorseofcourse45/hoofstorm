@@ -767,6 +767,7 @@ public:
     // FXAA helper target
     LLRenderTarget          mFXAAMap;
     LLRenderTarget          mFSRMap;    // window-sized EASU output while FSR is active
+    LLRenderTarget          mFSR2MotionMap; // FSR 2: render-size RG16F camera motion (UV units, one mip level) while isFsr2Active()
     LLRenderTarget          mSMAABlendBuffer;
 
     // render ui to buffer target
@@ -1130,6 +1131,10 @@ public:
     private:
         bool mActive;
     };
+    // Camera motion vectors for FSR 2 into dest (mFSR2MotionMap): UV units, current pixel to its previous position, from the
+    // depth of depthSource with mCurViewProjUnjittered and mPrevViewProj; zero on a camera cut. Does nothing without the
+    // program or a complete dest. Call after endFsr2Frame (Task 9: at the start of renderFinalize).
+    void generateFsr2Motion(LLRenderTarget* depthSource, LLRenderTarget* dest);
     glm::mat4 mPrevViewProj = glm::mat4(1.f);           // previous displayed frame's unjittered projection * modelview
     glm::mat4 mCurViewProjUnjittered = glm::mat4(1.f);  // this frame's unjittered projection * modelview
     int mFsr2Phase = 0;                                 // jitter phase, advanced once per displayed frame

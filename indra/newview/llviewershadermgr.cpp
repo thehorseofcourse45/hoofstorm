@@ -35,6 +35,7 @@
 #include "llversioninfo.h"
 
 #include "llrender.h"
+#include "llrenderbackend.h"
 #include "llenvironment.h"
 #include "llerrorcontrol.h"
 #include "llworld.h"
@@ -216,6 +217,7 @@ LLGLSLShader            gDeferredPostNoDoFProgram;
 LLGLSLShader            gDeferredPostNoDoFNoiseProgram;
 LLGLSLShader            gDeferredFSREasuProgram;
 LLGLSLShader            gDeferredFSRRcasProgram;
+LLGLSLShader            gDeferredFSR2MotionProgram;   // FSR 2 camera motion vectors (Vulkan, while FSR 2 is on)
 LLGLSLShader            gDeferredWLSkyProgram;
 LLGLSLShader            gEnvironmentMapProgram;
 LLGLSLShader            gDeferredWLCloudProgram;
@@ -1184,6 +1186,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gCASProgram.unload();
         gDeferredFSREasuProgram.unload();
         gDeferredFSRRcasProgram.unload();
+        gDeferredFSR2MotionProgram.unload();
         gCASLegacyGammaProgram.unload();
         gEnvironmentMapProgram.unload();
         gDeferredWLSkyProgram.unload();
@@ -2920,6 +2923,23 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gDeferredFSRRcasProgram.unload();
             gSavedSettings.setBOOL("RenderFSREnabled", false);
             FSCommon::report_to_nearby_chat("FSR upscaling could not start on this graphics driver and has been turned off.");
+        }
+    }
+
+    // the temporal upscaler only runs in the Vulkan renderer; its programs are only built while the setting is on
+    if (success && gSavedSettings.getBOOL("RenderFSR2Enabled") && isVulkanRenderBackendActive())
+    {
+        gDeferredFSR2MotionProgram.mName = "Deferred FSR 2 Motion Vector Shader";
+        gDeferredFSR2MotionProgram.mShaderFiles.clear();
+        gDeferredFSR2MotionProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gDeferredFSR2MotionProgram.mShaderFiles.push_back(make_pair("deferred/fsr2MotionF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFSR2MotionProgram.clearPermutations();
+        gDeferredFSR2MotionProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gDeferredFSR2MotionProgram.createShader())
+        {
+            // optional like FSR 1.0; generateFsr2Motion skips an incomplete program (the fallback to FSR 1.0 is Task 10)
+            LL_WARNS("ShaderLoading") << "FSR 2 motion vector shader failed to compile" << LL_ENDL;
+            gDeferredFSR2MotionProgram.unload();
         }
     }
 

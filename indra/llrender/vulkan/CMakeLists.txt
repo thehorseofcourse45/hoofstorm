@@ -51,6 +51,9 @@ target_link_libraries(llvulkan_fsr_shader_test PRIVATE llvulkan)
 add_executable(llvulkan_shader_test EXCLUDE_FROM_ALL tests/shader_runtime_test.cpp tests/shader_test.cpp)
 target_include_directories(llvulkan_shader_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_SOURCE_DIR}/../../llcommon")
 target_link_libraries(llvulkan_shader_test PRIVATE llvulkan)
+# Viewer shaders the GPU tests load from the source tree (FSR 2 motion vectors).
+set(LL_VIEWER_DEFERRED_SHADERS "${CMAKE_CURRENT_SOURCE_DIR}/../../newview/app_settings/shaders/class1/deferred")
+target_compile_definitions(llvulkan_shader_test PRIVATE LL_VIEWER_DEFERRED_SHADERS="${LL_VIEWER_DEFERRED_SHADERS}")
 
 # Repeatable headless frame workloads and pixel guards; never starts the viewer.
 add_executable(llvulkan_frame_pacing_test EXCLUDE_FROM_ALL tests/frame_pacing_test.cpp)
@@ -86,6 +89,7 @@ target_link_libraries(llvulkan_fsr_pass_test PRIVATE llvulkan)
 add_executable(llvulkan_frames_test EXCLUDE_FROM_ALL tests/frames_test.cpp)
 target_include_directories(llvulkan_frames_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_SOURCE_DIR}/../../llcommon")
 target_link_libraries(llvulkan_frames_test PRIVATE llvulkan)
+target_compile_definitions(llvulkan_frames_test PRIVATE LL_VIEWER_DEFERRED_SHADERS="${LL_VIEWER_DEFERRED_SHADERS}")
 
 # FidelityFX FSR 3.1 upscaler context create/destroy on a validated headless device.
 add_executable(llvulkan_fsr2_context_test EXCLUDE_FROM_ALL tests/fsr2_context_test.cpp)

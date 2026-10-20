@@ -105,6 +105,10 @@ public:
     // detach from current color attachment
     void releaseColorAttachment();
 
+    // Vulkan FSR 2 inputs: color attachments added after this get one mip level, plus storage usage where the format allows
+    // (setRenderBackendStorageTexture). Set it before allocate(). No effect with OpenGL.
+    void setStorageImage(bool storage) { mStorageImage = storage; }
+
     //add color buffer attachment
     //limit of 4 color attachments per render target
     bool addColorAttachment(U32 color_fmt);
@@ -185,6 +189,7 @@ protected:
     bool mUseDepth;
     LLTexUnit::eTextureMipGeneration mGenerateMipMaps;
     U32 mMipLevels;
+    bool mStorageImage = false;
 
     LLTexUnit::eTextureType mUsage;
 };

@@ -48,6 +48,7 @@
 #include "llflexibleobject.h"
 #include "llfeaturemanager.h"
 #include "llviewershadermgr.h"
+#include "llrenderbackend.h"
 
 #include "llsky.h"
 #include "llvieweraudio.h"
@@ -663,6 +664,11 @@ static bool handleFSR2EnabledChanged(const LLSD& newvalue)
     }
     LLPipeline::resetFSRDynamic();
     gResizeScreenTexture = true;
+    // the FSR 2 programs are only built while the setting is on (Vulkan only)
+    if (gPipeline.isInit() && newvalue.asBoolean() && isVulkanRenderBackendActive() && !gDeferredFSR2MotionProgram.isComplete())
+    {
+        LLViewerShaderMgr::instance()->setShaders();
+    }
     return true;
 }
 

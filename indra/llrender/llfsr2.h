@@ -85,6 +85,12 @@ inline bool fsr2HistoryCut(bool hadHistory, unsigned renderW, unsigned renderH, 
     return !hadHistory || renderW != lastW || renderH != lastH || regionShift || cameraJumpMeters > kFsr2CameraCutMeters;
 }
 
+// Y sign of the motion vectors (fsr2MotionF.glsl `motion_y_sign`). They are UV units, current pixel to previous position,
+// and FSR 3.1 reads previous = uv + motion in the image's memory UV (row 0 = v 0). Vulkan offscreen targets are not Y-flipped
+// (row 0 is ndc y = -1), so the texture UV the shader works in already is that memory UV: +1. This is the one place to flip
+// if the in-world check shows vertical reprojection going the wrong way.
+constexpr float kFsr2MotionYSign = 1.0f;
+
 // Column-major projection offset (a translation in NDC) applying a sub-pixel jitter given in render pixels.
 inline void fsr2JitterProjection(float jx, float jy, float renderW, float renderH, float out[16])
 {
