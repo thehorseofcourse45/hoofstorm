@@ -542,7 +542,8 @@ LLFloaterPreference::LLFloaterPreference(const LLSD& key)
 
     mComplexityChangedSignal = gSavedSettings.getControl("RenderAvatarMaxComplexity")->getCommitSignal()->connect(boost::bind(&LLFloaterPreference::updateComplexityText, this));
     mImpostorsChangedSignal = gSavedSettings.getControl("RenderAvatarMaxNonImpostors")->getSignal()->connect(boost::bind(&LLFloaterPreference::updateIndirectMaxNonImpostors, this, _2));
-    mFSR2ChangedSignal = gSavedSettings.getControl("RenderFSR2Enabled")->getSignal()->connect(boost::bind(&LLFloaterPreference::updateFSR2State, this));
+    mFSR2ChangedSignal = gSavedSettings.getControl("RenderFSR2Enabled")->getSignal()->connect(boost::bind(&LLFloaterPreference::updateFSRInfo, this));
+    mFSRChangedSignal = gSavedSettings.getControl("RenderFSREnabled")->getSignal()->connect(boost::bind(&LLFloaterPreference::updateFSRInfo, this));
 
     mCommitCallbackRegistrar.add("Pref.ClearLog",               boost::bind(&LLConversationLog::onClearLog, &LLConversationLog::instance()));
     mCommitCallbackRegistrar.add("Pref.DeleteTranscripts",      boost::bind(&LLFloaterPreference::onDeleteTranscripts, this));
@@ -960,6 +961,7 @@ LLFloaterPreference::~LLFloaterPreference()
     mComplexityChangedSignal.disconnect();
     mImpostorsChangedSignal.disconnect();
     mFSR2ChangedSignal.disconnect();
+    mFSRChangedSignal.disconnect();
 }
 
 // <FS:Zi> FIRE-19539 - Include the alert messages in Prefs>Notifications>Alerts in preference Search.

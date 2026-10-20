@@ -343,6 +343,7 @@ private:
     boost::signals2::connection mImpostorsChangedSignal;
     boost::signals2::connection mComplexityChangedSignal;
     boost::signals2::connection mFSR2ChangedSignal;     // the temporal upscaler is also switched off by the fallback and by FSR 1.0
+    boost::signals2::connection mFSRChangedSignal;      // the fallback turns FSR 1.0 on while Preferences is open
 
     void onUpdateFilterTerm( bool force = false );
     void collectSearchableItems();
