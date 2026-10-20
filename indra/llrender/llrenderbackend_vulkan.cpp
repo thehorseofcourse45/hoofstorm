@@ -253,7 +253,7 @@ struct NativeRenderer
                 << "; buffer memory allocations=" << context.bufferMemoryAllocations << LL_ENDL;
         LL_INFOS("VulkanPacing") << "VRAM by owner MB: textures=" << (context.textureMemBytes >> 20) << " render targets=" << (context.targetMemBytes >> 20)
             << " host buffers=" << (context.hostBufferMemBytes >> 20) << " device buffers=" << (context.bufferVramBytes >> 20)
-            << " upload staging=" << (context.stagingMemBytes >> 20) << LL_ENDL;
+            << " upload staging=" << (context.stagingMemBytes >> 20) << " upscaler=" << (context.upscalerMemBytes >> 20) << LL_ENDL;
         previousStalls=context.stallCounts; previousStallMs=context.stallMs;
         previousCacheHits=context.pipelineCacheHits;
         previousBlocking = context.blockingSubmissions;
