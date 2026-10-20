@@ -2937,10 +2937,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFSR2MotionProgram.mShaderFiles.push_back(make_pair("deferred/fsr2MotionF.glsl", GL_FRAGMENT_SHADER));
         gDeferredFSR2MotionProgram.clearPermutations();
         gDeferredFSR2MotionProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (!gDeferredFSR2MotionProgram.createShader())
+        const bool motion_ok = gDeferredFSR2MotionProgram.createShader();
+        if (!motion_ok)
         {
-            // optional like FSR 1.0; generateFsr2Motion skips an incomplete program (the fallback to FSR 1.0 is Task 10)
-            LL_WARNS("ShaderLoading") << "FSR 2 motion vector shader failed to compile" << LL_ENDL;
+            // optional like FSR 1.0: the pipeline falls back to FSR 1.0 (below; one warning there)
             gDeferredFSR2MotionProgram.unload();
         }
 
@@ -2950,11 +2950,19 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFSR2ReactiveProgram.mShaderFiles.push_back(make_pair("deferred/fsr2ReactiveF.glsl", GL_FRAGMENT_SHADER));
         gDeferredFSR2ReactiveProgram.clearPermutations();
         gDeferredFSR2ReactiveProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (!gDeferredFSR2ReactiveProgram.createShader())
+        const bool reactive_ok = gDeferredFSR2ReactiveProgram.createShader();
+        if (!reactive_ok)
         {
-            // optional like the motion pass; generateFsr2Reactive skips an incomplete program (the fallback is Task 10)
-            LL_WARNS("ShaderLoading") << "FSR 2 reactive mask shader failed to compile" << LL_ENDL;
             gDeferredFSR2ReactiveProgram.unload();
+        }
+
+        // FSR 2 gives way to FSR 1.0 from the idle loop (outside this reload). Once it is off these programs are no longer built,
+        // so turning it on again is what tries them again; nothing here reloads in a loop.
+        if (!motion_ok || !reactive_ok)
+        {
+            gPipeline.requestFsr2Fallback(!motion_ok && !reactive_ok ? "the motion vector and reactive mask shaders failed to compile"
+                                          : !motion_ok ? "the motion vector shader failed to compile"
+                                                       : "the reactive mask shader failed to compile");
         }
     }
 

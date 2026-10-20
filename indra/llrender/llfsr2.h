@@ -1,5 +1,6 @@
 #pragma once
 // FSR 2/3.1 temporal upscaling: quality divisors, render scale, jitter sequence length, mip bias and the jitter projection offset.
+#include "llfsr.h"
 #include <cmath>
 
 // Per-axis downscale divisor for Native AA, Quality, Balanced, Performance, Ultra Performance. Out of range clamps to Ultra Performance.
@@ -123,6 +124,36 @@ inline bool fsr2UseUpscaler(unsigned quality, unsigned renderW, unsigned renderH
     if (!renderW || !renderH || !displayW || !displayH) return false;
     if (renderW > displayW || renderH > displayH) return false;
     return quality == 0 || renderW < displayW || renderH < displayH;
+}
+
+// Fallback when the temporal upscaler cannot run (LLPipeline::applyFsr2Fallback): the FSR 1.0 preset (0 Ultra Quality ..
+// 3 Performance, llfsr.h) whose render scale is closest to this mode's, so the scene keeps its render size as far as FSR 1.0
+// allows (Ultra Performance's 1/3 becomes Performance's 1/2, the lowest FSR 1.0 preset). -1 for Native AA: it renders at full
+// size, where FSR 1.0 has nothing to upscale, so it stays off.
+inline int fsr2FallbackFsrQuality(unsigned fsr2Quality)
+{
+    const float scale = fsr2RenderScale(fsr2Quality);
+    if (scale >= 1.0f) return -1;
+    int best = 0;
+    for (int q = 1; q < 4; ++q)
+        if (std::fabs(fsrQualityScale(q, 1.0f) - scale) < std::fabs(fsrQualityScale(best, 1.0f) - scale)) best = q;
+    return best;
+}
+
+// A frame reads the upscaled output (mFSR2Map) only when its dispatch was accepted (with the render thread on: queued), the
+// failure rule has not tripped, and the last dispatch the backend finished did not fail. With the render thread on that last
+// signal is usually the previous frame's: a failure on the render thread shows one frame late, and that frame reads the output
+// of the last accepted dispatch (or the cleared target). Otherwise the frame takes the plain path (bilinear stretch).
+inline bool fsr2ReadUpscaledOutput(bool dispatchAccepted, bool backendFailed, bool lastDispatchFailed)
+{
+    return dispatchAccepted && !backendFailed && !lastDispatchFailed;
+}
+
+// FXAA (1) or SMAA (2) after the post chain: the temporal upscaler anti-aliases the frames it upscaled, every other frame
+// (FSR 2 off, or a plain-path frame while its targets exist) runs the chosen one.
+inline unsigned fsr2PostAntiAlias(unsigned fsaaType, bool upscaled)
+{
+    return upscaled ? 0u : fsaaType;
 }
 
 // Camera near and far (metres) and vertical field of view (radians) from a column-major GL perspective projection

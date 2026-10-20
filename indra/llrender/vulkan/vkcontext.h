@@ -287,6 +287,8 @@ struct VkContext
     std::atomic<int64_t> upscalerMemBytes{0};   // VulkanFsrUpscaler: SDK history, internal targets and pipelines
     uint32_t failMemoryTypes = 0;           // test hook: bit i makes slab-block allocation from memory type i fail
     bool failFsr2Create = false;            // test hook: VulkanFsrUpscaler::create/resize fail as if the SDK had refused
+    bool failFsr2Dispatch = false;          // test hook: VulkanFsrUpscaler::dispatch records its barriers, the SDK call fails
+    uint64_t fsr2CreateCalls = 0, fsr2DispatchCalls = 0;    // VulkanFsrUpscaler::create/resize and SDK dispatch attempts
     uint64_t bufferMemoryAllocations = 0;   // vkAllocateMemory calls behind vertex/index storage
     uint64_t textureUploadAllocations = 0, textureRingUploads = 0;
     std::chrono::steady_clock::time_point recordingStarted;

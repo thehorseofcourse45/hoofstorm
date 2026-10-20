@@ -2,8 +2,12 @@
 // constant depth, zero motion) is upscaled to 960x540 for 8 jittered frames and one reset frame, in the FP16 variant when the device
 // has it and in FP32. Every frame's output is copied to a host buffer and checked: finite everywhere, the square bright in the centre,
 // the background dark in the corner. Also: the failFsr2Create hook, refused inverted depth, resize, VRAM accounting, zero validation
-// messages including teardown.
+// messages including teardown. Then the failure rule and the reset carry through VulkanFramebufferBackend::dispatchFsr2.
 #include "vkfsr2.h"
+#include "vkbackends.h"
+#include "vktexturebackend.h"
+#include "vkframebufferbackend.h"
+#include "glconsts.h"
 #include <cmath>
 #include <cstring>
 
@@ -164,6 +168,81 @@ int main()
             check(fsr.memoryBytes() == 0 && ctx.upscalerMemBytes == 0, "destroy releases the counted VRAM");
         }
         ctx.fp16Math = deviceFp16;
+
+        // Failure rule through the backend entry the viewer uses (dispatchRenderBackendFsr2 forwards to
+        // VulkanFramebufferBackend::dispatchFsr2; the global entry needs the native renderer, so the backend is driven here).
+        {
+            VulkanRenderStateBackend state;
+            VulkanTextureBackend textures(&ctx);
+            VulkanFramebufferBackend fb(&ctx, &state);
+            constexpr U32 RW = 320, RH = 240, DW = 640, DH = 480;
+            auto makeTexture = [&](U32 internal, U32 format, U32 w, U32 h) {
+                U32 name; textures.generate(1, &name);
+                textures.setStorageImage(name);
+                textures.bind(glc::TEXTURE_2D, name);
+                textures.image2D(glc::TEXTURE_2D, 0, internal, w, h, format, glc::FLOAT, nullptr);
+                return name;
+            };
+            const U32 color = makeTexture(glc::RGBA16F, glc::RGBA, RW, RH);
+            const U32 depth = makeTexture(glc::DEPTH_COMPONENT32F, glc::DEPTH_COMPONENT, RW, RH);
+            const U32 motion = makeTexture(glc::RG16F, glc::RG, RW, RH);
+            const U32 output = makeTexture(glc::RGBA16F, glc::RGBA, DW, DH);
+            const U32 srgb = makeTexture(glc::SRGB8_ALPHA8, glc::RGBA, DW, DH);
+            RenderBackendFsr2Params p;
+            p.colorTex = color; p.depthTex = depth; p.motionTex = motion; p.outputTex = output;
+            p.renderW = RW; p.renderH = RH; p.displayW = DW; p.displayH = DH;
+            p.frameTimeMs = 16.7f;
+            const float clear[4] = {0, 0, 0, 1};
+            check(ctx.beginFrame(clear), "backend: frame acquired");
+
+            // create fails three times: the rule trips on the third, and from then on nothing is created or dispatched
+            ctx.failFsr2Create = true;
+            const uint64_t creates = ctx.fsr2CreateCalls, dispatches = ctx.fsr2DispatchCalls;
+            const bool first = !fb.dispatchFsr2(p) && !fb.fsr2Failed() && fb.fsr2LastFailed();
+            const bool second = !fb.dispatchFsr2(p) && !fb.fsr2Failed();
+            check(first && second, "backend: two create failures answer false, the rule has not tripped");
+            check(!fb.dispatchFsr2(p) && fb.fsr2Failed() && ctx.fsr2CreateCalls == creates + 3, "backend: the third create failure trips the rule");
+            ctx.failFsr2Create = false;
+            const bool refused = !fb.dispatchFsr2(p) && !fb.dispatchFsr2(p);
+            check(refused && ctx.fsr2CreateCalls == creates + 3 && ctx.fsr2DispatchCalls == dispatches && ctx.upscalerMemBytes == 0,
+                  "backend: after the trip no create or dispatch is attempted");
+            fb.releaseFsr2();
+            check(!fb.fsr2Failed() && !fb.fsr2LastFailed(), "backend: release clears the failure state");
+            ctx.endFrame(false);
+            // one upscale per frame, as the viewer does (the SDK recycles its per-dispatch views after a few dispatches)
+            auto inFrame = [&](const RenderBackendFsr2Params& params) {
+                check(ctx.beginFrame(clear), "backend: frame acquired");
+                const bool ok = fb.dispatchFsr2(params);
+                ctx.endFrame(false);
+                return ok;
+            };
+            check(inFrame(p) && !fb.fsr2LastFailed() && ctx.fsr2DispatchCalls == dispatches + 1, "backend: the next dispatch creates and records");
+
+            // a reset is consumed only by a dispatch the SDK accepted
+            RenderBackendFsr2Params resetRefused = p; resetRefused.reset = true; resetRefused.outputTex = srgb;
+            check(!inFrame(resetRefused) && fb.fsr2LastFailed(), "backend: a refused dispatch asking for a reset counts a failure");
+            check(inFrame(p) && fb.fsr2LastReset() && !fb.fsr2LastFailed(), "backend: the reset a refused dispatch asked for is applied by the next accepted one");
+            check(inFrame(p) && !fb.fsr2LastReset(), "backend: the carried reset is applied once");
+            RenderBackendFsr2Params resetSdk = p; resetSdk.reset = true;
+            ctx.failFsr2Dispatch = true;
+            check(!inFrame(resetSdk) && fb.fsr2LastFailed() && ctx.fsr2DispatchCalls == dispatches + 4, "backend: an SDK refusal asking for a reset counts a failure");
+            ctx.failFsr2Dispatch = false;
+            check(inFrame(p) && fb.fsr2LastReset(), "backend: the reset an SDK refusal swallowed is applied by the next accepted dispatch");
+            fb.keepFsr2Reset(true);     // the render thread dropped a dispatch with its failed frame
+            check(inFrame(p) && fb.fsr2LastReset(), "backend: a reset handed on from a dropped dispatch is applied");
+            // a recreated swapchain resets the history: a refused dispatch does not use that up either
+            ++ctx.swapchainGeneration;
+            ctx.failFsr2Dispatch = true;
+            check(!inFrame(p), "backend: SDK refusal after a swapchain recreation");
+            ctx.failFsr2Dispatch = false;
+            check(inFrame(p) && fb.fsr2LastReset(), "backend: the swapchain reset survives the refused dispatch");
+            check(inFrame(p) && !fb.fsr2LastReset(), "backend: and is applied once");
+            fb.releaseFsr2();
+            check(ctx.upscalerMemBytes == 0, "backend: release frees the upscaler");
+            const U32 names[] = {color, depth, motion, output, srgb};
+            textures.destroy(5, names);
+            VK_CHECK(vkDeviceWaitIdle(ctx.device));
+        }
 
         vkDestroyCommandPool(ctx.device, pool, nullptr);
         vkDestroyBuffer(ctx.device, staging, nullptr); vkFreeMemory(ctx.device, stagingMemory, nullptr);

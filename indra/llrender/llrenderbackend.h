@@ -72,12 +72,17 @@ struct RenderBackendFsr2Params
 // not active, no frame is recording, a size is zero or render > display, an image is unsuitable, the upscaler cannot be created,
 // or after isRenderBackendFsr2Failed(). The upscaler is created on first use and recreated when a size changes. With the render
 // thread on, the work is queued and true means queued: a failure found there only counts toward isRenderBackendFsr2Failed().
+// params.reset is kept until a dispatch the SDK accepts uses it, so the caller may treat it as sent once this returns true.
 bool dispatchRenderBackendFsr2(const RenderBackendFsr2Params& params);
 void releaseRenderBackendFsr2();     // frees the upscaler and its history, VRAM count to 0, failure state cleared
 bool isRenderBackendFsr2Failed();    // three dispatches in a row failed; nothing is attempted until releaseRenderBackendFsr2()
 // The last dispatch that reached the backend was recorded and accepted by the SDK. With the render thread on, read it after
 // waitRenderBackendIdle() (tests).
 bool lastRenderBackendFsr2Succeeded();
+// The last dispatch the backend finished counting failed (a refusal, a create failure or an SDK error); a recorded dispatch or a
+// release clears it. Safe to read every frame: with the render thread on it describes the newest dispatch that thread has run,
+// usually the previous frame's (one frame late), never a dispatch still in progress.
+bool lastRenderBackendFsr2Failed();
 // Call after generating the texture name and before defining its storage: one mip level, plus storage usage where the format
 // allows it (for FSR 2 images). No effect with OpenGL.
 void setRenderBackendStorageTexture(unsigned texture);

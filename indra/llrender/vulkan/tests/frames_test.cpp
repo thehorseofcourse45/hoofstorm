@@ -325,6 +325,23 @@ int main(int argc, char** argv)
                 check(!fb.dispatchFsr2(p) && ctx.upscalerMemBytes == 0, "after the rule trips no dispatch is attempted");
                 fb.releaseFsr2();
                 check(!fb.fsr2Failed() && fb.dispatchFsr2(p), "release clears the failure state");
+                // Skip rule (the pipeline asks fsr2UseUpscaler before allocating the FSR 2 targets and before each dispatch): a
+                // minimized window (zero sizes) and render == display outside Native AA create nothing and count no failure;
+                // Native AA (quality 0, render == display) runs.
+                fb.releaseFsr2();
+                const uint64_t createsBefore = ctx.fsr2CreateCalls;
+                RenderBackendFsr2Params zero = p; zero.renderW = zero.renderH = zero.displayW = zero.displayH = 0;
+                check(!fsr2UseUpscaler(1, 0, 0, 0, 0) && !fsr2UseUpscaler(0, 0, 0, 0, 0), "skip rule: a zero-size window is skipped");
+                check(!fb.dispatchFsr2(zero) && !fb.fsr2LastFailed() && ctx.fsr2CreateCalls == createsBefore && ctx.upscalerMemBytes == 0,
+                      "skip rule: a zero-size dispatch creates nothing and is not a failure");
+                RenderBackendFsr2Params same = p; same.displayW = RW; same.displayH = RH;   // render == display
+                bool presetDispatched = false;
+                for (unsigned quality = 1; quality <= 4; ++quality)
+                    if (fsr2UseUpscaler(quality, same.renderW, same.renderH, same.displayW, same.displayH)) presetDispatched = fb.dispatchFsr2(same) || presetDispatched;
+                check(!presetDispatched && ctx.fsr2CreateCalls == createsBefore && ctx.upscalerMemBytes == 0,
+                      "skip rule: render == display with a preset quality creates no upscaler");
+                check(fsr2UseUpscaler(0, same.renderW, same.renderH, same.displayW, same.displayH) && fb.dispatchFsr2(same) &&
+                      ctx.fsr2CreateCalls == createsBefore + 1 && ctx.upscalerMemBytes > 0, "skip rule: Native AA at render == display runs");
                 ctx.endFrame(false);
                 fb.releaseFsr2();
                 check(ctx.upscalerMemBytes == 0, "upscaler VRAM back to zero");

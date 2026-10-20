@@ -803,8 +803,11 @@ bool dispatchRenderBackendFsr2(const RenderBackendFsr2Params& params)
     {
         // The texture state the checks need lives on the render thread: queue the work instead of waiting for its answer.
         if (!sNative->frameActive) return false;
+        // The caller treats a queued reset as sent; dispatchFsr2 keeps it until the SDK accepts a dispatch, and a dispatch dropped
+        // with a failed frame hands it on the same way.
         sNative->thread->post([fb = sNative->framebuffers.get(), sh = &sNative->shared, params] {
             if (!sh->frameFailed) fb->dispatchFsr2(params);
+            else fb->keepFsr2Reset(params.reset);
         });
         return true;
     }
@@ -832,6 +835,13 @@ bool lastRenderBackendFsr2Succeeded()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
     if (sNative) return sNative->framebuffers->fsr2LastOk();     // atomic, as above
+#endif
+    return false;
+}
+bool lastRenderBackendFsr2Failed()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) return sNative->framebuffers->fsr2LastFailed(); // atomic, as above
 #endif
     return false;
 }

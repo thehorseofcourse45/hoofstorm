@@ -162,6 +162,38 @@ int main()
         check(jn == cn && jf == cf && jfov == cfov, "jitter does not change the camera values");
     }
 
+    // fallback to FSR 1.0: the preset whose scale is closest to the temporal mode's; Native AA renders full size (FSR 1.0 stays off)
+    {
+        check(fsr2FallbackFsrQuality(1) == 1 && fsr2FallbackFsrQuality(2) == 2 && fsr2FallbackFsrQuality(3) == 3,
+              "Quality, Balanced, Performance fall back to FSR 1.0 Quality, Balanced, Performance");
+        check(fsr2FallbackFsrQuality(4) == 3, "Ultra Performance (1/3) falls back to FSR 1.0 Performance, its lowest scale");
+        check(fsr2FallbackFsrQuality(0) < 0, "Native AA falls back to full size without FSR 1.0");
+        check(fsr2FallbackFsrQuality(9) == 3, "an out-of-range quality clamps like the divisor table");
+        bool closest = true;
+        for (unsigned q = 1; q <= 4; ++q)
+        {
+            const int fb = fsr2FallbackFsrQuality(q);
+            for (unsigned other = 0; other < 4; ++other)
+                closest = closest && std::fabs(fsrQualityScale(fb, 1.f) - fsr2RenderScale(q)) <= std::fabs(fsrQualityScale(other, 1.f) - fsr2RenderScale(q));
+        }
+        check(closest, "every fallback preset is the closest FSR 1.0 scale");
+    }
+
+    // plain-path decision: the upscaled output is read only after an accepted dispatch with no failure signal
+    {
+        check(fsr2ReadUpscaledOutput(true, false, false), "accepted dispatch, no failure: the frame reads the upscaled output");
+        check(!fsr2ReadUpscaledOutput(false, false, false), "refused dispatch: plain path");
+        check(!fsr2ReadUpscaledOutput(true, true, false), "failure rule tripped: plain path");
+        check(!fsr2ReadUpscaledOutput(true, false, true), "last dispatch failed (render thread, one frame late): plain path");
+    }
+
+    // FXAA/SMAA after the post chain: skipped only on frames the upscaler anti-aliased
+    {
+        check(fsr2PostAntiAlias(1, true) == 0 && fsr2PostAntiAlias(2, true) == 0, "upscaled frame: no FXAA or SMAA on top");
+        check(fsr2PostAntiAlias(1, false) == 1 && fsr2PostAntiAlias(2, false) == 2 && fsr2PostAntiAlias(0, false) == 0,
+              "plain-path frame (or FSR 2 off): the chosen FXAA/SMAA runs");
+    }
+
     printf("FSR2_HELPERS %s checks=%d\n", failed ? "FAIL" : "PASS", checks);
     return failed ? 1 : 0;
 }

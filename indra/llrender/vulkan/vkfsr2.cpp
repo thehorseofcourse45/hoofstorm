@@ -41,6 +41,7 @@ FfxResource resourceOf(const Fsr2Image& i, const wchar_t* name, FfxResourceState
 bool VulkanFsrUpscaler::create(VkContext& ctx, uint32_t displayW, uint32_t displayH, uint32_t renderW, uint32_t renderH)
 {
     destroy();
+    ++ctx.fsr2CreateCalls;
     if (ctx.failFsr2Create)
         return false;
     mCtx = &ctx;
@@ -134,7 +135,8 @@ bool VulkanFsrUpscaler::dispatch(VkCommandBuffer cmd, const Fsr2Inputs& in, cons
     d.cameraNear = in.cameraNear;
     d.cameraFar = in.cameraFar;
     d.cameraFovAngleVertical = in.fovY;
-    const bool ok = ffxFsr3UpscalerContextDispatch(mContext.get(), &d) == FFX_OK;
+    ++mCtx->fsr2DispatchCalls;
+    const bool ok = !mCtx->failFsr2Dispatch && ffxFsr3UpscalerContextDispatch(mContext.get(), &d) == FFX_OK;
 
     // the SDK leaves the output in GENERAL (its UNORDERED_ACCESS); the passes after it sample it
     count = 0;

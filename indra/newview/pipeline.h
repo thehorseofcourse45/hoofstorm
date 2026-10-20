@@ -155,8 +155,9 @@ public:
     void copyScreenSpaceReflections(LLRenderTarget* src, LLRenderTarget* dst);
     void generateLuminance(LLRenderTarget* src, LLRenderTarget* dst);
     void generateExposure(LLRenderTarget* src, LLRenderTarget* dst, bool use_history = true);
-    void tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_correct);
-    void gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst);
+    // filter: how src is sampled; bilinear only when src is smaller than dst (FSR 2 plain-path frames stretch the render-size scene)
+    void tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_correct, LLTexUnit::eTextureFilterOptions filter = LLTexUnit::TFO_POINT);
+    void gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst, LLTexUnit::eTextureFilterOptions filter = LLTexUnit::TFO_POINT);
     void generateGlow(LLRenderTarget* src);
     void applyCAS(LLRenderTarget* src, LLRenderTarget* dst);
     void applyFXAA(LLRenderTarget* src, LLRenderTarget* dst);
@@ -1157,7 +1158,18 @@ public:
     // Texture LOD bias bracket: display() calls this right before the main-scene geometry; endFsr2Frame (and beginFsr2Frame,
     // the top of renderFinalize, any reallocation) sets it back to 0. Biased only for the jittered main scene of an upscaled frame.
     void beginFsr2SceneTextures();
+    // Fallback chain temporal upscaler -> FSR 1.0 -> bilinear. Called when the temporal upscaler cannot run: a program failed
+    // to compile (setShaders), a target failed to allocate, or the backend tripped its failure rule (create, resize or three
+    // dispatch errors in a row; polled in beginFsr2Frame). Only notes the reason; applyFsr2Fallback runs once from the idle
+    // loop, outside setShaders and the frame. Later requests until then are ignored.
+    void requestFsr2Fallback(const std::string& reason);
 private:
+    // Unticks RenderFSR2Enabled, logs one warning with the reason, posts the chat message (as FSR 1.0's failure does) and turns
+    // FSR 1.0 on at the closest preset (fsr2FallbackFsrQuality; Native AA stays at full size with FSR 1.0 off). The listeners
+    // reallocate the screen targets on the next frame. Nothing when the user unticked the setting meanwhile.
+    void applyFsr2Fallback();
+    bool mFsr2FallbackPending = false;
+    std::string mFsr2FallbackReason;
     // renderFinalize: motion, reactive (cleared once while v1 marks nothing), the upscale into mFSR2Map and the glow alpha
     // copied back. False, with mFSR2Map unused, when this frame takes the plain path (no jittered scene, sizes skipped,
     // a program or target missing, the dispatch refused or the backend failed).

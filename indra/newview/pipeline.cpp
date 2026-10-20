@@ -29,6 +29,7 @@
 #include "llfsr.h"
 #include "llfsr2.h"
 #include "fscommon.h"
+#include "llcallbacklist.h"
 #include "llframebufferbackend.h"
 #include "lltexturebackend.h"
 
@@ -881,6 +882,12 @@ bool LLPipeline::isFsr2Active()
 void LLPipeline::beginFsr2Frame()
 {
     setFsr2LodBias(0.f);    // every frame starts without the texture LOD bias
+    // the backend tripped its failure rule (create or resize failed, or three dispatches in a row): isFsr2Active() is already
+    // false, so frames take the plain path at the current render scale until the fallback turns FSR 1.0 on at a matching one
+    if (fsr2Selected() && isRenderBackendFsr2Failed())
+    {
+        requestFsr2Fallback("the upscaler failed three times in a row (create, resize or dispatch)");
+    }
     const U32 render_w = mMainRT.screen.getWidth();
     const U32 render_h = mMainRT.screen.getHeight();
     mFsr2SceneJittered = false;
@@ -1079,12 +1086,19 @@ bool LLPipeline::renderFsr2Upscale()
     fsr2CameraFromProjection(glm::value_ptr(mFsr2UnjitteredProj), p.cameraNear, p.cameraFar, p.fovY);
 
     mFsr2Dispatched = true;
-    // with the render thread on, true means queued; a failure there shows up later through isRenderBackendFsr2Failed()
-    if (!dispatchRenderBackendFsr2(p) || isRenderBackendFsr2Failed())
+    // With the render thread on, true means queued. The backend keeps a reset until a dispatch the SDK accepts uses it, so the
+    // request is handed over here even if the queued dispatch fails there.
+    const bool accepted = dispatchRenderBackendFsr2(p);
+    if (accepted)
+    {
+        mFsr2ResetPending = false;
+    }
+    // A failure on the render thread shows through lastRenderBackendFsr2Failed() one frame late (it describes the newest
+    // dispatch that thread finished); until then the frame reads the last accepted output, or the target cleared at allocation.
+    if (!fsr2ReadUpscaledOutput(accepted, isRenderBackendFsr2Failed(), lastRenderBackendFsr2Failed()))
     {
         return false;
     }
-    mFsr2ResetPending = false;
 
     // the SDK writes alpha 1; the glow pass reads the glow mask from alpha, so the scene's alpha is copied back (bilinear)
     {
@@ -1092,7 +1106,7 @@ bool LLPipeline::renderFsr2Upscale()
         mFSR2Map.bindTarget();
         gGL.setColorMask(false, true);
         gCopyProgram.bind();
-        gGL.getTexUnit(0)->bind(&mRT->screen);
+        mRT->screen.bindTexture(0, 0, LLTexUnit::TFO_BILINEAR);
         {
             LLGLDepthTest depth_test(GL_FALSE);
             mScreenTriangleVB->setBuffer();
@@ -1112,6 +1126,56 @@ void LLPipeline::releaseFsr2Upscaler()
     {
         releaseRenderBackendFsr2();
         mFsr2Dispatched = false;
+    }
+}
+
+void LLPipeline::requestFsr2Fallback(const std::string& reason)
+{
+    if (mFsr2FallbackPending)
+    {
+        return;
+    }
+    mFsr2FallbackPending = true;
+    mFsr2FallbackReason = reason;
+    // the settings flip reloads shaders (FSR 1.0's programs) and reallocates targets: never from inside setShaders or a frame
+    doOnIdleOneTime([]() { gPipeline.applyFsr2Fallback(); });
+}
+
+void LLPipeline::applyFsr2Fallback()
+{
+    if (!mFsr2FallbackPending)
+    {
+        return;
+    }
+    mFsr2FallbackPending = false;
+    // the user unticked it meanwhile, or the renderer is not Vulkan: nothing to fall back from
+    if (!isInit() || !gSavedSettings.getBOOL("RenderFSR2Enabled") || !isVulkanRenderBackendActive())
+    {
+        return;
+    }
+    const int fsr1_quality = fsr2FallbackFsrQuality(gSavedSettings.getU32("RenderFSR2Quality"));
+    const bool dynamic = gSavedSettings.getBOOL("RenderFSR2Dynamic");
+    LL_WARNS() << "FSR 2 temporal upscaler turned off: " << mFsr2FallbackReason << "; "
+               << (fsr1_quality >= 0 ? "FSR 1.0 takes over at the closest scale" : "rendering at full size") << LL_ENDL;
+
+    // frees whatever the backend holds and clears its failure state, so ticking the setting again starts clean
+    releaseRenderBackendFsr2();
+    mFsr2Dispatched = false;
+
+    // FSR 2 first: its listener sees FSR 1.0 still off (no untick), and FSR 1.0's listener below then finds FSR 2 off, so neither
+    // listener changes the other setting back. Both reset the dynamic scale and flag the screen targets for reallocation; FSR
+    // 1.0's also builds its programs (setShaders), which no longer builds the FSR 2 ones.
+    gSavedSettings.setBOOL("RenderFSR2Enabled", false);
+    if (fsr1_quality >= 0)
+    {
+        gSavedSettings.setU32("RenderFSRQuality", (U32)fsr1_quality);
+        gSavedSettings.setBOOL("RenderFSRDynamic", dynamic);
+        gSavedSettings.setBOOL("RenderFSREnabled", true);
+        FSCommon::report_to_nearby_chat("Temporal upscaling (FSR 2/3) could not run and has been turned off; FSR upscaling is on instead.");
+    }
+    else
+    {
+        FSCommon::report_to_nearby_chat("Temporal upscaling (FSR 2/3) could not run and has been turned off.");
     }
 }
 
@@ -1413,22 +1477,6 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             }
         }
 
-        if (RenderFSAAType > 0)
-        {
-            LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("FSAABuffer"); // <FS:Beq/> improve Tracy scoping 
-            if (!mFXAAMap.allocate(resX, resY, GL_RGBA)) return false;
-            if (RenderFSAAType == 2)
-            {
-                LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("SMAABuffer"); // <FS:Beq/> improve Tracy scoping 
-                if (!mSMAABlendBuffer.allocate(resX, resY, GL_RGBA, false)) return false;
-            }
-        }
-        else
-        {
-            mFXAAMap.release();
-            mSMAABlendBuffer.release();
-        }
-
         if (RenderFSREnabled && getRenderScale() < 1.f && mRT->width > 0 && mRT->height > 0)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("FSRBuffer");
@@ -1451,8 +1499,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             mFSR2MotionMap.setStorageImage(true);
             if (!mFSR2MotionMap.allocate(resX, resY, GL_RG16F))
             {
-                LL_WARNS() << "FSR 2 motion vector target allocation failed" << LL_ENDL;
                 mFSR2MotionMap.release();
+                requestFsr2Fallback("the motion vector target could not be allocated");
             }
         }
         else
@@ -1467,8 +1515,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             mFSR2ReactiveMap.setStorageImage(true);
             if (!mFSR2ReactiveMap.allocate(resX, resY, GL_R8))
             {
-                LL_WARNS() << "FSR 2 reactive mask target allocation failed" << LL_ENDL;
                 mFSR2ReactiveMap.release();
+                requestFsr2Fallback("the reactive mask target could not be allocated");
             }
         }
         else
@@ -1486,9 +1534,17 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             mFSR2Map.setStorageImage(true);
             fsr2_targets = mFSR2Map.allocate(mRT->width, mRT->height, GL_RGBA16F) &&
                            mFSR2PostMap.allocate(mRT->width, mRT->height, screenFormat);
-            if (!fsr2_targets)
+            if (fsr2_targets)
             {
-                LL_WARNS() << "FSR 2 output target allocation failed; the temporal upscaler is off for now" << LL_ENDL;
+                // a frame can read the output before the first dispatch the render thread finishes (a failure there shows one
+                // frame late): it then reads the cleared target, not undefined memory
+                mFSR2Map.bindTarget();
+                mFSR2Map.clear();
+                mFSR2Map.flush();
+            }
+            else
+            {
+                requestFsr2Fallback("the output target could not be allocated");
             }
         }
         if (!fsr2_targets)
@@ -1517,6 +1573,24 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         const U32 post_y = fsr2_targets ? mRT->height : resY;
         mPostPingMap.allocate(post_x, post_y, GL_RGBA);
         mPostPongMap.allocate(post_x, post_y, GL_RGBA);
+
+        // FXAA/SMAA work on the post chain targets, so they are sized like them (display size while the FSR 2 targets exist:
+        // frames that take the plain path then still run the chosen one)
+        if (RenderFSAAType > 0)
+        {
+            LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("FSAABuffer"); // <FS:Beq/> improve Tracy scoping
+            if (!mFXAAMap.allocate(post_x, post_y, GL_RGBA)) return false;
+            if (RenderFSAAType == 2)
+            {
+                LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("SMAABuffer"); // <FS:Beq/> improve Tracy scoping
+                if (!mSMAABlendBuffer.allocate(post_x, post_y, GL_RGBA, false)) return false;
+            }
+        }
+        else
+        {
+            mFXAAMap.release();
+            mSMAABlendBuffer.release();
+        }
         } // <FS:Beq/> improve Tracy scoping 
         // The water exclusion mask needs its own depth buffer so we can take care of the problem of multiple water planes.
         // Should we ever make water not just a plane, it also aids with that as well as the water planes will be rendered into the mask.
@@ -8393,7 +8467,7 @@ void LLPipeline::generateExposure(LLRenderTarget* src, LLRenderTarget* dst, bool
 
 extern LLPointer<LLImageGL> gEXRImage;
 
-void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_correct)
+void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_correct, LLTexUnit::eTextureFilterOptions filter)
 {
     LL_PROFILE_GPU_ZONE("tonemap");
 
@@ -8433,7 +8507,7 @@ void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_co
 
         S32 channel = 0;
 
-        shader->bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_POINT);
+        shader->bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, filter);
 
         shader->bindTexture(LLShaderMgr::EXPOSURE_MAP, &mExposureMap);
 
@@ -8462,7 +8536,7 @@ void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_co
     dst->flush();
 }
 
-void LLPipeline::gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst)
+void LLPipeline::gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst, LLTexUnit::eTextureFilterOptions filter)
 {
     LL_PROFILE_GPU_ZONE("gamma correct");
 
@@ -8479,7 +8553,7 @@ void LLPipeline::gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst)
             gDeferredPostGammaCorrectProgram;
 
         shader.bind();
-        shader.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_POINT);
+        shader.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, filter);
         shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)src->getWidth(), (GLfloat)src->getHeight());
 
         mScreenTriangleVB->setBuffer();
@@ -9495,6 +9569,8 @@ void LLPipeline::renderFinalize()
     const bool fsr2_used = fsr2_chain && renderFsr2Upscale();
     LLRenderTarget* scene_src = fsr2_used ? &mFSR2Map : &mRT->screen;
     LLRenderTarget* post_scratch = fsr2_chain ? &mFSR2PostMap : &mRT->deferredLight;   // sized like the post chain
+    // a plain-path frame stretches the render-size scene into the display-size chain: bilinear (the end of the fallback chain)
+    const LLTexUnit::eTextureFilterOptions scene_filter = (fsr2_chain && !fsr2_used) ? LLTexUnit::TFO_BILINEAR : LLTexUnit::TFO_POINT;
 
     static LLCachedControl<bool> has_hdr(gSavedSettings, "RenderHDREnabled", true);
     bool hdr = gGLManager.mGLVersion > 4.05f && has_hdr();
@@ -9510,7 +9586,7 @@ void LLPipeline::renderFinalize()
         static LLCachedControl<F32> cas_sharpness(gSavedSettings, "RenderCASSharpness", 0.4f);
         bool apply_cas = cas_sharpness != 0.0f && gCASProgram.isComplete() && gCASLegacyGammaProgram.isComplete();
 
-        tonemap(scene_src, apply_cas ? post_scratch : &mPostPingMap, !apply_cas);
+        tonemap(scene_src, apply_cas ? post_scratch : &mPostPingMap, !apply_cas, scene_filter);
 
         if (apply_cas)
         {
@@ -9520,7 +9596,7 @@ void LLPipeline::renderFinalize()
     }
     else
     {
-        gammaCorrect(scene_src, &mPostPingMap);
+        gammaCorrect(scene_src, &mPostPingMap, scene_filter);
     }
 
     LLVertexBuffer::unbind();
@@ -9547,13 +9623,14 @@ void LLPipeline::renderFinalize()
         std::swap(sourceBuffer, targetBuffer);
     }
 
-    // FSR 2 anti-aliases already: FXAA and SMAA (render-size targets) are skipped while its display-size chain runs
-     if (!fsr2_chain && RenderFSAAType == 1)
+    // FSR 2 anti-aliases the frames it upscaled: FXAA and SMAA (sized like the post chain) run on every other frame
+    const U32 post_aa = fsr2PostAntiAlias(RenderFSAAType, fsr2_used);
+     if (post_aa == 1)
     {
         applyFXAA(sourceBuffer, targetBuffer);
         std::swap(sourceBuffer, targetBuffer);
     }
-    else if (!fsr2_chain && RenderFSAAType == 2)
+    else if (post_aa == 2)
     {
         generateSMAABuffers(sourceBuffer);
         applySMAA(sourceBuffer, targetBuffer);

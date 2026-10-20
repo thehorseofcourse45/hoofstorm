@@ -470,6 +470,7 @@ void VulkanFramebufferBackend::copyToTexture(U32 target, S32 level, S32 xoffset,
 bool VulkanFramebufferBackend::fsr2Fail(const char* why)
 {
     fprintf(stderr, "WARNING: FSR 2 upscale not recorded: %s\n", why);
+    mFsr2LastFailed = true;
     if (++mFsr2Failures >= 3 && !mFsr2Failed)
     {
         mFsr2Failed = true;
@@ -493,11 +494,16 @@ void VulkanFramebufferBackend::releaseFsr2()
     mFsr2Failures = 0;
     mFsr2Failed = false;
     mFsr2LastOk = false;
+    mFsr2LastFailed = false;
+    mFsr2ResetKept = false;     // a new upscaler starts without history anyway
 }
 
 bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
 {
     mFsr2LastOk = false;
+    // A reset asked for is kept until a dispatch the SDK accepts uses it: with the render thread on, the caller has already let
+    // go of it when the work was queued.
+    keepFsr2Reset(p.reset);
     // not failures: no frame (minimized), or a size the caller has to skip anyway
     if (mFsr2Failed || !mCtx->recording) return false;
     if (!p.renderW || !p.renderH || !p.displayW || !p.displayH || p.renderW > p.displayW || p.renderH > p.displayH) return false;
@@ -549,9 +555,9 @@ bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
     in.jitterY = p.jitterY;
     in.frameTimeMs = p.frameTimeMs;
     in.sharpness = p.sharpness;
-    // the first frame after a swapchain recreation (lost device surface, mode or size change) starts without history
-    in.reset = p.reset || mCtx->swapchainGeneration != mFsr2SwapchainGeneration;
-    mFsr2SwapchainGeneration = mCtx->swapchainGeneration;
+    // the first frame after a swapchain recreation (lost device surface, mode or size change) starts without history; the
+    // generation and a kept reset are only marked done once the SDK has accepted the dispatch (below)
+    in.reset = mFsr2ResetKept || mCtx->swapchainGeneration != mFsr2SwapchainGeneration;
     mFsr2LastReset = in.reset;
     in.cameraNear = p.cameraNear;
     in.cameraFar = p.cameraFar;
@@ -568,7 +574,10 @@ bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
     after.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &after, 0, nullptr, 0, nullptr);
     if (!ok) return fsr2Fail("the SDK refused the dispatch");
+    mFsr2SwapchainGeneration = mCtx->swapchainGeneration;
+    mFsr2ResetKept = false;
     mFsr2Failures = 0;
+    mFsr2LastFailed = false;
     mFsr2LastOk = true;
     return true;
 }

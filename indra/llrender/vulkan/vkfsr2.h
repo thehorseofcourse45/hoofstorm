@@ -41,7 +41,7 @@ public:
     }
     // Records the upscale into cmd. Missing color/depth/motion/output or depthInverted: false, nothing recorded. Otherwise every
     // supplied input and the output end in SHADER_READ_ONLY_OPTIMAL, the output readable by fragment and compute shaders; false
-    // then means the SDK refused the dispatch.
+    // then means the SDK refused the dispatch (or ctx.failFsr2Dispatch is set).
     bool dispatch(VkCommandBuffer cmd, const Fsr2Inputs& in, const Fsr2Image& output);
     // Waits for the device: the SDK frees its images at once. Not while a recorded dispatch is still unsubmitted.
     void destroy();

@@ -56,13 +56,21 @@ public:
     // the upscaler cannot be created, or after three failures in a row (fsr2Failed). Also false when the SDK refuses the dispatch;
     // the layouts have changed then. Every false except no frame and a skipped size counts toward the three. The upscaler is
     // created on first use and recreated when a size changes; that waits for the device, so it runs on the queue-owning thread.
+    // params.reset (and a swapchain recreation) stays pending until a dispatch the SDK accepts uses it.
     bool dispatchFsr2(const RenderBackendFsr2Params& params);
     // Frees the upscaler and its history, sets upscalerMemBytes to 0 and clears the failure state.
     void releaseFsr2();
     bool fsr2Failed() const { return mFsr2Failed; }
     bool fsr2LastOk() const { return mFsr2LastOk; }     // the last dispatchFsr2 call returned true
-    // The last recorded dispatch reset the history: the caller asked for it, or the swapchain was recreated since the one before.
+    // The last dispatchFsr2 call that got as far as counting (a failure or a recorded dispatch) failed. Unlike fsr2LastOk it is not
+    // cleared on entry or by the calls that skip without counting, so the viewer thread can read it while a dispatch runs.
+    bool fsr2LastFailed() const { return mFsr2LastFailed; }
+    // The last recorded dispatch reset the history: the caller asked for it (in this call or in one that did not get through), or
+    // the swapchain was recreated since the last dispatch the SDK accepted.
     bool fsr2LastReset() const { return mFsr2LastReset; }
+    // A reset for a dispatch that never reached dispatchFsr2 (the render thread dropped it with its failed frame): the next
+    // dispatch the SDK accepts resets the history.
+    void keepFsr2Reset(bool reset) { mFsr2ResetKept = mFsr2ResetKept || reset; }
 
 private:
     struct Attachment { U32 texture = 0, target = 0; S32 level = 0; };
@@ -107,6 +115,8 @@ private:
     int mFsr2Failures = 0;              // in a row
     std::atomic<bool> mFsr2Failed{false};     // read from the viewer thread while the render thread runs
     std::atomic<bool> mFsr2LastOk{false};     // same
+    std::atomic<bool> mFsr2LastFailed{false}; // same
     bool mFsr2LastReset = false;
-    uint32_t mFsr2SwapchainGeneration = 0;      // VkContext::swapchainGeneration at the last recorded dispatch
+    bool mFsr2ResetKept = false;                // a reset was asked for and no dispatch has been accepted since
+    uint32_t mFsr2SwapchainGeneration = 0;      // VkContext::swapchainGeneration at the last accepted dispatch (or creation)
 };
