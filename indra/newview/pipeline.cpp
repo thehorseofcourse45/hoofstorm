@@ -867,7 +867,9 @@ bool LLPipeline::fsr2Selected()
 
 bool LLPipeline::isFsr2Active()
 {
-    return fsr2Selected() && !gCubeSnapshot && getRenderScale() < 1.f && !isRenderBackendFsr2Failed();
+    // full-scale snapshots skip the upscaler; without this check Native AA (scale 1.0 anyway) would run during them
+    return fsr2Selected() && !gCubeSnapshot && !sSnapshotFullScale && !isRenderBackendFsr2Failed() &&
+           fsr2ShouldUpscale(RenderFSR2Quality, getRenderScale());
 }
 
 F32 LLPipeline::getRenderScale()

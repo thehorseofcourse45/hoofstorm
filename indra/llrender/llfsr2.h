@@ -20,6 +20,12 @@ inline float effectiveRenderScaleFsr2(bool fsr2Enabled, unsigned quality, float 
     return fsr2Enabled ? fsr2RenderScale(quality) : multiplier;
 }
 
+// The upscaler runs when the scene is rendered below display size, or in Native AA (quality 0), which is its anti-aliasing at scale 1.0.
+inline bool fsr2ShouldUpscale(unsigned quality, float renderScale)
+{
+    return quality == 0 || renderScale < 1.0f;
+}
+
 // Number of Halton jitter phases before the sequence repeats: AMD's 8 * (display / render)^2, rounded up.
 // The preset divisors use AMD's fixed tabulated counts (native 1.0 gives ceil(8) = 8).
 inline int fsr2JitterPhaseCount(float divisor)

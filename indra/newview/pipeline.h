@@ -1101,7 +1101,8 @@ public:
     static F32 getRenderScale();
     // RenderFSR2Enabled is on and the Vulkan renderer is running (the setting picks the render scale).
     static bool fsr2Selected();
-    // The temporal upscaler should run this frame: selected, not a cube snapshot, render scale below 1, backend not failed.
+    // The temporal upscaler should run this frame: selected, not a cube snapshot, backend not failed, and
+    // Native AA (quality 0, scale 1.0) or a render scale below 1.
     static bool isFsr2Active();
     // Set while a snapshot renders: the scene is drawn at full size so FSR / the render multiplier do not soften the picture.
     static bool sSnapshotFullScale;

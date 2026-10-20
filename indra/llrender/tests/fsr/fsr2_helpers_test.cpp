@@ -45,6 +45,12 @@ int main()
     check(effectiveRenderScaleFsr2(false, 1, 0.8f) == 0.8f, "fsr2 off returns the multiplier");
     check(effectiveRenderScaleFsr2(false, 3, 1.0f) == 1.0f, "fsr2 off, multiplier 1");
 
+    check(fsr2ShouldUpscale(0, 1.0f), "native AA upscales at scale 1.0");
+    check(fsr2ShouldUpscale(1, fsr2RenderScale(1)), "quality upscales below 1");
+    check(fsr2ShouldUpscale(4, 0.5f), "ultra performance upscales below 1");
+    check(!fsr2ShouldUpscale(1, 1.0f), "quality at scale 1.0 does not upscale");
+    check(!fsr2ShouldUpscale(3, 1.2f), "performance above scale 1 does not upscale");
+
     printf("FSR2_HELPERS %s checks=%d\n", failed ? "FAIL" : "PASS", checks);
     return failed ? 1 : 0;
 }
