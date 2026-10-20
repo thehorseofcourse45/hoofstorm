@@ -309,6 +309,10 @@ bool LLRenderTarget::allocateDepth()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
     LLImageGL::generateTextures(1, &mDepth);
+    if (mStorageDepth)
+    {
+        setRenderBackendStorageTexture(mDepth);     // before the storage is defined below
+    }
     gGL.getTexUnit(0)->bindManual(mUsage, mDepth);
 
     U32 internal_type = LLTexUnit::getInternalType(mUsage);

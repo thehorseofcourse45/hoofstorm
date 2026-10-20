@@ -85,11 +85,46 @@ inline bool fsr2HistoryCut(bool hadHistory, unsigned renderW, unsigned renderH, 
     return !hadHistory || renderW != lastW || renderH != lastH || regionShift || cameraJumpMeters > kFsr2CameraCutMeters;
 }
 
+// The one Y-direction decision for FSR 2: +1 when render-target memory rows grow with NDC y (row 0 is NDC y = -1), which is
+// the case for the Vulkan backend's offscreen targets (positive-height viewport); -1 for a Y-flipped target. Both signs below
+// follow from it. Flip this if the in-world check shows vertical reprojection or vertical jitter going the wrong way.
+constexpr float kFsr2RowsFollowNdcY = 1.0f;
+
 // Y sign of the motion vectors (fsr2MotionF.glsl `motion_y_sign`). They are UV units, current pixel to previous position,
-// and FSR 3.1 reads previous = uv + motion in the image's memory UV (row 0 = v 0). Vulkan offscreen targets are not Y-flipped
-// (row 0 is ndc y = -1), so the texture UV the shader works in already is that memory UV: +1. This is the one place to flip
-// if the in-world check shows vertical reprojection going the wrong way.
-constexpr float kFsr2MotionYSign = 1.0f;
+// and FSR 3.1 reads previous = uv + motion in the image's memory UV (row 0 = v 0). With rows following NDC y the texture UV
+// the shader works in already is that memory UV: +1.
+constexpr float kFsr2MotionYSign = kFsr2RowsFollowNdcY;
+
+// Y sign of the jitter handed to the SDK. fsr2JitterProjection uses AMD's Y = -2 jy / H, which moves the content by -jy
+// memory rows when rows follow NDC y, while FSR 3.1 expects the content moved by +jy rows (its DX convention, row 0 at the
+// top): the SDK gets -jy. X needs no flip (columns grow with NDC x in both conventions).
+constexpr float kFsr2JitterYSign = -kFsr2RowsFollowNdcY;
+
+// The jitter to report in the dispatch for a projection jittered by (jx, jy) render pixels with fsr2JitterProjection.
+inline void fsr2DispatchJitter(float jx, float jy, float& outX, float& outY)
+{
+    outX = jx;
+    outY = kFsr2JitterYSign * jy;
+}
+
+// The upscaler is created and dispatched for these sizes: none zero (minimized), the render size not above the display size
+// on either axis, and below it unless the mode is Native AA (quality 0), which runs at the display size.
+inline bool fsr2UseUpscaler(unsigned quality, unsigned renderW, unsigned renderH, unsigned displayW, unsigned displayH)
+{
+    if (!renderW || !renderH || !displayW || !displayH) return false;
+    if (renderW > displayW || renderH > displayH) return false;
+    return quality == 0 || renderW < displayW || renderH < displayH;
+}
+
+// Camera near and far (metres) and vertical field of view (radians) from a column-major GL perspective projection
+// (depth -1..1), as the SDK wants them to linearise depth. A jitter translation in front of it does not change them.
+inline void fsr2CameraFromProjection(const float m[16], float& outNear, float& outFar, float& outFovY)
+{
+    // m[10] = (f + n) / (n - f), m[14] = 2 f n / (n - f), m[5] = 1 / tan(fovY / 2)
+    outNear = m[14] / (m[10] - 1.0f);
+    outFar = m[14] / (m[10] + 1.0f);
+    outFovY = 2.0f * std::atan(1.0f / m[5]);
+}
 
 // Reactive mask (fsr2ReactiveF.glsl). kFsr2ReactiveMax is the value for marked pixels (the shader also clamps to it);
 // kFsr2ReactiveFlag is the G-buffer normal.w code to mark, negative for none. The G-buffer has no code for avatars or

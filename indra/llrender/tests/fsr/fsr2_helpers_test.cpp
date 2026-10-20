@@ -118,6 +118,44 @@ int main()
     check(fsr2HistoryCut(true, 1280, 720, 1280, 720, false, 40.f), "teleport-sized jump is a cut");
     check(!fsr2HistoryCut(true, 1280, 720, 1280, 720, false, kFsr2CameraCutMeters), "jump at the limit keeps history");
 
+    // which sizes create and dispatch the upscaler
+    check(fsr2UseUpscaler(1, 853, 480, 1280, 720), "quality below display size upscales");
+    check(fsr2UseUpscaler(0, 1280, 720, 1280, 720), "native AA at display size runs");
+    check(!fsr2UseUpscaler(1, 1280, 720, 1280, 720), "a preset at display size takes the plain path");
+    check(!fsr2UseUpscaler(1, 0, 480, 1280, 720) && !fsr2UseUpscaler(0, 1280, 720, 0, 0), "a zero size (minimized) is skipped");
+    check(!fsr2UseUpscaler(0, 1300, 720, 1280, 720) && !fsr2UseUpscaler(1, 640, 800, 1280, 720), "render above display on an axis is skipped");
+
+    // one Y decision: the jitter Y sign is the opposite of the motion Y sign, X is never flipped
+    {
+        float jx = 0, jy = 0;
+        fsr2DispatchJitter(0.25f, -0.125f, jx, jy);
+        check(kFsr2JitterYSign == -kFsr2MotionYSign && kFsr2MotionYSign == kFsr2RowsFollowNdcY, "jitter and motion Y signs follow one constant");
+        check(jx == 0.25f && jy == -0.125f * kFsr2JitterYSign, "dispatch jitter keeps X and applies the Y sign");
+    }
+
+    // camera near, far and vertical fov from a GL perspective, also through a jitter translation
+    {
+        const float n = 0.5f, f = 512.f, fovy = 1.0f, aspect = 1.6f;
+        float p[16] = {};
+        const float t = 1.f / std::tan(fovy * 0.5f);
+        p[0] = t / aspect; p[5] = t; p[10] = (f + n) / (n - f); p[11] = -1.f; p[14] = 2.f * f * n / (n - f);
+        float cn, cf, cfov;
+        fsr2CameraFromProjection(p, cn, cf, cfov);
+        check(near(cn, n, 1e-3f) && std::fabs(cf - f) / f < 1e-3f && near(cfov, fovy, 1e-5f), "camera from projection");
+        float j[16], pj[16];
+        fsr2JitterProjection(0.3f, -0.4f, 640.f, 360.f, j);
+        for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r)
+            {
+                float s = 0;
+                for (int k = 0; k < 4; ++k) s += j[k * 4 + r] * p[c * 4 + k];
+                pj[c * 4 + r] = s;
+            }
+        float jn, jf, jfov;
+        fsr2CameraFromProjection(pj, jn, jf, jfov);
+        check(jn == cn && jf == cf && jfov == cfov, "jitter does not change the camera values");
+    }
+
     printf("FSR2_HELPERS %s checks=%d\n", failed ? "FAIL" : "PASS", checks);
     return failed ? 1 : 0;
 }

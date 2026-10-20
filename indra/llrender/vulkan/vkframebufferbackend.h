@@ -61,6 +61,8 @@ public:
     void releaseFsr2();
     bool fsr2Failed() const { return mFsr2Failed; }
     bool fsr2LastOk() const { return mFsr2LastOk; }     // the last dispatchFsr2 call returned true
+    // The last recorded dispatch reset the history: the caller asked for it, or the swapchain was recreated since the one before.
+    bool fsr2LastReset() const { return mFsr2LastReset; }
 
 private:
     struct Attachment { U32 texture = 0, target = 0; S32 level = 0; };
@@ -105,4 +107,6 @@ private:
     int mFsr2Failures = 0;              // in a row
     std::atomic<bool> mFsr2Failed{false};     // read from the viewer thread while the render thread runs
     std::atomic<bool> mFsr2LastOk{false};     // same
+    bool mFsr2LastReset = false;
+    uint32_t mFsr2SwapchainGeneration = 0;      // VkContext::swapchainGeneration at the last recorded dispatch
 };

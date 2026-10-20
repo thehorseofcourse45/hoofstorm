@@ -59,6 +59,11 @@ public:
     // storage images of its format (sRGB and depth formats usually do not). Every image defined for this name from then on is made
     // that way. Other textures keep their full mip chain and usage.
     void setStorageImage(U32 name);
+    // Texture LOD bias added to the samplers of sampled 2D textures that filter through mips (not render targets, cube maps or
+    // depth-compare samplers), for the temporal upscaler: the scene renders below display size but textures should keep display
+    // detail. Rounded to 1/8 and clamped to the device limit; 0 gives the plain samplers back.
+    void setLodBias(F32 bias);
+    F32 lodBias() const { return mLodBias; }
 
     // statistics for the tests
     uint32_t imagesCreated = 0;
@@ -150,6 +155,7 @@ private:
         // Last handles handed to a draw, with what they were made from, so a repeat draw skips the string-keyed lookups.
         // cView must be reset wherever 'views' is cleared or moved out.
         SamplerState cSs;
+        F32 cBias = 0.f;                // LOD bias cSampler was made with
         VkSampler cSampler = VK_NULL_HANDLE;
         VkImageView cView = VK_NULL_HANDLE;
         VkImage cImage = VK_NULL_HANDLE;
@@ -175,7 +181,8 @@ private:
     void image2DFace(U32 target, S32 level, S32 internalFormat, S32 width, S32 height, S32 layers, U32 format, U32 type,
                      const void* pixels, bool cubeArray3D);
     VkImageView viewOf(Tex& t);
-    VkSampler samplerOf(const Tex& t);
+    VkSampler samplerOf(const Tex& t, F32 bias);
+    F32 biasFor(const Tex& t) const;    // mLodBias for the textures setLodBias covers, else 0
     Tex& fallback(const std::string& samplerType);
 
     VkContext* mCtx;
@@ -186,6 +193,7 @@ private:
     U32 mActive = 0;
     S32 mRowLength = 0;
     bool mSwapBytes = false;
+    F32 mLodBias = 0.f;
     std::map<std::string, VkSampler> mSamplers;
     std::map<std::string, Tex> mFallbacks;
 };

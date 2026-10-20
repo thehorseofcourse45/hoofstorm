@@ -289,6 +289,13 @@ int main(int argc, char** argv)
             waitRenderBackendIdle();
             expect("FSR 2 upscale through the global entry was accepted by the backend; drawing and presentation go on after it",ok);
             expect("FSR 2 render size above display size answers false, render thread on or off",refused);
+            // the upscaler's texture LOD bias is applied in order with the draws (posted when the render thread is on)
+            setRenderBackendTextureLodBias(-1.5f);
+            bool biased=frame();
+            setRenderBackendTextureLodBias(0.f);
+            biased=frame() && biased;
+            waitRenderBackendIdle();
+            expect("texture LOD bias set and restored through the global entry; drawing and presentation go on",biased);
         }
         if(argc>1 && !strcmp(argv[1],"--pacing"))
         {

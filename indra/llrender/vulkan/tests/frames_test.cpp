@@ -604,6 +604,300 @@ int main(int argc, char** argv)
                 textures.destroy(3, names);
                 VK_CHECK(vkDeviceWaitIdle(ctx.device));
             }
+            // FSR 2 chain as renderFinalize runs it, at the llvulkan layer: a static scene (one triangle with an axis-aligned bottom
+            // and left edge at non-integer render pixels) is drawn every frame through the viewer's jittered projection
+            // (fsr2JitterProjection), the viewer's motion shader writes the motion, the reactive mask is cleared once, the upscale
+            // goes to a display-size storage target, the glow alpha is copied back with an alpha-only draw and a tonemap pass reads
+            // the display-size result. The Y convention is checked end to end: with the jitter the pipeline reports
+            // (fsr2DispatchJitter), the converged edges sit where they are at display resolution; with either axis flipped they
+            // do not. With the upscaler off, the plain chain gives the same pixels before and after the upscaler ran.
+            {
+                constexpr U32 RW = 64, RH = 48, DW = 128, DH = 96;
+                const int phases = fsr2JitterPhaseCount(float(DW) / float(RW));
+                auto makeImage = [&](U32 internal, U32 format, U32 type, U32 w, U32 h, bool fsrImage) {
+                    U32 name; textures.generate(1, &name);
+                    if (fsrImage) textures.setStorageImage(name);
+                    textures.bind(glc::TEXTURE_2D, name);
+                    textures.image2D(glc::TEXTURE_2D, 0, internal, w, h, format, type, nullptr);
+                    textures.setFilter(glc::TEXTURE_2D, glc::LINEAR, glc::LINEAR);
+                    return name;
+                };
+                auto makeFb = [&](U32 colorTex, U32 depthTex) {
+                    U32 f = fb.createFramebuffer(); fb.bind(f); fb.attach(f, 0x8CE0, glc::TEXTURE_2D, colorTex, 0);
+                    if (depthTex) fb.attach(f, 0x8D00, glc::TEXTURE_2D, depthTex, 0);
+                    fb.bind(0);
+                    return f;
+                };
+                auto build = [&](const std::string& vs, const std::string& fs, const char* label) {
+                    U32 p = shaders.createProgram();
+                    const char* src[] = {vs.c_str(), fs.c_str()};
+                    for (int i = 0; i < 2; ++i)
+                    {
+                        U32 object = shaders.createObject(i ? 0x8B30 : 0x8B31); std::string log;
+                        const bool ok = shaders.compileObject(object, 1, &src[i], log);
+                        if (!ok) printf("%s\n", log.c_str());
+                        check(ok, label); shaders.attachObject(p, object);
+                    }
+                    shaders.bindAttribLocation(p, 0, "position");
+                    check(shaders.link(p), label);
+                    return p;
+                };
+                const U32 colorTex = makeImage(glc::RGBA16F, glc::RGBA, glc::FLOAT, RW, RH, true);       // mRT->screen
+                const U32 depthTex = makeImage(glc::DEPTH_COMPONENT24, glc::DEPTH_COMPONENT, glc::FLOAT, RW, RH, true);  // its depth
+                const U32 motionTex = makeImage(glc::RG16F, glc::RG, glc::FLOAT, RW, RH, true);          // mFSR2MotionMap
+                const U32 reactiveTex = makeImage(glc::R8, glc::RED, glc::UNSIGNED_BYTE, RW, RH, true);  // mFSR2ReactiveMap
+                const U32 outputTex = makeImage(glc::RGBA16F, glc::RGBA, glc::FLOAT, DW, DH, true);      // mFSR2Map
+                const U32 postTex = makeImage(glc::RGBA8, glc::RGBA, glc::UNSIGNED_BYTE, DW, DH, false); // mPostPingMap (display)
+                const U32 plainTex = makeImage(glc::RGBA8, glc::RGBA, glc::UNSIGNED_BYTE, RW, RH, false); // mPostPingMap (off)
+                VulkanTextureBackend::ImageInfo info;
+                check(textures.imageInfo(depthTex, info) && info.levels == 1 && info.format == VK_FORMAT_D32_SFLOAT,
+                      "chain: the viewer's DEPTH_COMPONENT24 depth opted in is single-level D32_SFLOAT");
+                const U32 sceneFb = makeFb(colorTex, depthTex), motionFb = makeFb(motionTex, 0), reactiveFb = makeFb(reactiveTex, 0);
+                const U32 outFb = makeFb(outputTex, 0), postFb = makeFb(postTex, 0), plainFb = makeFb(plainTex, 0);
+
+                const U32 sceneProg = build("#version 330\nin vec4 position;\nuniform mat4 mvp;\n"
+                                            "void main(){gl_Position=mvp*vec4(position.xy,0.5,1.0);}",
+                                            "#version 330\nout vec4 color;\nvoid main(){color=vec4(2.0,1.0,0.5,0.25);}", "chain scene program");
+                const S32 locMvp = shaders.getUniformLocation(sceneProg, "mvp");
+                std::string motionV, motionF, copyV, copyF;
+                check(readViewerShader("postDeferredNoTCV.glsl", motionV) && readViewerShader("fsr2MotionF.glsl", motionF) &&
+                      readViewerShader("../interface/copyV.glsl", copyV) && readViewerShader("../interface/copyF.glsl", copyF),
+                      "chain: viewer motion and copy shaders readable");
+                const U32 motionProg = build("#version 400\n#define VERTEX_SHADER 1\n" + motionV,
+                                             "#version 400\n#define FRAGMENT_SHADER 1\n" + motionF, "chain motion program");
+                const U32 copyProg = build("#version 400\n#define VERTEX_SHADER 1\n" + copyV,
+                                           "#version 400\n#define FRAGMENT_SHADER 1\n" + copyF, "chain copy program (gCopyProgram)");
+                const U32 toneProg = build("#version 330\nin vec4 position;\nout vec2 tc;\nvoid main(){tc=position.xy*0.5+0.5;gl_Position=position;}",
+                                           "#version 330\nuniform sampler2D diffuseMap;\nin vec2 tc;\nout vec4 color;\n"
+                                           "void main(){vec4 c=texture(diffuseMap,tc);color=vec4(c.rgb/(1.0+c.rgb),c.a);}", "chain tonemap program");
+
+                // the left triangle (vertices 0-2: (-1,-1), (0,-1), (-1,1)) placed so its left edge is at render x 16.15 and its
+                // bottom edge at render y 12.15 (display 32.3 and 24.3); the hypotenuse stays away from the measured profiles
+                const float L = 16.15f / (RW * 0.5f) - 1.f, R = 40.15f / (RW * 0.5f) - 1.f;
+                const float B = 12.15f / (RH * 0.5f) - 1.f, T = 36.15f / (RH * 0.5f) - 1.f;
+                Mat4 model = identity4();
+                model.m[0] = R - L; model.m[12] = R; model.m[5] = (T - B) * 0.5f; model.m[13] = (T + B) * 0.5f;
+                const float edgeX = (L + 1.f) * 0.5f * DW, edgeY = (B + 1.f) * 0.5f * DH;
+                const Mat4 ident = identity4();
+                const float bg = 0.05f, fg = 2.0f;
+                const float clearScene[4] = {bg, bg, bg, 0.f};
+
+                auto drawScene = [&](float jx, float jy) {
+                    Mat4 jitter; fsr2JitterProjection(jx, jy, float(RW), float(RH), jitter.m);
+                    const Mat4 mvp = mul4(jitter, model);
+                    fb.bind(sceneFb); state.setViewport(0, 0, RW, RH); state.setDepthMask(true);
+                    fb.setClearColor(clearScene[0], clearScene[1], clearScene[2], clearScene[3]); fb.setClearDepth(1.0); fb.clear(0x4000 | 0x100);
+                    state.setDepthTest(true); state.setDepthFunc(0x0207);   // GL_ALWAYS, depth written
+                    shaders.use(sceneProg); shaders.uniformMatrix4fv(sceneProg, locMvp, 1, false, mvp.m);
+                    vb.drawArrays(0, 0, 3);
+                    state.setDepthTest(false);
+                };
+                auto drawMotion = [&]() {   // static camera: previous == current, exactly zero
+                    fb.bind(motionFb); state.setViewport(0, 0, RW, RH);
+                    shaders.use(motionProg);
+                    textures.activateUnit(0); textures.bind(glc::TEXTURE_2D, depthTex);
+                    shaders.uniform1i(motionProg, shaders.getUniformLocation(motionProg, "depthMap"), 0);
+                    for (const char* n : {"inv_view_proj_cur", "view_proj_cur", "view_proj_prev"})
+                        shaders.uniformMatrix4fv(motionProg, shaders.getUniformLocation(motionProg, n), 1, false, ident.m);
+                    shaders.uniform1f(motionProg, shaders.getUniformLocation(motionProg, "motion_y_sign"), kFsr2MotionYSign);
+                    vb.drawArrays(0, 6, 3);
+                };
+                auto drawTonemap = [&](U32 srcTex, U32 dstFb, U32 w, U32 h) {
+                    fb.bind(dstFb); state.setViewport(0, 0, w, h);
+                    shaders.use(toneProg);
+                    textures.activateUnit(0); textures.bind(glc::TEXTURE_2D, srcTex);
+                    shaders.uniform1i(toneProg, shaders.getUniformLocation(toneProg, "diffuseMap"), 0);
+                    vb.drawArrays(0, 6, 3);
+                };
+                RenderBackendFsr2Params p;
+                p.colorTex = colorTex; p.depthTex = depthTex; p.motionTex = motionTex; p.reactiveTex = reactiveTex; p.outputTex = outputTex;
+                p.renderW = RW; p.renderH = RH; p.displayW = DW; p.displayH = DH;
+                p.frameTimeMs = 16.7f; p.sharpness = 0.f; p.cameraNear = 0.5f; p.cameraFar = 100.f; p.fovY = 1.0f;
+
+                // the overlap stress left the right triangle in vertices 0-2: put the original positions back
+                check(ctx.beginFrame(clear), "chain: vertex reset frame acquired");
+                vb.upload(BufferKind::Vertex, vertices, 0, sizeof(positions) - 1, positions);
+                ctx.endFrame(false);
+
+                // the plain chain (upscaler off): scene at render size, tonemap at render size
+                std::vector<uint8_t> plainBefore(RW * RH * 4), plainAfter(RW * RH * 4);
+                auto runPlain = [&](std::vector<uint8_t>& out) {
+                    check(ctx.beginFrame(clear), "chain: plain frame acquired");
+                    drawScene(0.f, 0.f);
+                    drawTonemap(colorTex, plainFb, RW, RH);
+                    fb.readPixels(0, 0, RW, RH, glc::RGBA, glc::UNSIGNED_BYTE, out.data());
+                    fb.bind(0); ctx.endFrame(false);
+                };
+                runPlain(plainBefore);
+
+                // the reactive mask is cleared once when it is made and kept (v1 marks nothing)
+                check(ctx.beginFrame(clear), "chain: reactive clear frame acquired");
+                fb.bind(reactiveFb); fb.setClearColor(0, 0, 0, 0); fb.clear(0x4000); fb.bind(0);
+                ctx.endFrame(false);
+
+                // signX / signY multiply the jitter the pipeline reports; (1, 1) is what renderFinalize passes
+                std::vector<float> out(DW * DH * 4);
+                auto converge = [&](float signX, float signY) {
+                    bool all = true;
+                    for (int f = 0; f < 2 * phases && all; ++f)
+                    {
+                        all = ctx.beginFrame(clear);
+                        if (!all) break;
+                        float jx, jy; fsr2JitterOffset(f, phases, jx, jy);
+                        drawScene(jx, jy);
+                        drawMotion();
+                        RenderBackendFsr2Params q = p;
+                        fsr2DispatchJitter(jx, jy, q.jitterX, q.jitterY);
+                        q.jitterX *= signX; q.jitterY *= signY;
+                        q.reset = f == 0;
+                        all = fb.dispatchFsr2(q) && all;
+                        fb.bind(0); ctx.endFrame(false);
+                    }
+                    check(ctx.beginFrame(clear), "chain: output read frame acquired");
+                    fb.bind(outFb); fb.readPixels(0, 0, DW, DH, glc::RGBA, glc::FLOAT, out.data());
+                    fb.bind(0); ctx.endFrame(false);
+                    return all;
+                };
+                // coverage profiles across the bottom edge (column 60, rows 14-35) and the left edge (row 36, columns 20-47),
+                // against the exact display-resolution coverage; the sum of absolute differences in pixels
+                auto value = [&](U32 x, U32 y) { return (out[(y * DW + x) * 4] - bg) / (fg - bg); };
+                auto edgeError = [&](bool vertical) {
+                    double e = 0;
+                    if (vertical) for (U32 y = 14; y < 36; ++y) e += std::fabs(value(60, y) - std::clamp(y + 1.f - edgeY, 0.f, 1.f));
+                    else for (U32 x = 20; x < 48; ++x) e += std::fabs(value(x, 36) - std::clamp(x + 1.f - edgeX, 0.f, 1.f));
+                    return e;
+                };
+                // four runs, the pipeline's jitter last (its output feeds the checks below): for each X sign the Y as reported must
+                // give the cleaner bottom edge, and for each Y sign the X as reported the cleaner left edge (X is the method check:
+                // its convention is not in doubt)
+                double xErr[2][2], yErr[2][2];     // [X as reported][Y as reported]
+                bool dispatched = true;
+                for (int run = 0; run < 4; ++run)
+                {
+                    const int ax = run >> 1, ay = run & 1;
+                    dispatched = converge(ax ? 1.f : -1.f, ay ? 1.f : -1.f) && dispatched;
+                    xErr[ax][ay] = edgeError(false);
+                    yErr[ax][ay] = edgeError(true);
+                    printf("  chain run X %s Y %s: left-edge error %.3f, bottom-edge error %.3f (display px)\n", ax ? "as reported" : "flipped",
+                           ay ? "as reported" : "flipped", xErr[ax][ay], yErr[ax][ay]);
+                }
+                printf("  chain edges at display x %.2f, y %.2f; %d phases\n", edgeX, edgeY, phases);
+                check(dispatched, "chain: motion, cleared reactive and upscale dispatched every frame of every run");
+                check(xErr[1][0] < xErr[0][0] && xErr[1][1] < xErr[0][1] && xErr[1][1] < 0.25,
+                      "chain: X jitter as reported reconstructs the left edge, flipped X is worse (method check)");
+                check(yErr[0][1] < yErr[0][0] && yErr[1][1] < yErr[1][0] && yErr[1][1] < 0.25,
+                      "chain: Y jitter as reported (kFsr2JitterYSign) reconstructs the bottom edge, flipped Y is worse");
+
+                // the glow mask: the SDK writes alpha 1, renderFinalize copies the scene alpha back with an alpha-only draw
+                const float inside[2] = {60.f, 40.f}, outside[2] = {8.f, 8.f};
+                auto px = [&](const float* at) { return &out[(U32(at[1]) * DW + U32(at[0])) * 4]; };
+                const float rgbIn[3] = {px(inside)[0], px(inside)[1], px(inside)[2]};
+                printf("  chain: upscaled inside %.3f %.3f %.3f a %.3f, outside %.3f a %.3f\n", rgbIn[0], rgbIn[1], rgbIn[2], px(inside)[3],
+                       px(outside)[0], px(outside)[3]);
+                check(std::fabs(rgbIn[0] - fg) < 0.05f && std::fabs(px(outside)[0] - bg) < 0.01f, "chain: display-size output is the HDR scene, not blank");
+                check(ctx.beginFrame(clear), "chain: post frame acquired");
+                fb.bind(outFb); state.setViewport(0, 0, DW, DH);
+                state.setColorMask(false, false, false, true);
+                shaders.use(copyProg);
+                textures.activateUnit(0); textures.bind(glc::TEXTURE_2D, colorTex);
+                shaders.uniform1i(copyProg, shaders.getUniformLocation(copyProg, "diffuseMap"), 0);
+                vb.drawArrays(0, 6, 3);
+                state.setColorMask(true, true, true, true);
+                fb.readPixels(0, 0, DW, DH, glc::RGBA, glc::FLOAT, out.data());
+                drawTonemap(outputTex, postFb, DW, DH);
+                std::vector<uint8_t> post(DW * DH * 4);
+                fb.readPixels(0, 0, DW, DH, glc::RGBA, glc::UNSIGNED_BYTE, post.data());
+                fb.bind(0); ctx.endFrame(false);
+                printf("  chain: after alpha copy inside %.3f %.3f %.3f a %.3f, outside a %.3f\n", px(inside)[0], px(inside)[1], px(inside)[2],
+                       px(inside)[3], px(outside)[3]);
+                check(px(inside)[0] == rgbIn[0] && px(inside)[1] == rgbIn[1] && px(inside)[2] == rgbIn[2] &&
+                      std::fabs(px(inside)[3] - 0.25f) < 0.01f && px(outside)[3] < 0.01f,
+                      "chain: alpha-only copy restores the glow mask and keeps the upscaled colour");
+                uint8_t lo = 255, hi = 0;
+                for (U32 i = 0; i < DW * DH; ++i) { lo = std::min(lo, post[i * 4]); hi = std::max(hi, post[i * 4]); }
+                check(textures.imageInfo(postTex, info) && info.width == DW && info.height == DH && hi - lo > 100,
+                      "chain: the tonemap pass reads the display-size result (display-size, non-blank)");
+
+                // a recreated swapchain resets the history on the next dispatch only
+                check(ctx.beginFrame(clear), "chain: swapchain reset frame acquired");
+                drawScene(0.f, 0.f); drawMotion();
+                const bool before = fb.dispatchFsr2(p) && !fb.fsr2LastReset();
+                ++ctx.swapchainGeneration;
+                const bool after = fb.dispatchFsr2(p) && fb.fsr2LastReset();
+                const bool next = fb.dispatchFsr2(p) && !fb.fsr2LastReset();
+                --ctx.swapchainGeneration;
+                fb.bind(0); ctx.endFrame(false);
+                check(before && after && next, "chain: a new swapchain generation resets the history once");
+
+                fb.releaseFsr2();
+                runPlain(plainAfter);
+                check(ctx.upscalerMemBytes == 0 && plainBefore == plainAfter, "chain: upscaler off gives the same pixels as before it ran");
+
+                shaders.use(0);
+                for (U32 pr : {sceneProg, motionProg, copyProg, toneProg}) shaders.deleteProgramAndObjects(pr);
+                for (U32 f : {sceneFb, motionFb, reactiveFb, outFb, postFb, plainFb}) fb.destroyFramebuffer(f);
+                const U32 names[] = {colorTex, depthTex, motionTex, reactiveTex, outputTex, postTex, plainTex};
+                textures.destroy(7, names);
+                VK_CHECK(vkDeviceWaitIdle(ctx.device));
+            }
+            // Texture LOD bias for the upscaler: sampled (not render-target) 2D textures with mip filtering get the bias, also
+            // through textureLod; render targets do not; 0 restores the plain sampler.
+            {
+                auto makeMipped = [&]() {
+                    U32 name; textures.generate(1, &name); textures.bind(glc::TEXTURE_2D, name);
+                    for (int level = 0; level < 5; ++level)
+                    {
+                        const U32 size = 16u >> level;
+                        std::vector<uint8_t> texels(size * size * 4);
+                        for (U32 i = 0; i < size * size; ++i) { texels[i * 4] = uint8_t(level * 50); texels[i * 4 + 3] = 255; }
+                        textures.image2D(glc::TEXTURE_2D, level, glc::RGBA8, size, size, glc::RGBA, glc::UNSIGNED_BYTE, texels.data());
+                    }
+                    textures.setFilter(glc::TEXTURE_2D, glc::NEAREST, glc::NEAREST_MIPMAP_NEAREST);
+                    return name;
+                };
+                const U32 sampled = makeMipped(), targetTex = makeMipped();
+                U32 probeTex; textures.generate(1, &probeTex); textures.bind(glc::TEXTURE_2D, probeTex);
+                textures.image2D(glc::TEXTURE_2D, 0, glc::RGBA8, 4, 4, glc::RGBA, glc::UNSIGNED_BYTE, nullptr);
+                U32 probeFb = fb.createFramebuffer(); fb.bind(probeFb); fb.attach(probeFb, 0x8CE0, glc::TEXTURE_2D, probeTex, 0);
+                U32 targetFb = fb.createFramebuffer(); fb.bind(targetFb); fb.attach(targetFb, 0x8CE0, glc::TEXTURE_2D, targetTex, 0);
+                fb.bind(0);
+                U32 lodProg = shaders.createProgram();
+                const char* lodSources[] = {"#version 330\nin vec4 position;\nvoid main(){gl_Position=position;}",
+                                            "#version 330\nuniform sampler2D tex;\nout vec4 color;\nvoid main(){color=textureLod(tex,vec2(0.5),2.0);}"};
+                for (int i = 0; i < 2; ++i)
+                {
+                    U32 object = shaders.createObject(i ? 0x8B30 : 0x8B31); std::string log;
+                    check(shaders.compileObject(object, 1, &lodSources[i], log), "LOD bias probe shader accepted"); shaders.attachObject(lodProg, object);
+                }
+                shaders.bindAttribLocation(lodProg, 0, "position");
+                check(shaders.link(lodProg), "LOD bias probe links");
+                check(ctx.beginFrame(clear), "LOD bias target frame acquired");    // rendering into level 0 makes it a render target
+                fb.bind(targetFb); state.setViewport(0, 0, 16, 16); fb.setClearColor(0, 0, 0, 1); fb.clear(0x4000);
+                fb.bind(0); ctx.endFrame(false);
+                auto levelRead = [&](U32 tex) {
+                    check(ctx.beginFrame(clear), "LOD bias frame acquired");
+                    fb.bind(probeFb); state.setViewport(0, 0, 4, 4);
+                    shaders.use(lodProg); shaders.uniform1i(lodProg, shaders.getUniformLocation(lodProg, "tex"), 0);
+                    textures.activateUnit(0); textures.bind(glc::TEXTURE_2D, tex);
+                    vb.drawArrays(0, 6, 3);
+                    uint8_t px[4]{}; fb.readPixels(1, 1, 1, 1, glc::RGBA, glc::UNSIGNED_BYTE, px);
+                    fb.bind(0); ctx.endFrame(false);
+                    return int(px[0]) / 50;
+                };
+                const int plain = levelRead(sampled);
+                textures.setLodBias(-1.0f);
+                const int biased = levelRead(sampled), target = levelRead(targetTex);
+                textures.setLodBias(0.0f);
+                const int restored = levelRead(sampled);
+                printf("  LOD bias: level %d plain, %d with -1, render target %d, %d restored\n", plain, biased, target, restored);
+                check(plain == 2 && biased == 1 && target == 2 && restored == 2,
+                      "LOD bias moves sampled textures one level, leaves render targets, and 0 restores");
+                shaders.use(0); shaders.deleteProgramAndObjects(lodProg);
+                fb.destroyFramebuffer(probeFb); fb.destroyFramebuffer(targetFb);
+                const U32 names[] = {sampled, targetTex, probeTex};
+                textures.destroy(3, names);
+                VK_CHECK(vkDeviceWaitIdle(ctx.device));
+            }
             check(ctx.validationErrors == 0 && ctx.validationWarnings == 0, "zero Vulkan validation messages");
         }
         printf("FRAMES_CHECKS=%u PASS\n", checks);

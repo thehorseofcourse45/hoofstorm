@@ -844,3 +844,12 @@ void setRenderBackendStorageTexture(unsigned texture)
     (void)texture;
 #endif
 }
+void setRenderBackendTextureLodBias(float bias)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread) { sNative->thread->post([t = sNative->textures.get(), bias] { t->setLodBias(bias); }); return; }
+    if (sNative) sNative->textures->setLodBias(bias);
+#else
+    (void)bias;
+#endif
+}

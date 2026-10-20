@@ -1254,14 +1254,31 @@ VkImageView VulkanTextureBackend::viewOf(Tex& t)
     return view;
 }
 
-VkSampler VulkanTextureBackend::samplerOf(const Tex& t)
+F32 VulkanTextureBackend::biasFor(const Tex& t) const
+{
+    const bool usesMips = (uint32_t) t.ss.min >= glc::NEAREST_MIPMAP_NEAREST;
+    return (mLodBias != 0.f && usesMips && !t.ss.compare && !t.cube && !t.cubeArray && !t.asTarget) ? mLodBias : 0.f;
+}
+
+void VulkanTextureBackend::setLodBias(F32 bias)
+{
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(mCtx->phys, &props);
+    const F32 limit = props.limits.maxSamplerLodBias;
+    // a fixed step keeps the sampler cache small when dynamic scaling moves the bias
+    mLodBias = std::round(std::min(std::max(bias, -limit), limit) * 8.f) / 8.f;
+}
+
+VkSampler VulkanTextureBackend::samplerOf(const Tex& t, F32 bias)
 {
     const SamplerState& s = t.ss;
-    uint32_t anisotropyBits;
+    uint32_t anisotropyBits, biasBits;
     memcpy(&anisotropyBits, &s.anisotropy, sizeof(anisotropyBits));
+    memcpy(&biasBits, &bias, sizeof(biasBits));
     const uint32_t values[] = {uint32_t(s.wrapS), uint32_t(s.wrapT), uint32_t(s.wrapR), uint32_t(s.mag),
-        uint32_t(s.min), anisotropyBits, uint32_t(s.compare), uint32_t(s.compareFunc)};
-    const std::string key(reinterpret_cast<const char*>(values), sizeof(values));
+        uint32_t(s.min), anisotropyBits, uint32_t(s.compare), uint32_t(s.compareFunc), biasBits};
+    // without a bias the key keeps its old length, so the cache holds exactly the samplers it held before the bias existed
+    const std::string key(reinterpret_cast<const char*>(values), bias != 0.f ? sizeof(values) : sizeof(values) - sizeof(biasBits));
     auto it = mSamplers.find(key);
     if (it != mSamplers.end())
     {
@@ -1281,6 +1298,7 @@ VkSampler VulkanTextureBackend::samplerOf(const Tex& t)
     sci.maxAnisotropy = std::min(s.anisotropy, mCtx->maxAnisotropy);
     sci.compareEnable = s.compare ? VK_TRUE : VK_FALSE;
     sci.compareOp = (VkCompareOp) (s.compareFunc - glc::NEVER);
+    sci.mipLodBias = bias;
     sci.minLod = 0.0f;
     sci.maxLod = usesMips ? VK_LOD_CLAMP_NONE : 0.25f;      // a min filter without mips never leaves level 0
     sci.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
@@ -1344,10 +1362,12 @@ void VulkanTextureBackend::unitDescriptor(uint32_t unit, int kind, const std::st
     {
         t = &fallback(samplerType);
     }
-    if (!t->cSampler || !(t->cSs == t->ss))
+    const F32 bias = biasFor(*t);
+    if (!t->cSampler || !(t->cSs == t->ss) || t->cBias != bias)
     {
-        t->cSampler = samplerOf(*t);
+        t->cSampler = samplerOf(*t, bias);
         t->cSs = t->ss;
+        t->cBias = bias;
     }
     if (!t->cView || t->cImage != t->image || t->cLevels != t->levels || t->cBase != t->baseLevel || t->cMax != t->maxLevel ||
         memcmp(t->cSwizzle, t->swizzle, sizeof(t->swizzle)) != 0)

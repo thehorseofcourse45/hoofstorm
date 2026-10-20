@@ -532,6 +532,7 @@ bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
             return fsr2Fail("the upscaler could not be created");
         }
         std::copy(sizes, sizes + 4, mFsr2Sizes);
+        mFsr2SwapchainGeneration = mCtx->swapchainGeneration;     // a new upscaler has no history to reset
     }
 
     // compute work cannot be recorded inside dynamic rendering; the next draw begins it again
@@ -548,7 +549,10 @@ bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
     in.jitterY = p.jitterY;
     in.frameTimeMs = p.frameTimeMs;
     in.sharpness = p.sharpness;
-    in.reset = p.reset;
+    // the first frame after a swapchain recreation (lost device surface, mode or size change) starts without history
+    in.reset = p.reset || mCtx->swapchainGeneration != mFsr2SwapchainGeneration;
+    mFsr2SwapchainGeneration = mCtx->swapchainGeneration;
+    mFsr2LastReset = in.reset;
     in.cameraNear = p.cameraNear;
     in.cameraFar = p.cameraFar;
     in.fovY = p.fovY;

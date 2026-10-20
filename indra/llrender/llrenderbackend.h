@@ -81,6 +81,9 @@ bool lastRenderBackendFsr2Succeeded();
 // Call after generating the texture name and before defining its storage: one mip level, plus storage usage where the format
 // allows it (for FSR 2 images). No effect with OpenGL.
 void setRenderBackendStorageTexture(unsigned texture);
+// Texture LOD bias for the temporal upscaler (fsr2MipBias), on sampled 2D textures that filter through mips; render targets,
+// cube maps and shadow samplers keep theirs. 0 is the plain state. Applied in order with the draws. No effect with OpenGL.
+void setRenderBackendTextureLodBias(float bias);
 
 bool renderQuerySupported(std::uint32_t target);
 void generateRenderQueries(int count, std::uint32_t* ids);
