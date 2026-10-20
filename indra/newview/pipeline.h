@@ -162,7 +162,8 @@ public:
     void applyFXAA(LLRenderTarget* src, LLRenderTarget* dst);
     void generateSMAABuffers(LLRenderTarget* src);
     void applySMAA(LLRenderTarget* src, LLRenderTarget* dst);
-    void renderDoF(LLRenderTarget* src, LLRenderTarget* dst);
+    // cof: scratch for the circle of confusion, the size of src (default mRT->deferredLight, sized like mRT->screen)
+    void renderDoF(LLRenderTarget* src, LLRenderTarget* dst, LLRenderTarget* cof = nullptr);
     void copyRenderTarget(LLRenderTarget* src, LLRenderTarget* dst);
     void combineGlow(LLRenderTarget* src, LLRenderTarget* dst);
     void visualizeBuffers(LLRenderTarget* src, LLRenderTarget* dst, U32 bufferIndex);
@@ -769,6 +770,8 @@ public:
     LLRenderTarget          mFSRMap;    // window-sized EASU output while FSR is active
     LLRenderTarget          mFSR2MotionMap; // FSR 2: render-size RG16F camera motion (UV units, one mip level) while isFsr2Active()
     LLRenderTarget          mFSR2ReactiveMap; // FSR 2: render-size R8 reactive mask (0..0.9, one mip level) while isFsr2Active()
+    LLRenderTarget          mFSR2Map;   // FSR 2: display-size RGBA16F upscaler output (storage, one mip level); tonemap reads it
+    LLRenderTarget          mFSR2PostMap; // FSR 2: display-size scratch for CAS and DoF (mRT->deferredLight is render size)
     LLRenderTarget          mSMAABlendBuffer;
 
     // render ui to buffer target
@@ -1147,7 +1150,24 @@ public:
     int mFsr2PhaseCount = 8;                            // sequence length for this frame's render scale
     bool mFsr2CameraCut = true;                         // this frame has no usable previous frame: mPrevViewProj == current
     bool mFsr2SceneJittered = false;                    // this displayed frame's main scene was rendered with the jitter
+    // The next upscale starts without history: teleport finished, resize or render-scale change (target reallocation),
+    // the setting toggled. Consumed by the next dispatch; camera cuts (mFsr2CameraCut) and a recreated swapchain (backend)
+    // reset as well.
+    void requestFsr2Reset() { mFsr2ResetPending = true; }
 private:
+    // renderFinalize: motion, reactive (cleared once while v1 marks nothing), the upscale into mFSR2Map and the glow alpha
+    // copied back. False, with mFSR2Map unused, when this frame takes the plain path (no jittered scene, sizes skipped,
+    // a program or target missing, the dispatch refused or the backend failed).
+    bool renderFsr2Upscale();
+    // Frees the backend upscaler (posted in order, before the targets it saw are freed) when one may exist.
+    void releaseFsr2Upscaler();
+    void setFsr2LodBias(F32 bias);                      // applies the texture LOD bias when it changes
+    bool mFsr2ResetPending = true;
+    bool mFsr2PostDisplaySize = false;                  // the FSR 2 targets exist and the post chain targets are display size
+    bool mFsr2InputsSingleLevel = false;                // mMainRT.screen and its depth were made for the upscaler (one mip level)
+    bool mFsr2Dispatched = false;                       // a dispatch was issued since the last release
+    bool mFsr2ReactiveCleared = false;                  // mFSR2ReactiveMap holds the constant 0 mask
+    F32 mFsr2LodBias = 0.f;                             // texture LOD bias in effect for the upscaler (0: none)
     bool mFsr2SceneView = false;                        // between beginFsr2Frame and endFsr2Frame with FSR 2 active
     bool mFsr2PrevValid = false;                        // mCurViewProjUnjittered holds the last displayed frame
     U32 mFsr2RenderW = 0, mFsr2RenderH = 0;             // render size the history was made at

@@ -4954,6 +4954,7 @@ void LLAgent::startTeleportRequest()
 void LLAgent::handleTeleportFinished()
 {
     LL_INFOS("Teleport") << "Agent handling teleport finished." << LL_ENDL;
+    gPipeline.requestFsr2Reset();   // FSR 2: the arrival view has no usable history
     if (mTPNeedsNeabyChatSeparator)
     {
         // parcel is ready at this point
@@ -5550,6 +5551,10 @@ void LLAgent::setTeleportState(ETeleportState state)
                           << " Previous state: "
                           << teleportStateName(mTeleportState) << "(" << mTeleportState << ")"
                           << LL_ENDL;
+    if (state == TELEPORT_NONE && mTeleportState != TELEPORT_NONE)
+    {
+        gPipeline.requestFsr2Reset();   // FSR 2: a teleport ended (update_tp_display and the failure paths reach NONE here)
+    }
     mTeleportState = state;
     // <FS:PP> Speed optimisation
     // if (mTeleportState > TELEPORT_NONE && gSavedSettings.getBOOL("FreezeTime"))

@@ -664,6 +664,7 @@ static bool handleFSR2EnabledChanged(const LLSD& newvalue)
     }
     LLPipeline::resetFSRDynamic();
     gResizeScreenTexture = true;
+    gPipeline.requestFsr2Reset();   // toggled: the next upscale starts without history (the reallocation resets too)
     // the FSR 2 programs are only built while the setting is on (Vulkan only)
     if (gPipeline.isInit() && newvalue.asBoolean() && isVulkanRenderBackendActive()
         && (!gDeferredFSR2MotionProgram.isComplete() || !gDeferredFSR2ReactiveProgram.isComplete()))
