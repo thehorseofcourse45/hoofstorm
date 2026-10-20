@@ -1,11 +1,15 @@
 // Vulkan framebuffer implementation for the standalone renderer.
 #pragma once
 #include "llframebufferbackend.h"
+#include "llrenderbackend.h"
 #include "vkcontext.h"
 #include <array>
+#include <atomic>
 #include <map>
+#include <memory>
 
 class VulkanRenderStateBackend;
+class VulkanFsrUpscaler;
 class VulkanFramebufferBackend final : public LLFramebufferBackend
 {
 public:
@@ -45,6 +49,18 @@ public:
     void copyToTexture(U32 target, S32 level, S32 xoffset, S32 yoffset, S32 layer,
                        S32 x, S32 y, S32 width, S32 height);
 
+    // FSR 2 temporal upscale, recorded into the current frame (dispatchRenderBackendFsr2 in llrenderbackend.h). Ends dynamic
+    // rendering; the next draw reopens it. Afterwards the inputs and the output are SHADER_READ_ONLY_OPTIMAL. False, with nothing
+    // recorded, when no frame is recording, sizes are zero or render > display, an image is unsuitable (more than one mip or layer,
+    // depth not D32/D16, a stencil format, output without storage usage or sRGB, an image smaller than its size, one image twice),
+    // the upscaler cannot be created, or after three failures in a row (fsr2Failed). Also false when the SDK refuses the dispatch;
+    // the layouts have changed then. Every false except no frame and a skipped size counts toward the three. The upscaler is
+    // created on first use and recreated when a size changes; that waits for the device, so it runs on the queue-owning thread.
+    bool dispatchFsr2(const RenderBackendFsr2Params& params);
+    // Frees the upscaler and its history, sets upscalerMemBytes to 0 and clears the failure state.
+    void releaseFsr2();
+    bool fsr2Failed() const { return mFsr2Failed; }
+
 private:
     struct Attachment { U32 texture = 0, target = 0; S32 level = 0; };
     struct Framebuffer
@@ -79,4 +95,12 @@ private:
     VkImageLayout mRenderingDepthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     std::array<float, 4> mClear{}, mFrameClear{};
     float mClearDepth = 1.0f;
+
+    bool fsr2Fail(const char* why);     // counts a failure; always false
+    void retireFsr2();                  // submits first when the current recording still holds a dispatch, then frees
+    std::unique_ptr<VulkanFsrUpscaler> mFsr2;
+    uint32_t mFsr2Sizes[4]{};           // display w/h, render w/h of mFsr2
+    uint64_t mFsr2Serial = ~0ull;       // VkContext::cmdSerial of the recording that holds the last dispatch
+    int mFsr2Failures = 0;              // in a row
+    std::atomic<bool> mFsr2Failed{false};     // read from the viewer thread while the render thread runs
 };

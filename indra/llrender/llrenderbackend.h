@@ -56,6 +56,29 @@ void deleteRenderUniformBuffer(std::uint32_t buffer);
 void uploadRenderUniformBuffer(std::uint32_t buffer, const void* data, std::size_t bytes);
 void bindRenderUniformBuffer(std::uint32_t binding, std::uint32_t buffer);
 
+// FSR 2 (FidelityFX FSR 3.1) temporal upscale, Vulkan only. Textures are GL names. color: HDR, render size. depth: D32/D16,
+// 0 near 1 far. motion: RG16F/RG32F, current-to-previous motion in UV units. reactive: optional (0), R8. output: display size,
+// made with setRenderBackendStorageTexture and not sRGB. Every image has one mip level and one layer (setRenderBackendStorageTexture
+// gives that). jitter in render pixels; camera near/far in metres, fovY in radians (the SDK linearises depth with them).
+struct RenderBackendFsr2Params
+{
+    unsigned colorTex = 0, depthTex = 0, motionTex = 0, reactiveTex = 0, outputTex = 0;
+    unsigned renderW = 0, renderH = 0, displayW = 0, displayH = 0;
+    float jitterX = 0, jitterY = 0, frameTimeMs = 16.7f, sharpness = 0;
+    bool reset = false;
+    float cameraNear = 0.1f, cameraFar = 1000.0f, fovY = 1.0f;
+};
+// Records the upscale into the current frame; afterwards every image passed is ready for sampling. False when the Vulkan backend is
+// not active, no frame is recording, a size is zero or render > display, an image is unsuitable, the upscaler cannot be created,
+// or after isRenderBackendFsr2Failed(). The upscaler is created on first use and recreated when a size changes. With the render
+// thread on, the work is queued and true means queued: a failure found there only counts toward isRenderBackendFsr2Failed().
+bool dispatchRenderBackendFsr2(const RenderBackendFsr2Params& params);
+void releaseRenderBackendFsr2();     // frees the upscaler and its history, VRAM count to 0, failure state cleared
+bool isRenderBackendFsr2Failed();    // three dispatches in a row failed; nothing is attempted until releaseRenderBackendFsr2()
+// Call after generating the texture name and before defining its storage: one mip level, plus storage usage where the format
+// allows it (for FSR 2 images). No effect with OpenGL.
+void setRenderBackendStorageTexture(unsigned texture);
+
 bool renderQuerySupported(std::uint32_t target);
 void generateRenderQueries(int count, std::uint32_t* ids);
 void deleteRenderQueries(int count, const std::uint32_t* ids);

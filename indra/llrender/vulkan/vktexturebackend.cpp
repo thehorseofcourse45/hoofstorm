@@ -401,8 +401,9 @@ void VulkanTextureBackend::destroyImage(Tex& t)
 void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t layers, U32 glInternal, bool cube, bool cubeArray,
                                        bool rect)
 {
+    const uint32_t levels = rect || t.storageImage ? 1 : levelsFor(w, h);
     if (t.image && t.width == w && t.height == h && t.layers == layers && t.glInternal == glInternal && t.cube == cube &&
-        t.cubeArray == cubeArray)
+        t.cubeArray == cubeArray && t.levels == levels)
     {
         return;
     }
@@ -416,7 +417,7 @@ void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t 
     t.layers = layers;
     t.cube = cube;
     t.cubeArray = cubeArray;
-    t.levels = rect ? 1 : levelsFor(w, h);
+    t.levels = levels;
 
     VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ici.flags = (cube || cubeArray) ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0;
@@ -434,6 +435,9 @@ void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t 
     t.attachmentCapable = !fi.compressed && (props.optimalTilingFeatures & feature);
     if (t.attachmentCapable)
         ici.usage |= fi.kind == Kind::D32 ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    t.storage = t.storageImage && !fi.compressed && (props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
+    if (t.storage)
+        ici.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VK_CHECK(vkCreateImage(mCtx->device, &ici, nullptr, &t.image));
     VkMemoryRequirements req;
@@ -1392,6 +1396,35 @@ void VulkanTextureBackend::flushBarriers(VkCommandBuffer cmd)
     vkCmdPipelineBarrier(cmd, mPendingSrc, mPendingDst, 0, 0, nullptr, 0, nullptr, (uint32_t) mPendingBarriers.size(), mPendingBarriers.data());
     mPendingBarriers.clear();
     mPendingSrc = mPendingDst = 0;
+}
+
+void VulkanTextureBackend::emitPendingBarriers(VkCommandBuffer cmd)
+{
+    if (mPendingBarriers.empty()) return;
+    vkCmdPipelineBarrier(cmd, mPendingSrc, mPendingDst, 0, 0, nullptr, 0, nullptr, (uint32_t) mPendingBarriers.size(), mPendingBarriers.data());
+    mPendingBarriers.clear();
+    mPendingSrc = mPendingDst = 0;
+}
+
+bool VulkanTextureBackend::imageInfo(U32 name, ImageInfo& out) const
+{
+    auto it = mTextures.find(name);
+    if (it == mTextures.end() || !it->second.image) return false;
+    const Tex& t = it->second;
+    out = {t.image, t.info.format, t.width, t.height, t.levels, t.layers, t.layout, t.storage};
+    return true;
+}
+
+void VulkanTextureBackend::setTrackedLayout(U32 name, VkImageLayout layout)
+{
+    auto it = mTextures.find(name);
+    if (it != mTextures.end() && it->second.image) it->second.layout = layout;
+}
+
+void VulkanTextureBackend::setStorageImage(U32 name)
+{
+    auto it = mTextures.find(name);
+    if (it != mTextures.end()) it->second.storageImage = true;
 }
 
 void VulkanTextureBackend::copyFromFramebuffer2D(U32 target, S32 level, S32 xo, S32 yo, S32 x, S32 y, S32 w, S32 h)

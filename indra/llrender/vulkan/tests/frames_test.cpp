@@ -8,6 +8,7 @@
 #include "vkframebufferbackend.h"
 #include "glconsts.h"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 int main(int argc, char** argv)
@@ -169,6 +170,99 @@ int main(int argc, char** argv)
                 fb.readPixels(4, 4, 1, 1, glc::RGBA, glc::UNSIGNED_BYTE, px);
                 check(ctx.recording && px[0] == 255 && px[1] == 0, "a read outside a frame begins one and reads the bound framebuffer");
                 fb.bind(0); ctx.endFrame(false);
+                VK_CHECK(vkDeviceWaitIdle(ctx.device));
+            }
+            // FSR 2 temporal upscale through the backend entry (dispatchRenderBackendFsr2 forwards to fb.dispatchFsr2): a gradient
+            // rendered at render size is upscaled into a display-size storage texture inside the frame, and drawing goes on after it.
+            {
+                constexpr U32 RW = 400, RH = 300, DW = 800, DH = 600;
+                auto makeTexture = [&](U32 internal, U32 format, U32 w, U32 h, bool fsrImage) {
+                    U32 name; textures.generate(1, &name);
+                    if (fsrImage) textures.setStorageImage(name);     // one mip level, plus storage usage where the format has it
+                    textures.bind(glc::TEXTURE_2D, name);
+                    textures.image2D(glc::TEXTURE_2D, 0, internal, w, h, format, glc::FLOAT, nullptr);
+                    return name;
+                };
+                const U32 color = makeTexture(glc::RGBA16F, glc::RGBA, RW, RH, true);
+                const U32 depth = makeTexture(glc::DEPTH_COMPONENT32F, glc::DEPTH_COMPONENT, RW, RH, true);
+                const U32 motion = makeTexture(glc::RG16F, glc::RG, RW, RH, true);
+                const U32 output = makeTexture(glc::RGBA16F, glc::RGBA, DW, DH, true);
+                const U32 mipped = makeTexture(glc::RGBA16F, glc::RGBA, RW, RH, false);
+                const U32 srgb = makeTexture(glc::SRGB8_ALPHA8, glc::RGBA, DW, DH, true);
+                VulkanTextureBackend::ImageInfo info;
+                check(textures.imageInfo(output, info) && info.levels == 1 && info.layers == 1 && info.storage &&
+                      info.format == VK_FORMAT_R16G16B16A16_SFLOAT, "opt-in texture has one level and storage usage");
+                check(textures.imageInfo(mipped, info) && info.levels > 1 && !info.storage, "other textures keep their mip chain, no storage");
+                check(textures.imageInfo(depth, info) && info.levels == 1 && info.format == VK_FORMAT_D32_SFLOAT, "opt-in depth has one level");
+                U32 renderFb = fb.createFramebuffer(); fb.bind(renderFb);
+                fb.attach(renderFb, 0x8CE0, glc::TEXTURE_2D, color, 0); fb.attach(renderFb, 0x8D00, glc::TEXTURE_2D, depth, 0); fb.bind(0);
+                U32 outFb = fb.createFramebuffer(); fb.bind(outFb); fb.attach(outFb, 0x8CE0, glc::TEXTURE_2D, output, 0); fb.bind(0);
+
+                U32 gradient = shaders.createProgram();
+                const char* gradientSources[] = {
+                    "#version 330\nin vec4 position;\nout vec2 uv;\nvoid main(){uv=position.xy*0.5+0.5;gl_Position=position;}",
+                    "#version 330\nin vec2 uv;\nout vec4 color;\nvoid main(){color=vec4(uv.x,uv.y,0.25,1.0);}"};
+                for (int i = 0; i < 2; ++i)
+                {
+                    U32 object = shaders.createObject(i ? 0x8B30 : 0x8B31); std::string log;
+                    check(shaders.compileObject(object, 1, &gradientSources[i], log), "gradient shader accepted"); shaders.attachObject(gradient, object);
+                }
+                shaders.bindAttribLocation(gradient, 0, "position");
+                check(shaders.link(gradient), "gradient links"); shaders.use(gradient);
+
+                RenderBackendFsr2Params p;
+                p.colorTex = color; p.depthTex = depth; p.motionTex = motion; p.outputTex = output;
+                p.renderW = RW; p.renderH = RH; p.displayW = DW; p.displayH = DH;
+                p.frameTimeMs = 16.7f; p.reset = true;
+                check(ctx.beginFrame(clear), "FSR 2 frame acquired");
+                fb.bind(renderFb); state.setViewport(0, 0, RW, RH); fb.setClearColor(0, 0, 0, 1); fb.clear(0x4000);
+                vb.drawArrays(0, 6, 3);
+                check(fb.isRendering(), "gradient pass is open before the upscale");
+                RenderBackendFsr2Params bad = p; bad.colorTex = mipped;
+                check(!fb.dispatchFsr2(bad) && fb.isRendering() && ctx.upscalerMemBytes == 0, "multi-mip input refused, nothing recorded");
+                bad = p; bad.outputTex = srgb;
+                check(!fb.dispatchFsr2(bad) && ctx.upscalerMemBytes == 0 && !fb.fsr2Failed(), "sRGB output refused; two failures do not trip the rule");
+                check(fb.dispatchFsr2(p), "FSR 2 dispatch accepted");
+                check(!fb.isRendering() && ctx.upscalerMemBytes > 0, "the upscale ended dynamic rendering; upscaler VRAM counted");
+                bool tracked = true;
+                for (U32 t : {color, depth, motion, output})
+                    tracked = textures.imageInfo(t, info) && info.layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && tracked;
+                check(tracked, "inputs and output tracked as SHADER_READ_ONLY_OPTIMAL");
+                vb.drawArrays(0, 6, 3);
+                check(fb.isRendering(), "the next draw reopens rendering on the bound target");
+                RenderBackendFsr2Params smaller = p; smaller.renderW = 320; smaller.renderH = 240;
+                check(fb.dispatchFsr2(smaller) && ctx.upscalerMemBytes > 0, "a new render size recreates the upscaler mid-frame");
+                fb.bind(target[1]); state.setViewport(0, 0, 800, 600); fb.setClearColor(0, 1, 0, 1); fb.clear(0x4000);
+                vb.drawArrays(0, 6, 3);
+                uint8_t px[4]{}; fb.readPixels(100, 100, 1, 1, glc::RGBA, glc::UNSIGNED_BYTE, px);
+                printf("  after upscale: target pixel %u,%u,%u,%u\n", px[0], px[1], px[2], px[3]);
+                check(px[0] >= 28 && px[0] <= 36 && px[2] >= 60 && px[2] <= 68 && px[3] == 255, "drawing into the next target works after the upscale");
+                fb.bind(outFb); float out[4]{};
+                fb.readPixels(DW / 2, DH / 2, 1, 1, glc::RGBA, glc::FLOAT, out);
+                printf("  upscaled centre %.3f %.3f %.3f %.3f\n", out[0], out[1], out[2], out[3]);
+                check(std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]) && out[0] > 0.2f && out[0] < 0.8f &&
+                      out[2] > 0.15f && out[2] < 0.35f, "display-size output holds the upscaled gradient");
+                fb.bind(0); ctx.endFrame(false);
+                fb.releaseFsr2();
+                check(ctx.upscalerMemBytes == 0, "release frees the upscaler and zeroes its VRAM count");
+
+                // three failures in a row trip the rule; then nothing is attempted until a release
+                check(ctx.beginFrame(clear), "FSR 2 failure frame acquired");
+                ctx.failFsr2Create = true;
+                bool refused = !fb.dispatchFsr2(p) && !fb.dispatchFsr2(p) && !fb.fsr2Failed();
+                refused = !fb.dispatchFsr2(p) && refused;
+                check(refused && fb.fsr2Failed(), "three consecutive failures trip the failure rule");
+                ctx.failFsr2Create = false;
+                check(!fb.dispatchFsr2(p) && ctx.upscalerMemBytes == 0, "after the rule trips no dispatch is attempted");
+                fb.releaseFsr2();
+                check(!fb.fsr2Failed() && fb.dispatchFsr2(p), "release clears the failure state");
+                ctx.endFrame(false);
+                fb.releaseFsr2();
+                check(ctx.upscalerMemBytes == 0, "upscaler VRAM back to zero");
+                shaders.use(0);
+                fb.destroyFramebuffer(renderFb); fb.destroyFramebuffer(outFb);
+                const U32 names[] = {color, depth, motion, output, mipped, srgb};
+                textures.destroy(6, names);
                 VK_CHECK(vkDeviceWaitIdle(ctx.device));
             }
             check(ctx.validationErrors == 0 && ctx.validationWarnings == 0, "zero Vulkan validation messages");

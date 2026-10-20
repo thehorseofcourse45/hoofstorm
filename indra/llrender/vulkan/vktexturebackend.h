@@ -40,6 +40,25 @@ public:
     // Nothing else may be recorded into the command buffer in between that touches those images.
     void beginBarrierBatch() { ++mBatchDepth; }
     void flushBarriers(VkCommandBuffer cmd);
+    // Records the transitions an open batch still holds now, so a caller may record other work that touches those images.
+    void emitPendingBarriers(VkCommandBuffer cmd);
+
+    // A texture's image, for passes that record their own commands on it (the FSR 2 upscaler). False: unknown name or no image.
+    struct ImageInfo
+    {
+        VkImage image = VK_NULL_HANDLE;
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        uint32_t width = 0, height = 0, levels = 0, layers = 0;
+        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;   // as tracked by this backend
+        bool storage = false;                               // created with VK_IMAGE_USAGE_STORAGE_BIT
+    };
+    bool imageInfo(U32 name, ImageInfo& out) const;
+    // Such a pass left the whole image in `layout`; later transitions start from there.
+    void setTrackedLayout(U32 name, VkImageLayout layout);
+    // Opt-in, per texture, before its storage is defined: one mip level, plus VK_IMAGE_USAGE_STORAGE_BIT when the device supports
+    // storage images of its format (sRGB and depth formats usually do not). Every image defined for this name from then on is made
+    // that way. Other textures keep their full mip chain and usage.
+    void setStorageImage(U32 name);
 
     // statistics for the tests
     uint32_t imagesCreated = 0;
@@ -115,6 +134,8 @@ private:
         VkDeviceMemory memory = VK_NULL_HANDLE;
         VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
         bool attachmentCapable = false;
+        bool storageImage = false;      // setStorageImage: images get one level and storage usage where the format allows
+        bool storage = false;           // the current image has VK_IMAGE_USAGE_STORAGE_BIT
         bool asTarget = false;          // attached to a framebuffer at least once; memBytes moves to targetMemBytes
         VkDeviceSize memBytes = 0;      // counted in textureMemBytes, or targetMemBytes once asTarget
         FormatInfo info;

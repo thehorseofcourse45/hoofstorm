@@ -791,3 +791,47 @@ void getRenderQuery32(std::uint32_t id, std::uint32_t parameter, std::uint32_t* 
 #endif
     glGetQueryObjectuiv(id,parameter,value);
 }
+
+bool dispatchRenderBackendFsr2(const RenderBackendFsr2Params& params)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (!sNative || sNative->framebuffers->fsr2Failed()) return false;
+    if (!params.renderW || !params.renderH || !params.displayW || !params.displayH) return false;
+    if (sNative->thread)
+    {
+        // The texture state the checks need lives on the render thread: queue the work instead of waiting for its answer.
+        if (!sNative->frameActive) return false;
+        sNative->thread->post([fb = sNative->framebuffers.get(), sh = &sNative->shared, params] {
+            if (!sh->frameFailed) fb->dispatchFsr2(params);
+        });
+        return true;
+    }
+    return sNative->framebuffers->dispatchFsr2(params);
+#else
+    (void)params;
+    return false;
+#endif
+}
+void releaseRenderBackendFsr2()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread) { sNative->thread->post([fb = sNative->framebuffers.get()] { fb->releaseFsr2(); }); return; }
+    if (sNative) sNative->framebuffers->releaseFsr2();
+#endif
+}
+bool isRenderBackendFsr2Failed()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) return sNative->framebuffers->fsr2Failed();     // atomic: set on the render thread when threaded
+#endif
+    return false;
+}
+void setRenderBackendStorageTexture(unsigned texture)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread) { sNative->thread->post([t = sNative->textures.get(), texture] { t->setStorageImage(texture); }); return; }
+    if (sNative) sNative->textures->setStorageImage(texture);
+#else
+    (void)texture;
+#endif
+}
