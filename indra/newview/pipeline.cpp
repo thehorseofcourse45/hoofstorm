@@ -1497,7 +1497,10 @@ void LLPipeline::resizeScreenTexture()
         if (gResizeScreenTexture || (scaledResX != mRT->screen.getWidth()) || (scaledResY != mRT->screen.getHeight()))
 // [/SL:KB]
         {
+            // a resize with the upscaler still on keeps its context (see allocateScreenBufferInternal)
+            mFsr2KeepOnResize = isFsr2Active();
             releaseScreenBuffers();
+            mFsr2KeepOnResize = false;
             releaseSunShadowTargets();
             releaseSpotShadowTargets();
             allocateScreenBuffer(resX,resY);
@@ -1630,8 +1633,9 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
     const bool fsr2_chain = main_view && isFsr2Active() && fsr2UseUpscaler(RenderFSR2Quality, resX, resY, mRT->width, mRT->height);
     if (main_view)
     {
-        // the upscaler keeps views of the images it saw for a few dispatches: freed before any of them is
-        releaseFsr2Upscaler();
+        // The upscaler context stays: a smaller render size at the same display size resizes it in place (a full release waits
+        // for the device and rebuilds every SDK pipeline, 80-300 ms per dynamic-scaling step). A display size change recreates
+        // it in dispatchFsr2, and the full teardown paths (releaseScreenBuffers, releaseGLBuffers) still release it.
         requestFsr2Reset();
         if (fsr2_chain != mFsr2InputsSingleLevel)
         {
@@ -2174,7 +2178,10 @@ void LLPipeline::releaseShadowBuffers()
 
 void LLPipeline::releaseScreenBuffers()
 {
-    releaseFsr2Upscaler();      // the upscaler saw mMainRT.screen and its depth: freed first
+    if (!mFsr2KeepOnResize)
+    {
+        releaseFsr2Upscaler();  // the upscaler saw mMainRT.screen and its depth: freed first
+    }
     mRT->screen.release();
     mRT->deferredScreen.release();
     mRT->deferredLight.release();
