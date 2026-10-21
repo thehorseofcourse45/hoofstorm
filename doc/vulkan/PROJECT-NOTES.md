@@ -839,6 +839,8 @@ with code -1073741819 about 8 s after start in that mode; harmless.
 
 Newest (2026-10-20): run the FSR 2/3.1 in-world checklist at the top of this file, read the log, then push with approval.
 
+Dropped (2026-10-21): `Screen Space Reflection Post` failed to link at all shader levels in one run with `FS_SHADER_DUMP_DIR` set (shader cache off), with an empty `GLSL Linker Error:`. That run also had the missing `MAX_JOINTS_PER_MESH_OBJECT` define, which failed the rigged velocity shader just before. The SSR sources have no diff against `3ee1daca2e`, and it loads normally from cache. Probably fallout from that run; not reproduced on the fixed build and not worth a dedicated test. To check later: launch with `FS_SHADER_DUMP_DIR` set, log in without ticking FSR 2, and search the log for `Failed to link shader: Screen Space Reflection Post`.
+
 Older, still open: current implementation and evidence: `HANDOFF.md`, latest native GPU timing/occlusion section.
 The user validated the OpenGL framebuffer work and reports consistent 35-40 FPS with the preceding Vulkan pacing build.
 Now test native query-enabled culling and profiling in the same heavy sim, including camera movement, water, reflection
