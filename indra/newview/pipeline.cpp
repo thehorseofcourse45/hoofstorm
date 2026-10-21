@@ -1240,6 +1240,7 @@ bool LLPipeline::renderFsr2Upscale()
     else if (!mFsr2ReactiveCleared)
     {
         // v1 marks nothing: the constant 0 mask is cleared once per allocation and kept
+        getFramebufferBackend().setClearColor(0, 0, 0, 0);   // the mask must be exactly 0, not the last clear colour
         mFSR2ReactiveMap.bindTarget();
         mFSR2ReactiveMap.clear();
         mFSR2ReactiveMap.flush();
@@ -1728,6 +1729,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             {
                 // a frame can read the output before the first dispatch the render thread finishes (a failure there shows one
                 // frame late): it then reads the cleared target, not undefined memory
+                getFramebufferBackend().setClearColor(0, 0, 0, 0);   // clear() uses whatever colour was set last
                 mFSR2Map.bindTarget();
                 mFSR2Map.clear();
                 mFSR2Map.flush();

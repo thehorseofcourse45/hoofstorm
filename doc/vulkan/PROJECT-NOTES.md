@@ -1,6 +1,25 @@
 # Vulkan project notes
 
-## Current status: FSR 3.1 temporal upscaler, built (Tasks 1-12 code), in-world check pending, 2026-10-20
+## Current status: FSR 3.1 temporal upscaler, merged to master, partly checked in-world, 2026-10-21
+
+### Update 2026-10-21 (merged: PR 16 on the fork, `vulkan-framebuffer` into `master`)
+
+- Checked in-world by the user: FSR 2 runs; ghost trails are gone with the history reset; moving avatars (body, rigged mesh and cut-out hair) stay sharp near and far with the avatar velocity pass; the 60-290 ms `Display:Sky` hitch from per-step context rebuilds is gone (`1b22847dd5`, judged on short runs).
+- Dynamic scaling: shrinking the render size keeps the SDK context and only changes the dispatch size (`1b22847dd5`); an in-place size step resets the history (`c2be25c57f`).
+- Avatar motion vectors (`ee53bc82fc`, plan `docs/superpowers/plans/2026-10-21-fsr-avatar-velocity.md`, spike note `docs/superpowers/notes/`): camera-only motion made moving avatars blur with FSR 2 on (only with FSR 2; native was fine, dynamic scaling off did not change it). `LLPipeline::renderFsr2AvatarVelocity` runs right after `generateFsr2Motion`: avatar bodies (`LLDrawPoolAvatar::renderFsr2Velocity`, `fsr2AvatarBodyVelocityV.glsl`, palettes include the modelview so camera motion is in the difference) and opaque rigged mesh (`fsr2AvatarVelocityV.glsl`, agent-space palettes, `renderObjects(type, false, false, true)` plus `pushRiggedGLTFBatches`) are redrawn with this and last frame's bone palette and write `prevUv - curUv` into `mFSR2MotionMap`; the shared `fsr2AvatarVelocityF.glsl` discards pixels behind the scene depth. Previous palettes: `LLVOAvatar::MatrixPaletteCache::mPrevGLMp` / `mPrevValid` (rigged) and `LLViewerJointMesh::mCurMat` / `mPrevMat` (body, captured by the first main-view upload of a frame); usable only per `fsr2PrevPaletteUsable` (same joint count, at most `kFsr2PrevPaletteMaxAge` frames old). Without a usable previous palette the shader derives the camera motion; without the programs the camera motion stands. Rigid attachments (hats, jewellery) and alpha-masked/blended rigged mesh keep camera motion plus the per-avatar box translation in `fsr2MotionF.glsl` (`collectFsr2AvatarBoxes`). No reactive mask was needed: design fact 3 below (reactive constant 0) still stands, and a reactive mask for avatars was tried and made no difference.
+- Gotcha: a program-specific vertex shader does not get `MAX_JOINTS_PER_MESH_OBJECT` from the loader (only the shared skinning include does) and `clearPermutations()` drops defines, so `gDeferredFSR2AvatarVelocityProgram` adds it with `addPermutation`. The headless tests define it by hand and passed while the viewer failed to link the program; the viewer log hides the linker text (look for `Failed to link shader` in `Firestorm.log`). The Vulkan backend also reads uniform array sizes as plain digits (no `N * 2`).
+- Tests (all PASS, zero validation messages): frames 171, fsr2 59, shader 43, activation 48, helpers 86.
+- Minor fixes after the merge (uncommitted at the time of writing): the FSR 2 target and the reactive mask are cleared with an explicit (0,0,0,0) clear colour instead of whatever was set last; the FSR 1.0 and FSR 2 dynamic-scaling checkboxes no longer overlap (label shortened to "Dynamic scaling (target FPS)", FSR 1.0 width 265); not yet seen in a viewer.
+- Not changed on purpose: `isFsr2Active()` still does not check that the motion and reactive programs are complete (adding it could disable FSR 2 during shader reloads and startup, and the fallback already covers a compile failure); `vkfsr2.cpp` output `oldLayout` UNDEFINED is correct because the SDK overwrites the whole output.
+
+Next steps:
+
+1. Run the rest of the in-world checklist below (Y-sign, teleport, resize, quality modes, SSR shimmer, forced failure, VRAM, log).
+2. Decide the performance gate (proposal: temporal Quality at least 15% faster than native in the same scene, avatar velocity pass under 1 ms at 12 avatars) and add a GPU timing line for the velocity pass.
+3. Only if seen: velocity for alpha-masked rigged mesh, animesh and rigid attachments.
+4. Frame generation is a separate gated spec; start it after the checklist.
+5. Housekeeping: decide `.gitignore` for `dist/` and `doc/vulkan/tools/reconfigure.cmd`; delete the out-of-date `doc/vulkan/HANDOFF-FSR-TEMPORAL.md`.
+
 
 - Spec `docs/superpowers/specs/2026-10-19-fsr-temporal-upscaler-design.md`. SDK vendored under `indra/llrender/vulkan/ffx/` (see its README); pure helpers in `llfsr2.h`.
 - `VulkanFsrUpscaler` (`vkfsr2.h/.cpp`, in `llvulkan`): create/resize/dispatch/destroy, FP16 shaders when `VkContext::fp16Math`. Takes `Fsr2Image` (VkImage, format, size, current layout), not image views: the SDK makes its own views. After a dispatch the inputs and the output are in SHADER_READ_ONLY_OPTIMAL. VRAM in `VkContext::upscalerMemBytes` (20 MB at 640x360 to 960x540), test hook `VkContext::failFsr2Create`.
