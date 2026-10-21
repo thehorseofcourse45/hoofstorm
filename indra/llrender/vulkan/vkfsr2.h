@@ -34,10 +34,25 @@ class VulkanFsrUpscaler
 public:
     ~VulkanFsrUpscaler() { destroy(); }
     // False when ctx.failFsr2Create is set or the SDK reports an error; nothing is left allocated then.
-    bool create(VkContext& ctx, uint32_t displayW, uint32_t displayH, uint32_t renderW, uint32_t renderH);
+    bool create(VkContext& ctx, uint32_t displayW, uint32_t displayH, uint32_t renderW, uint32_t renderH, uint32_t maxRenderW = 0, uint32_t maxRenderH = 0);
+    // True when resize() only changes the dispatch size: same display size, render size within what the context was created for.
+    bool resizesInPlace(uint32_t displayW, uint32_t displayH, uint32_t renderW, uint32_t renderH) const
+    {
+        return mContext && mDisplayW == displayW && mDisplayH == displayH && renderW <= mMaxRenderW && renderH <= mMaxRenderH;
+    }
+    // A smaller render size (dynamic scaling) keeps the context: recreating it waits for the device and rebuilds every SDK pipeline.
+    // A larger one recreates it once, sized for the display, so later steps stay in place.
     bool resize(VkContext& ctx, uint32_t displayW, uint32_t displayH, uint32_t renderW, uint32_t renderH)
     {
-        return create(ctx, displayW, displayH, renderW, renderH);
+        if (resizesInPlace(displayW, displayH, renderW, renderH))
+        {
+            ++ctx.fsr2CreateCalls;
+            mRenderW = renderW;
+            mRenderH = renderH;
+            return true;
+        }
+        const bool grow = mContext && mDisplayW == displayW && mDisplayH == displayH;
+        return create(ctx, displayW, displayH, renderW, renderH, grow ? displayW : renderW, grow ? displayH : renderH);
     }
     // Records the upscale into cmd. Missing color/depth/motion/output or depthInverted: false, nothing recorded. Otherwise every
     // supplied input and the output end in SHADER_READ_ONLY_OPTIMAL, the output readable by fragment and compute shaders; false
@@ -56,5 +71,6 @@ private:
     uint32_t mSharedId = 0;                  // backend context that owns mShared
     FfxResourceInternal mShared[3]{};        // dilated depth, dilated motion vectors, reconstructed previous nearest depth
     uint32_t mDisplayW = 0, mDisplayH = 0, mRenderW = 0, mRenderH = 0;
+    uint32_t mMaxRenderW = 0, mMaxRenderH = 0;   // what the context was created for
     int64_t mMemBytes = 0;
 };

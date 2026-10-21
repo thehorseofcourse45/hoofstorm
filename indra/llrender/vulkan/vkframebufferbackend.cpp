@@ -530,7 +530,8 @@ bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
     const uint32_t sizes[4] = {p.displayW, p.displayH, p.renderW, p.renderH};
     if (!mFsr2 || !std::equal(sizes, sizes + 4, mFsr2Sizes))
     {
-        if (mFsr2 && mCtx->cmdSerial == mFsr2Serial) mCtx->flushCommands(VkContext::Stall::Explicit);     // see retireFsr2
+        if (mFsr2 && !mFsr2->resizesInPlace(p.displayW, p.displayH, p.renderW, p.renderH) && mCtx->cmdSerial == mFsr2Serial)
+            mCtx->flushCommands(VkContext::Stall::Explicit);     // see retireFsr2
         if (!mFsr2) mFsr2 = std::make_unique<VulkanFsrUpscaler>();
         if (!mFsr2->resize(*mCtx, p.displayW, p.displayH, p.renderW, p.renderH))
         {

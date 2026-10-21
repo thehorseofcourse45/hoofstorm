@@ -38,7 +38,7 @@ FfxResource resourceOf(const Fsr2Image& i, const wchar_t* name, FfxResourceState
 }
 }
 
-bool VulkanFsrUpscaler::create(VkContext& ctx, uint32_t displayW, uint32_t displayH, uint32_t renderW, uint32_t renderH)
+bool VulkanFsrUpscaler::create(VkContext& ctx, uint32_t displayW, uint32_t displayH, uint32_t renderW, uint32_t renderH, uint32_t maxRenderW, uint32_t maxRenderH)
 {
     destroy();
     ++ctx.fsr2CreateCalls;
@@ -46,6 +46,7 @@ bool VulkanFsrUpscaler::create(VkContext& ctx, uint32_t displayW, uint32_t displ
         return false;
     mCtx = &ctx;
     mDisplayW = displayW; mDisplayH = displayH; mRenderW = renderW; mRenderH = renderH;
+    mMaxRenderW = std::max(renderW, maxRenderW); mMaxRenderH = std::max(renderH, maxRenderH);
 
     VkDeviceContext device{ctx.device, ctx.phys, vkGetDeviceProcAddr};
     const size_t contexts = FFX_FSR3UPSCALER_CONTEXT_COUNT + 1;      // + the context owning the shared targets
@@ -61,7 +62,7 @@ bool VulkanFsrUpscaler::create(VkContext& ctx, uint32_t displayW, uint32_t displ
 
     FfxFsr3UpscalerContextDescription desc{};
     desc.flags = FFX_FSR3UPSCALER_ENABLE_HIGH_DYNAMIC_RANGE | FFX_FSR3UPSCALER_ENABLE_AUTO_EXPOSURE;
-    desc.maxRenderSize = {renderW, renderH};
+    desc.maxRenderSize = {mMaxRenderW, mMaxRenderH};
     desc.maxUpscaleSize = {displayW, displayH};
     desc.backendInterface = mInterface;
     desc.fpMessage = sdkMessage;

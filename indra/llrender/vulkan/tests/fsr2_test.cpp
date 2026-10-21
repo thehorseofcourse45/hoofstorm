@@ -163,7 +163,15 @@ int main()
             Fsr2Inputs inverted = in;
             inverted.depthInverted = true;
             check(!fsr.dispatch(cmd, inverted, out), "inverted depth is refused");
-            check(fsr.resize(ctx, dw, dh, 480, 270) && fsr.memoryBytes() > 0 && ctx.upscalerMemBytes == fsr.memoryBytes(), "resize recreates the context");
+            const int64_t createdBytes = fsr.memoryBytes();
+            check(fsr.resizesInPlace(dw, dh, 480, 270) && fsr.resize(ctx, dw, dh, 480, 270) && fsr.memoryBytes() == createdBytes
+                      && ctx.upscalerMemBytes == createdBytes,
+                  "a smaller render size keeps the context");
+            check(!fsr.resizesInPlace(dw, dh, dw, dh) && fsr.resize(ctx, dw, dh, dw, dh) && fsr.memoryBytes() > createdBytes
+                      && ctx.upscalerMemBytes == fsr.memoryBytes() && fsr.resizesInPlace(dw, dh, rw, rh),
+                  "a larger render size recreates the context for the display size, so later steps stay in place");
+            check(!fsr.resizesInPlace(dw + 2, dh, 480, 270) && fsr.resize(ctx, dw + 2, dh, 480, 270) && ctx.upscalerMemBytes == fsr.memoryBytes(),
+                  "a new display size recreates the context");
             fsr.destroy();
             check(fsr.memoryBytes() == 0 && ctx.upscalerMemBytes == 0, "destroy releases the counted VRAM");
         }
