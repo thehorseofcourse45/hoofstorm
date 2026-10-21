@@ -133,3 +133,6 @@ checks.json
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+/dist/
+/doc/vulkan/tools/reconfigure.cmd
