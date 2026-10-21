@@ -532,6 +532,7 @@ bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
     {
         if (mFsr2 && !mFsr2->resizesInPlace(p.displayW, p.displayH, p.renderW, p.renderH) && mCtx->cmdSerial == mFsr2Serial)
             mCtx->flushCommands(VkContext::Stall::Explicit);     // see retireFsr2
+        const bool keptContext = mFsr2 && mFsr2->resizesInPlace(p.displayW, p.displayH, p.renderW, p.renderH);
         if (!mFsr2) mFsr2 = std::make_unique<VulkanFsrUpscaler>();
         if (!mFsr2->resize(*mCtx, p.displayW, p.displayH, p.renderW, p.renderH))
         {
@@ -540,6 +541,7 @@ bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
         }
         std::copy(sizes, sizes + 4, mFsr2Sizes);
         mFsr2SwapchainGeneration = mCtx->swapchainGeneration;     // a new upscaler has no history to reset
+        if (keptContext) keepFsr2Reset(true);     // the kept history was rendered at another size
     }
 
     // compute work cannot be recorded inside dynamic rendering; the next draw begins it again

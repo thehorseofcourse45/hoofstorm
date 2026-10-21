@@ -245,6 +245,13 @@ int main()
             ctx.failFsr2Dispatch = false;
             check(inFrame(p) && fb.fsr2LastReset(), "backend: the swapchain reset survives the refused dispatch");
             check(inFrame(p) && !fb.fsr2LastReset(), "backend: and is applied once");
+            // a render size step keeps the context but not the history rendered at the other size
+            RenderBackendFsr2Params smaller = p; smaller.renderW = p.renderW - 4; smaller.renderH = p.renderH - 4;
+            const uint64_t stepCreates = ctx.fsr2CreateCalls;
+            check(inFrame(smaller) && !fb.fsr2LastFailed() && fb.fsr2LastReset() && ctx.upscalerMemBytes > 0, "backend: a smaller render size resets the history");
+            check(inFrame(smaller) && !fb.fsr2LastReset(), "backend: the same render size does not");
+            check(inFrame(p) && fb.fsr2LastReset() && ctx.fsr2CreateCalls == stepCreates + 2, "backend: stepping back up within the created size resets again, in place");
+            check(inFrame(p) && !fb.fsr2LastReset(), "backend: and only once");
             fb.releaseFsr2();
             check(ctx.upscalerMemBytes == 0, "backend: release frees the upscaler");
             const U32 names[] = {color, depth, motion, output, srgb};
