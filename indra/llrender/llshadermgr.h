@@ -231,6 +231,7 @@ public:
         ENVIRONMENT_INTENSITY,              //  "env_intensity"
 
         AVATAR_MATRIX,                      //  "matrixPalette"
+        AVATAR_MATRIX_PREV,                 //  "matrixPalettePrev" (FSR 2 avatar velocity)
         AVATAR_TRANSLATION,                 //  "translationPalette"
 
         // <FS:CR> Import Vignette from Exodus

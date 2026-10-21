@@ -40,6 +40,31 @@ public:
     // Nothing else may be recorded into the command buffer in between that touches those images.
     void beginBarrierBatch() { ++mBatchDepth; }
     void flushBarriers(VkCommandBuffer cmd);
+    // Records the transitions an open batch still holds now, so a caller may record other work that touches those images.
+    void emitPendingBarriers(VkCommandBuffer cmd);
+
+    // A texture's image, for passes that record their own commands on it (the FSR 2 upscaler). False: unknown name or no image.
+    struct ImageInfo
+    {
+        VkImage image = VK_NULL_HANDLE;
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        uint32_t width = 0, height = 0, levels = 0, layers = 0;
+        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;   // as tracked by this backend
+        bool storage = false;                               // created with VK_IMAGE_USAGE_STORAGE_BIT
+    };
+    bool imageInfo(U32 name, ImageInfo& out) const;
+    // Such a pass left the whole image in `layout`; later transitions start from there.
+    void setTrackedLayout(U32 name, VkImageLayout layout);
+    // Opt-in, per texture, before its storage is defined: one mip level, plus VK_IMAGE_USAGE_STORAGE_BIT when the device supports
+    // storage images of its format (sRGB and depth formats usually do not). Every image defined for this name from then on is made
+    // that way. Other textures keep their full mip chain and usage.
+    void setStorageImage(U32 name);
+    // Texture LOD bias added to the samplers of sampled 2D textures that filter through mips (not render targets, cube maps or
+    // depth-compare samplers), for the temporal upscaler: the scene renders below display size but textures should keep display
+    // detail. Rounded to 1/8 and clamped to the device limit; 0 gives the plain samplers back. Read per draw (the sampler is
+    // picked when a draw resolves its textures), so setting it around a group of draws biases only those draws.
+    void setLodBias(F32 bias);
+    F32 lodBias() const { return mLodBias; }
 
     // statistics for the tests
     uint32_t imagesCreated = 0;
@@ -115,6 +140,10 @@ private:
         VkDeviceMemory memory = VK_NULL_HANDLE;
         VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
         bool attachmentCapable = false;
+        bool storageImage = false;      // setStorageImage: images get one level and storage usage where the format allows
+        bool storage = false;           // the current image has VK_IMAGE_USAGE_STORAGE_BIT
+        bool asTarget = false;          // attached to a framebuffer at least once; memBytes moves to targetMemBytes
+        VkDeviceSize memBytes = 0;      // counted in textureMemBytes, or targetMemBytes once asTarget
         FormatInfo info;
         U32 glInternal = 0;
         uint32_t width = 0, height = 0, layers = 1, levels = 1;
@@ -127,6 +156,7 @@ private:
         // Last handles handed to a draw, with what they were made from, so a repeat draw skips the string-keyed lookups.
         // cView must be reset wherever 'views' is cleared or moved out.
         SamplerState cSs;
+        F32 cBias = 0.f;                // LOD bias cSampler was made with
         VkSampler cSampler = VK_NULL_HANDLE;
         VkImageView cView = VK_NULL_HANDLE;
         VkImage cImage = VK_NULL_HANDLE;
@@ -152,7 +182,8 @@ private:
     void image2DFace(U32 target, S32 level, S32 internalFormat, S32 width, S32 height, S32 layers, U32 format, U32 type,
                      const void* pixels, bool cubeArray3D);
     VkImageView viewOf(Tex& t);
-    VkSampler samplerOf(const Tex& t);
+    VkSampler samplerOf(const Tex& t, F32 bias);
+    F32 biasFor(const Tex& t) const;    // mLodBias for the textures setLodBias covers, else 0
     Tex& fallback(const std::string& samplerType);
 
     VkContext* mCtx;
@@ -163,6 +194,7 @@ private:
     U32 mActive = 0;
     S32 mRowLength = 0;
     bool mSwapBytes = false;
+    F32 mLodBias = 0.f;
     std::map<std::string, VkSampler> mSamplers;
     std::map<std::string, Tex> mFallbacks;
 };

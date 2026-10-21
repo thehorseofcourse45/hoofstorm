@@ -48,6 +48,7 @@
 #include "llflexibleobject.h"
 #include "llfeaturemanager.h"
 #include "llviewershadermgr.h"
+#include "llrenderbackend.h"
 
 #include "llsky.h"
 #include "llvieweraudio.h"
@@ -627,6 +628,51 @@ static bool handleRenderDebugPipelineChanged(const LLSD& newvalue)
 static bool handleRenderResolutionDivisorChanged(const LLSD&)
 {
     gResizeScreenTexture = true;
+    return true;
+}
+
+static bool handleFSRQualityChanged(const LLSD&)
+{
+    // dynamic scaling starts from its floor again whenever the quality (the floor) or the mode changes
+    LLPipeline::resetFSRDynamic();
+    gResizeScreenTexture = true;
+    return true;
+}
+
+static bool handleFSREnabledChanged(const LLSD& newvalue)
+{
+    // FSR 1.0 and the temporal upscaler are mutually exclusive; the other one's listener reallocates as well
+    if (newvalue.asBoolean() && gSavedSettings.getBOOL("RenderFSR2Enabled"))
+    {
+        gSavedSettings.setBOOL("RenderFSR2Enabled", false);
+    }
+    LLPipeline::resetFSRDynamic();
+    gResizeScreenTexture = true;
+    // the FSR programs are only built while the setting is on
+    if (gPipeline.isInit() && gSavedSettings.getBOOL("RenderFSREnabled") && !gDeferredFSRRcasProgram.isComplete())
+    {
+        LLViewerShaderMgr::instance()->setShaders();
+    }
+    return true;
+}
+
+static bool handleFSR2EnabledChanged(const LLSD& newvalue)
+{
+    if (newvalue.asBoolean() && gSavedSettings.getBOOL("RenderFSREnabled"))
+    {
+        gSavedSettings.setBOOL("RenderFSREnabled", false);
+    }
+    LLPipeline::resetFSRDynamic();
+    gResizeScreenTexture = true;
+    gPipeline.requestFsr2Reset();   // toggled: the next upscale starts without history (the reallocation resets too)
+    // the FSR 2 programs are only built while the setting is on (Vulkan only). One that fails to compile makes the pipeline
+    // untick this setting and turn FSR 1.0 on (LLPipeline::applyFsr2Fallback, from the idle loop; FSR 2 is unticked first, so
+    // this listener and FSR 1.0's never switch each other back), so each reload here follows a user turning it on.
+    if (gPipeline.isInit() && newvalue.asBoolean() && isVulkanRenderBackendActive()
+        && (!gDeferredFSR2MotionProgram.isComplete() || !gDeferredFSR2ReactiveProgram.isComplete()))
+    {
+        LLViewerShaderMgr::instance()->setShaders();
+    }
     return true;
 }
 
@@ -1350,6 +1396,18 @@ void settings_setup_listeners()
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
     setting_setup_signal_listener(gSavedSettings, "RenderResolutionMultiplier", handleRenderResolutionDivisorChanged);
 // [/SL:KB]
+    setting_setup_signal_listener(gSavedSettings, "RenderFSREnabled", handleFSREnabledChanged);
+    setting_setup_signal_listener(gSavedSettings, "RenderFSRQuality", handleFSRQualityChanged);
+    setting_setup_signal_listener(gSavedSettings, "RenderFSRDynamic", handleFSRQualityChanged);
+    setting_setup_signal_listener(gSavedSettings, "RenderFSRCustomScale", handleFSRQualityChanged);
+    // a settings file with both upscalers on (edited by hand) keeps FSR 1.0, as before the temporal upscaler existed
+    if (gSavedSettings.getBOOL("RenderFSREnabled") && gSavedSettings.getBOOL("RenderFSR2Enabled"))
+    {
+        gSavedSettings.setBOOL("RenderFSR2Enabled", false);
+    }
+    setting_setup_signal_listener(gSavedSettings, "RenderFSR2Enabled", handleFSR2EnabledChanged);
+    setting_setup_signal_listener(gSavedSettings, "RenderFSR2Quality", handleFSRQualityChanged);
+    setting_setup_signal_listener(gSavedSettings, "RenderFSR2Dynamic", handleFSRQualityChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeLevel", handleReflectionProbeDetailChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeDetail", handleReflectionProbeDetailChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeCount", handleReflectionProbeCountChanged);

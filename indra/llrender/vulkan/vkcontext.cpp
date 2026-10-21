@@ -92,6 +92,23 @@ VkShaderModule VkContext::loadShader(const char* path) const
     return module;
 }
 
+bool VkContext::deviceLocalBudget(uint64_t& usage, uint64_t& budget) const
+{
+    if (!memoryBudget) return false;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT mb{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 mp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+    mp.pNext = &mb;
+    vkGetPhysicalDeviceMemoryProperties2(phys, &mp);
+    usage = budget = 0;
+    for (uint32_t i = 0; i < mp.memoryProperties.memoryHeapCount; ++i)
+        if (mp.memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+        {
+            usage += mb.heapUsage[i];
+            budget += mb.heapBudget[i];
+        }
+    return budget != 0;
+}
+
 bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantDepthClipControl)
 {
     // ---- frames in flight
@@ -274,11 +291,18 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantD
                 deviceExt.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
                 pushDescriptors = true;
             }
+            else if (std::string(e.extensionName) == VK_EXT_MEMORY_BUDGET_EXTENSION_NAME)
+            {
+                deviceExt.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+                memoryBudget = true;
+            }
     }
     // core features the viewer's shaders use: samplerCubeArray (reflection probes) needs imageCubeArray
     VkPhysicalDeviceVulkan12Features supported12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceVulkan11Features supported11{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
     VkPhysicalDeviceFeatures2 supported2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     supported2.pNext = &supported12;
+    supported12.pNext = &supported11;
     vkGetPhysicalDeviceFeatures2(phys, &supported2);
     VkPhysicalDeviceFeatures2 enable2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     enable2.features.occlusionQueryPrecise = supported2.features.occlusionQueryPrecise;
@@ -297,11 +321,15 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantD
     enable2.features.largePoints = supported2.features.largePoints;
     enable2.features.textureCompressionBC = supported2.features.textureCompressionBC;      // S3TC / DXT textures
     enable2.features.samplerAnisotropy = supported2.features.samplerAnisotropy;
+    enable2.features.shaderStorageImageWriteWithoutFormat = supported2.features.shaderStorageImageWriteWithoutFormat;    // FidelityFX output image
+    enable2.features.shaderStorageImageReadWithoutFormat = supported2.features.shaderStorageImageReadWithoutFormat;
+    enable2.features.shaderInt16 = supported2.features.shaderInt16;
     samplerAnisotropy = supported2.features.samplerAnisotropy != VK_FALSE;
     {
         VkPhysicalDeviceProperties dp;
         vkGetPhysicalDeviceProperties(phys, &dp);
         maxAnisotropy = dp.limits.maxSamplerAnisotropy;
+        maxSamplerLodBias = dp.limits.maxSamplerLodBias;
     }
     if (!supported2.features.imageCubeArray)
     {
@@ -310,8 +338,15 @@ bool VkContext::init(HINSTANCE hinst, HWND hwnd, bool wantValidation, bool wantD
     VkPhysicalDeviceVulkan12Features enable12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     hostQueryReset = supported12.hostQueryReset != VK_FALSE;
     enable12.hostQueryReset = supported12.hostQueryReset;
+    enable12.shaderFloat16 = supported12.shaderFloat16;
+    VkPhysicalDeviceVulkan11Features enable11{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
+    enable11.storageBuffer16BitAccess = supported11.storageBuffer16BitAccess;
+    enable11.uniformAndStorageBuffer16BitAccess = supported11.uniformAndStorageBuffer16BitAccess;
+    fp16Math = supported12.shaderFloat16 && supported2.features.shaderInt16 && supported11.storageBuffer16BitAccess &&
+               supported11.uniformAndStorageBuffer16BitAccess;
     enable12.pNext = &enable13;
-    enable2.pNext = &enable12;
+    enable11.pNext = &enable12;
+    enable2.pNext = &enable11;
 
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     dci.pNext = &enable2;
@@ -829,6 +864,7 @@ uint8_t* VkContext::batchStage(VkDeviceSize bytes, VkBuffer& buffer, VkDeviceSiz
         VK_CHECK(vkBindBufferMemory(device, chunk.buffer, chunk.memory, 0));
         VK_CHECK(vkMapMemory(device, chunk.memory, 0, VK_WHOLE_SIZE, 0, (void**) &chunk.mapped));
         ++textureUploadAllocations;
+        stagingMemBytes += (int64_t) req.size;
     }
     chunk.used = bytes;
     batch.chunks.push_back(chunk);
@@ -851,10 +887,11 @@ VkCommandBuffer VkContext::takeBatch(std::function<void()>* releaseOut)
         {
             chunk.used = 0;
             if (chunk.size == kBatchChunk && freeChunks.size() < 4) { freeChunks.push_back(chunk); continue; }
-            reap([device = device, chunk] {
+            reap([this, device = device, chunk] {
                 vkUnmapMemory(device, chunk.memory);
                 vkDestroyBuffer(device, chunk.buffer, nullptr);
                 vkFreeMemory(device, chunk.memory, nullptr);
+                stagingMemBytes -= (int64_t) chunk.size;
             });
         }
     };

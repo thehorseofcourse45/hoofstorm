@@ -1,11 +1,15 @@
 // Vulkan framebuffer implementation for the standalone renderer.
 #pragma once
 #include "llframebufferbackend.h"
+#include "llrenderbackend.h"
 #include "vkcontext.h"
 #include <array>
+#include <atomic>
 #include <map>
+#include <memory>
 
 class VulkanRenderStateBackend;
+class VulkanFsrUpscaler;
 class VulkanFramebufferBackend final : public LLFramebufferBackend
 {
 public:
@@ -31,6 +35,7 @@ public:
     void beginRendering(U32 clearMask = 0);
     void endRendering();
     bool isRendering() const { return mRendering; }
+    bool drawable();     // false when an attached texture has no image (out of memory): draws and clears are skipped
     VkExtent2D extent();
     std::array<VkFormat, 4> colorFormats();
     VkFormat depthFormat();
@@ -43,6 +48,29 @@ public:
     // Copies into the active texture; used by LLTextureBackend's framebuffer-copy methods.
     void copyToTexture(U32 target, S32 level, S32 xoffset, S32 yoffset, S32 layer,
                        S32 x, S32 y, S32 width, S32 height);
+
+    // FSR 2 temporal upscale, recorded into the current frame (dispatchRenderBackendFsr2 in llrenderbackend.h). Ends dynamic
+    // rendering; the next draw reopens it. Afterwards the inputs and the output are SHADER_READ_ONLY_OPTIMAL. False, with nothing
+    // recorded, when no frame is recording, sizes are zero or render > display, an image is unsuitable (more than one mip or layer,
+    // depth not D32/D16, a stencil format, output without storage usage or sRGB, an image smaller than its size, one image twice),
+    // the upscaler cannot be created, or after three failures in a row (fsr2Failed). Also false when the SDK refuses the dispatch;
+    // the layouts have changed then. Every false except no frame and a skipped size counts toward the three. The upscaler is
+    // created on first use and recreated when a size changes; that waits for the device, so it runs on the queue-owning thread.
+    // params.reset (and a swapchain recreation) stays pending until a dispatch the SDK accepts uses it.
+    bool dispatchFsr2(const RenderBackendFsr2Params& params);
+    // Frees the upscaler and its history, sets upscalerMemBytes to 0 and clears the failure state.
+    void releaseFsr2();
+    bool fsr2Failed() const { return mFsr2Failed; }
+    bool fsr2LastOk() const { return mFsr2LastOk; }     // the last dispatchFsr2 call returned true
+    // The last dispatchFsr2 call that got as far as counting (a failure or a recorded dispatch) failed. Unlike fsr2LastOk it is not
+    // cleared on entry or by the calls that skip without counting, so the viewer thread can read it while a dispatch runs.
+    bool fsr2LastFailed() const { return mFsr2LastFailed; }
+    // The last recorded dispatch reset the history: the caller asked for it (in this call or in one that did not get through), or
+    // the swapchain was recreated since the last dispatch the SDK accepted.
+    bool fsr2LastReset() const { return mFsr2LastReset; }
+    // A reset for a dispatch that never reached dispatchFsr2 (the render thread dropped it with its failed frame): the next
+    // dispatch the SDK accepts resets the history.
+    void keepFsr2Reset(bool reset) { mFsr2ResetKept = mFsr2ResetKept || reset; }
 
 private:
     struct Attachment { U32 texture = 0, target = 0; S32 level = 0; };
@@ -61,6 +89,7 @@ private:
         VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
         U32 texture = 0, level = 0, layer = 0;
     };
+    bool hasStorage(const Attachment& a) const;
     Image imageOf(const Attachment& a);
     Image colorImage(U32 framebuffer, U32 attachment);
     Image depthImage(U32 framebuffer);
@@ -77,4 +106,17 @@ private:
     VkImageLayout mRenderingDepthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     std::array<float, 4> mClear{}, mFrameClear{};
     float mClearDepth = 1.0f;
+
+    bool fsr2Fail(const char* why);     // counts a failure; always false
+    void retireFsr2();                  // submits first when the current recording still holds a dispatch, then frees
+    std::unique_ptr<VulkanFsrUpscaler> mFsr2;
+    uint32_t mFsr2Sizes[4]{};           // display w/h, render w/h of mFsr2
+    uint64_t mFsr2Serial = ~0ull;       // VkContext::cmdSerial of the recording that holds the last dispatch
+    int mFsr2Failures = 0;              // in a row
+    std::atomic<bool> mFsr2Failed{false};     // read from the viewer thread while the render thread runs
+    std::atomic<bool> mFsr2LastOk{false};     // same
+    std::atomic<bool> mFsr2LastFailed{false}; // same
+    bool mFsr2LastReset = false;
+    bool mFsr2ResetKept = false;                // a reset was asked for and no dispatch has been accepted since
+    uint32_t mFsr2SwapchainGeneration = 0;      // VkContext::swapchainGeneration at the last accepted dispatch (or creation)
 };

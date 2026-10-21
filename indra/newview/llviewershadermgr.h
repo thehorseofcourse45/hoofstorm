@@ -254,6 +254,12 @@ extern LLGLSLShader         gCASProgram;
 extern LLGLSLShader         gCASLegacyGammaProgram;
 extern LLGLSLShader         gDeferredPostNoDoFProgram;
 extern LLGLSLShader         gDeferredPostNoDoFNoiseProgram;
+extern LLGLSLShader         gDeferredFSREasuProgram;
+extern LLGLSLShader         gDeferredFSRRcasProgram;
+extern LLGLSLShader         gDeferredFSR2MotionProgram;
+extern LLGLSLShader         gDeferredFSR2ReactiveProgram;
+extern LLGLSLShader         gDeferredFSR2AvatarVelocityProgram;      // rigged mesh velocity, FSR 2
+extern LLGLSLShader         gDeferredFSR2AvatarBodyVelocityProgram;  // avatar body velocity, FSR 2
 extern LLGLSLShader         gDeferredPostGammaCorrectProgram;
 extern LLGLSLShader         gLegacyPostGammaCorrectProgram;
 extern LLGLSLShader         gDeferredPostTonemapProgram;

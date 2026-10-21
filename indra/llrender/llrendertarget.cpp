@@ -234,6 +234,10 @@ bool LLRenderTarget::addColorAttachment(U32 color_fmt)
 
     U32 tex;
     LLImageGL::generateTextures(1, &tex);
+    if (mStorageImage)
+    {
+        setRenderBackendStorageTexture(tex);    // before the storage is defined below
+    }
     gGL.getTexUnit(0)->bindManual(mUsage, tex);
 
     stop_glerror();
@@ -305,6 +309,10 @@ bool LLRenderTarget::allocateDepth()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
     LLImageGL::generateTextures(1, &mDepth);
+    if (mStorageDepth)
+    {
+        setRenderBackendStorageTexture(mDepth);     // before the storage is defined below
+    }
     gGL.getTexUnit(0)->bindManual(mUsage, mDepth);
 
     U32 internal_type = LLTexUnit::getInternalType(mUsage);

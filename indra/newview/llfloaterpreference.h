@@ -241,6 +241,9 @@ public:
     void refresh(); // Refresh enable/disable
     // if the quality radio buttons are changed
     void onChangeQuality(const LLSD& data);
+    void onChangeFSR();
+    void updateFSRInfo();   // render size line and the custom scale slider state
+    void updateFSR2State(); // temporal upscaler controls (OpenGL / Vulkan) and the FXAA / SMAA combos it replaces
     void onClickClearSettings();
     void onClickChatOnlineNotices();
     void onClickClearSpamList();
@@ -339,6 +342,8 @@ private:
 
     boost::signals2::connection mImpostorsChangedSignal;
     boost::signals2::connection mComplexityChangedSignal;
+    boost::signals2::connection mFSR2ChangedSignal;     // the temporal upscaler is also switched off by the fallback and by FSR 1.0
+    boost::signals2::connection mFSRChangedSignal;      // the fallback turns FSR 1.0 on while Preferences is open
 
     void onUpdateFilterTerm( bool force = false );
     void collectSearchableItems();

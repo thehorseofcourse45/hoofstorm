@@ -35,6 +35,7 @@
 #include "llversioninfo.h"
 
 #include "llrender.h"
+#include "llrenderbackend.h"
 #include "llenvironment.h"
 #include "llerrorcontrol.h"
 #include "llworld.h"
@@ -48,6 +49,7 @@
 
 #include "lljoint.h"
 #include "llskinningutil.h"
+#include "fscommon.h"
 
 static LLStaticHashedString sTexture0("texture0");
 static LLStaticHashedString sTexture1("texture1");
@@ -213,6 +215,12 @@ LLGLSLShader            gCASProgram;
 LLGLSLShader            gCASLegacyGammaProgram;
 LLGLSLShader            gDeferredPostNoDoFProgram;
 LLGLSLShader            gDeferredPostNoDoFNoiseProgram;
+LLGLSLShader            gDeferredFSREasuProgram;
+LLGLSLShader            gDeferredFSRRcasProgram;
+LLGLSLShader            gDeferredFSR2MotionProgram;   // FSR 2 camera motion vectors (Vulkan, while FSR 2 is on)
+LLGLSLShader            gDeferredFSR2ReactiveProgram; // FSR 2 reactive mask (Vulkan, while FSR 2 is on)
+LLGLSLShader            gDeferredFSR2AvatarVelocityProgram;     // FSR 2 rigged mesh velocity
+LLGLSLShader            gDeferredFSR2AvatarBodyVelocityProgram; // FSR 2 avatar body velocity
 LLGLSLShader            gDeferredWLSkyProgram;
 LLGLSLShader            gEnvironmentMapProgram;
 LLGLSLShader            gDeferredWLCloudProgram;
@@ -1179,6 +1187,12 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gSMAANeighborhoodBlendProgram[i].unload();
         }
         gCASProgram.unload();
+        gDeferredFSREasuProgram.unload();
+        gDeferredFSRRcasProgram.unload();
+        gDeferredFSR2MotionProgram.unload();
+        gDeferredFSR2ReactiveProgram.unload();
+        gDeferredFSR2AvatarVelocityProgram.unload();
+        gDeferredFSR2AvatarBodyVelocityProgram.unload();
         gCASLegacyGammaProgram.unload();
         gEnvironmentMapProgram.unload();
         gDeferredWLSkyProgram.unload();
@@ -2881,6 +2895,104 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostNoDoFNoiseProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostNoDoFNoiseProgram.createShader();
         llassert(success);
+    }
+
+    if (success && gSavedSettings.getBOOL("RenderFSREnabled"))
+    {
+        gDeferredFSREasuProgram.mName = "Deferred FSR EASU Shader";
+        gDeferredFSREasuProgram.mFeatures.isDeferred = true;
+        gDeferredFSREasuProgram.mShaderFiles.clear();
+        gDeferredFSREasuProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gDeferredFSREasuProgram.mShaderFiles.push_back(make_pair("deferred/fsrEasuF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFSREasuProgram.clearPermutations();
+        gDeferredFSREasuProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        bool fsr_ok = gDeferredFSREasuProgram.createShader();
+
+        if (fsr_ok)
+        {
+            gDeferredFSRRcasProgram.mName = "Deferred FSR RCAS Shader";
+            gDeferredFSRRcasProgram.mFeatures.isDeferred = true;
+            gDeferredFSRRcasProgram.mShaderFiles.clear();
+            gDeferredFSRRcasProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+            gDeferredFSRRcasProgram.mShaderFiles.push_back(make_pair("deferred/fsrRcasF.glsl", GL_FRAGMENT_SHADER));
+            gDeferredFSRRcasProgram.clearPermutations();
+            gDeferredFSRRcasProgram.addPermutation("HAS_NOISE", "1");
+            gDeferredFSRRcasProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            fsr_ok = gDeferredFSRRcasProgram.createShader();
+        }
+
+        if (!fsr_ok)
+        {
+            // FSR is optional: fall back to the plain upscale rather than failing the whole shader set
+            LL_WARNS("ShaderLoading") << "FSR shaders failed to compile; FSR upscaling is disabled" << LL_ENDL;
+            gDeferredFSREasuProgram.unload();
+            gDeferredFSRRcasProgram.unload();
+            gSavedSettings.setBOOL("RenderFSREnabled", false);
+            FSCommon::report_to_nearby_chat("FSR upscaling could not start on this graphics driver and has been turned off.");
+        }
+    }
+
+    // the temporal upscaler only runs in the Vulkan renderer; its programs are only built while the setting is on
+    if (success && gSavedSettings.getBOOL("RenderFSR2Enabled") && isVulkanRenderBackendActive())
+    {
+        gDeferredFSR2MotionProgram.mName = "Deferred FSR 2 Motion Vector Shader";
+        gDeferredFSR2MotionProgram.mShaderFiles.clear();
+        gDeferredFSR2MotionProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gDeferredFSR2MotionProgram.mShaderFiles.push_back(make_pair("deferred/fsr2MotionF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFSR2MotionProgram.clearPermutations();
+        gDeferredFSR2MotionProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        const bool motion_ok = gDeferredFSR2MotionProgram.createShader();
+        if (!motion_ok)
+        {
+            // optional like FSR 1.0: the pipeline falls back to FSR 1.0 (below; one warning there)
+            gDeferredFSR2MotionProgram.unload();
+        }
+
+        gDeferredFSR2ReactiveProgram.mName = "Deferred FSR 2 Reactive Mask Shader";
+        gDeferredFSR2ReactiveProgram.mShaderFiles.clear();
+        gDeferredFSR2ReactiveProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gDeferredFSR2ReactiveProgram.mShaderFiles.push_back(make_pair("deferred/fsr2ReactiveF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFSR2ReactiveProgram.clearPermutations();
+        gDeferredFSR2ReactiveProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        const bool reactive_ok = gDeferredFSR2ReactiveProgram.createShader();
+        if (!reactive_ok)
+        {
+            gDeferredFSR2ReactiveProgram.unload();
+        }
+
+        // avatar velocity is optional: without these programs moving avatars keep the camera motion (no fallback needed)
+        gDeferredFSR2AvatarVelocityProgram.mName = "Deferred FSR 2 Rigged Velocity Shader";
+        gDeferredFSR2AvatarVelocityProgram.mShaderFiles.clear();
+        gDeferredFSR2AvatarVelocityProgram.mShaderFiles.push_back(make_pair("deferred/fsr2AvatarVelocityV.glsl", GL_VERTEX_SHADER));
+        gDeferredFSR2AvatarVelocityProgram.mShaderFiles.push_back(make_pair("deferred/fsr2AvatarVelocityF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFSR2AvatarVelocityProgram.clearPermutations();
+        // only the shared skinning include gets this define from the loader; this program-specific vertex shader needs its own
+        gDeferredFSR2AvatarVelocityProgram.addPermutation("MAX_JOINTS_PER_MESH_OBJECT", std::to_string(LLSkinningUtil::getMaxJointCount()));
+        gDeferredFSR2AvatarVelocityProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gDeferredFSR2AvatarVelocityProgram.createShader())
+        {
+            gDeferredFSR2AvatarVelocityProgram.unload();
+        }
+
+        gDeferredFSR2AvatarBodyVelocityProgram.mName = "Deferred FSR 2 Avatar Body Velocity Shader";
+        gDeferredFSR2AvatarBodyVelocityProgram.mShaderFiles.clear();
+        gDeferredFSR2AvatarBodyVelocityProgram.mShaderFiles.push_back(make_pair("deferred/fsr2AvatarBodyVelocityV.glsl", GL_VERTEX_SHADER));
+        gDeferredFSR2AvatarBodyVelocityProgram.mShaderFiles.push_back(make_pair("deferred/fsr2AvatarVelocityF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFSR2AvatarBodyVelocityProgram.clearPermutations();
+        gDeferredFSR2AvatarBodyVelocityProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gDeferredFSR2AvatarBodyVelocityProgram.createShader())
+        {
+            gDeferredFSR2AvatarBodyVelocityProgram.unload();
+        }
+
+        // FSR 2 gives way to FSR 1.0 from the idle loop (outside this reload). Once it is off these programs are no longer built,
+        // so turning it on again is what tries them again; nothing here reloads in a loop.
+        if (!motion_ok || !reactive_ok)
+        {
+            gPipeline.requestFsr2Fallback(!motion_ok && !reactive_ok ? "the motion vector and reactive mask shaders failed to compile"
+                                          : !motion_ok ? "the motion vector shader failed to compile"
+                                                       : "the reactive mask shader failed to compile");
+        }
     }
 
     if (success)

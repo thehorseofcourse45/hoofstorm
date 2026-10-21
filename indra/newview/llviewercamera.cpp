@@ -380,6 +380,14 @@ void LLViewerCamera::setPerspective(bool for_selection,
 
     proj_mat *= glm::perspective(fov_y,aspect,z_near,z_far);
 
+    // FSR 2 jitters only the main scene view (not picking or tiled snapshots; LLPipeline excludes the rest)
+    const bool fsr2_jitter = !for_selection && mZoomFactor == 1.f && gPipeline.fsr2JitterThisView();
+    const glm::mat4 unjittered_proj = proj_mat;
+    if (fsr2_jitter)
+    {
+        proj_mat = gPipeline.getFsr2JitterMatrix() * proj_mat;
+    }
+
     gGL.loadMatrix(glm::value_ptr(proj_mat));
 
     set_current_projection(proj_mat);
@@ -413,6 +421,11 @@ void LLViewerCamera::setPerspective(bool for_selection,
     {
         // Save GL matrices for access elsewhere in code, especially project_world_to_screen
         set_current_modelview(modelview);
+    }
+
+    if (fsr2_jitter)
+    {
+        gPipeline.setFsr2SceneMatrices(unjittered_proj, proj_mat, modelview);
     }
 
     updateFrustumPlanes(*this);

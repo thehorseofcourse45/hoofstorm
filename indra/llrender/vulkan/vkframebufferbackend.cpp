@@ -2,6 +2,7 @@
 #include "vkquerybackend.h"
 #include "vkbackends.h"
 #include "vktexturebackend.h"
+#include "vkfsr2.h"
 #include "glconsts.h"
 #include <algorithm>
 #include <cassert>
@@ -11,6 +12,25 @@ namespace
 {
 constexpr U32 COLOR0 = 0x8CE0, DEPTH = 0x8D00, COMPLETE = 0x8CD5;
 constexpr U32 COLOR_BIT = 0x4000, DEPTH_BIT = 0x0100, BACK = 0x0405;
+
+bool hasStencil(VkFormat f)
+{
+    return f == VK_FORMAT_S8_UINT || f == VK_FORMAT_D16_UNORM_S8_UINT || f == VK_FORMAT_D24_UNORM_S8_UINT || f == VK_FORMAT_D32_SFLOAT_S8_UINT;
+}
+bool isPlainDepth(VkFormat f) { return f == VK_FORMAT_D32_SFLOAT || f == VK_FORMAT_D16_UNORM; }
+bool isSrgb(VkFormat f)
+{
+    switch (f)
+    {
+    case VK_FORMAT_R8_SRGB: case VK_FORMAT_R8G8_SRGB: case VK_FORMAT_R8G8B8_SRGB: case VK_FORMAT_B8G8R8_SRGB:
+    case VK_FORMAT_R8G8B8A8_SRGB: case VK_FORMAT_B8G8R8A8_SRGB: case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+    case VK_FORMAT_BC1_RGB_SRGB_BLOCK: case VK_FORMAT_BC1_RGBA_SRGB_BLOCK: case VK_FORMAT_BC2_SRGB_BLOCK: case VK_FORMAT_BC3_SRGB_BLOCK:
+    case VK_FORMAT_BC7_SRGB_BLOCK:
+        return true;
+    default:
+        return false;
+    }
+}
 }
 
 void VulkanFramebufferBackend::fail(const char* message)
@@ -23,7 +43,11 @@ VulkanFramebufferBackend::VulkanFramebufferBackend(VkContext* ctx, VulkanRenderS
 {
     ctx->framebuffers = this;
 }
-VulkanFramebufferBackend::~VulkanFramebufferBackend() { mCtx->framebuffers = nullptr; }
+VulkanFramebufferBackend::~VulkanFramebufferBackend()
+{
+    mFsr2.reset();      // waits for the device; a recording still holding a dispatch is never submitted after this
+    mCtx->framebuffers = nullptr;
+}
 U32 VulkanFramebufferBackend::createFramebuffer() { mObjects[mNext] = {}; return mNext++; }
 VulkanFramebufferBackend::Framebuffer& VulkanFramebufferBackend::object(U32 framebuffer)
 {
@@ -54,12 +78,25 @@ void VulkanFramebufferBackend::attach(U32 framebuffer, U32 attachment, U32 targe
     if (!framebuffer || framebuffer != mDraw || level < 0) fail("invalid attachment binding or level");
     endRendering();
     Attachment a{texture, target, level};
-    if (texture) imageOf(a);
+    if (texture && hasStorage(a)) imageOf(a);     // a render target that ran out of memory attaches anyway; drawing to it is skipped
     if (attachment == DEPTH) object(framebuffer).depth = a;
     else if (attachment >= COLOR0 && attachment < COLOR0 + 4) object(framebuffer).color[attachment - COLOR0] = a;
     else fail("unsupported attachment");
 }
 
+bool VulkanFramebufferBackend::hasStorage(const Attachment& a) const
+{
+    if (!a.texture) return true;
+    auto it = mCtx->textures->mTextures.find(a.texture);
+    return it != mCtx->textures->mTextures.end() && it->second.image;
+}
+bool VulkanFramebufferBackend::drawable()
+{
+    if (!mDraw) return true;
+    const auto& f = object(mDraw);
+    for (U32 i = 0; i < f.drawCount; ++i) if (!hasStorage(f.color[i])) return false;
+    return hasStorage(f.depth);
+}
 VulkanFramebufferBackend::Image VulkanFramebufferBackend::imageOf(const Attachment& a)
 {
     if (!a.texture) return {};
@@ -67,6 +104,12 @@ VulkanFramebufferBackend::Image VulkanFramebufferBackend::imageOf(const Attachme
     if (it == mCtx->textures->mTextures.end() || !it->second.image) fail("attachment texture has no storage");
     auto& t = it->second;
     if ((U32) a.level >= t.levels || !t.attachmentCapable) fail("texture level or format is not renderable");
+    if (!t.asTarget)
+    {
+        t.asTarget = true;
+        mCtx->textureMemBytes -= (int64_t) t.memBytes;
+        mCtx->targetMemBytes += (int64_t) t.memBytes;
+    }
     U32 layer = 0;
     if (a.target >= glc::TEXTURE_CUBE_MAP_POSITIVE_X && a.target <= glc::TEXTURE_CUBE_MAP_NEGATIVE_Z)
         layer = a.target - glc::TEXTURE_CUBE_MAP_POSITIVE_X;
@@ -120,7 +163,7 @@ VulkanFramebufferBackend::Image VulkanFramebufferBackend::readImage(bool depth)
 }
 U32 VulkanFramebufferBackend::checkStatus()
 {
-    if (!mDraw) return COMPLETE;
+    if (!mDraw || !drawable()) return COMPLETE;
     const auto& f = object(mDraw);
     VkExtent2D size{};
     bool any = false;
@@ -266,7 +309,7 @@ void VulkanFramebufferBackend::clear(U32 mask)
     prepareDraw();
     if (mask & ~(COLOR_BIT | DEPTH_BIT)) fail("stencil clears need a stencil attachment");
     if (!mask) return;
-    if (!ensureFrame()) return;     // minimized: nothing to clear
+    if (!ensureFrame() || !drawable()) return;     // minimized, or a render target without memory: nothing to clear
     const auto& s = mState->s;
     assert(!(mask & COLOR_BIT) || (s.colorMask[0] && s.colorMask[1] && s.colorMask[2] && s.colorMask[3]));
     assert(!(mask & DEPTH_BIT) || s.depthWrite);
@@ -389,7 +432,8 @@ void VulkanFramebufferBackend::copyToTexture(U32 target, S32 level, S32 xoffset,
 {
     if (!ensureFrame()) return;     // minimized: no image to copy from
     auto* t = mCtx->textures->bound(target);
-    if (!t || !t->image || level < 0 || (U32) level >= t->levels || layer < 0 || (U32) layer >= t->layers)
+    if (t && !t->image) return;     // texture storage not allocated (out of memory): skip, as uploads do
+    if (!t || level < 0 || (U32) level >= t->levels || layer < 0 || (U32) layer >= t->layers)
         fail("invalid copy destination");
     if (target >= glc::TEXTURE_CUBE_MAP_POSITIVE_X && target <= glc::TEXTURE_CUBE_MAP_NEGATIVE_Z)
         layer = target - glc::TEXTURE_CUBE_MAP_POSITIVE_X;
@@ -418,4 +462,125 @@ void VulkanFramebufferBackend::copyToTexture(U32 target, S32 level, S32 xoffset,
     vkCmdBlitImage(mCtx->slot().cmd, src.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, t->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                    1, &blit, VK_FILTER_NEAREST);
     mCtx->textures->transition(*t, mCtx->slot().cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// FSR 2 temporal upscale
+
+bool VulkanFramebufferBackend::fsr2Fail(const char* why)
+{
+    fprintf(stderr, "WARNING: FSR 2 upscale not recorded: %s\n", why);
+    mFsr2LastFailed = true;
+    if (++mFsr2Failures >= 3 && !mFsr2Failed)
+    {
+        mFsr2Failed = true;
+        fprintf(stderr, "WARNING: FSR 2 upscaler off after %d failures in a row\n", mFsr2Failures);
+    }
+    return false;
+}
+
+void VulkanFramebufferBackend::retireFsr2()
+{
+    if (!mFsr2) return;
+    // The wrapper's destroy waits for the device, and the SDK frees at once: a recording that still uses it is submitted first.
+    if (mCtx->recording && mCtx->cmdSerial == mFsr2Serial) mCtx->flushCommands(VkContext::Stall::Explicit);
+    mFsr2.reset();
+}
+
+void VulkanFramebufferBackend::releaseFsr2()
+{
+    retireFsr2();
+    mCtx->upscalerMemBytes = 0;
+    mFsr2Failures = 0;
+    mFsr2Failed = false;
+    mFsr2LastOk = false;
+    mFsr2LastFailed = false;
+    mFsr2ResetKept = false;     // a new upscaler starts without history anyway
+}
+
+bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
+{
+    mFsr2LastOk = false;
+    // A reset asked for is kept until a dispatch the SDK accepts uses it: with the render thread on, the caller has already let
+    // go of it when the work was queued.
+    keepFsr2Reset(p.reset);
+    // not failures: no frame (minimized), or a size the caller has to skip anyway
+    if (mFsr2Failed || !mCtx->recording) return false;
+    if (!p.renderW || !p.renderH || !p.displayW || !p.displayH || p.renderW > p.displayW || p.renderH > p.displayH) return false;
+
+    // color, depth, motion, reactive (optional), output
+    const U32 names[5] = {p.colorTex, p.depthTex, p.motionTex, p.reactiveTex, p.outputTex};
+    VulkanTextureBackend::ImageInfo info[5];
+    for (int i = 0; i < 5; ++i)
+    {
+        if (i == 3 && !names[i]) continue;
+        if (!names[i] || !mCtx->textures->imageInfo(names[i], info[i])) return fsr2Fail("a texture has no image");
+        const auto& m = info[i];
+        // the wrapper's barriers and the SDK's views cover mip 0 and layer 0 only, while this backend tracks one layout per image
+        if (m.levels != 1 || m.layers != 1) return fsr2Fail("an image has more than one mip level or layer");
+        if (hasStencil(m.format)) return fsr2Fail("an image has a stencil format");
+        if ((i == 1) != isPlainDepth(m.format)) return fsr2Fail(i == 1 ? "depth is not D32_SFLOAT or D16_UNORM" : "a color input or the output has a depth format");
+        if (m.width < (i == 4 ? p.displayW : p.renderW) || m.height < (i == 4 ? p.displayH : p.renderH))
+            return fsr2Fail("an image is smaller than the render or display size");
+        for (int j = 0; j < i; ++j)
+            if (names[j] && info[j].image == m.image) return fsr2Fail("one image is passed twice");
+    }
+    if (!info[4].storage || isSrgb(info[4].format)) return fsr2Fail("the output has no storage usage or is sRGB");
+
+    const uint32_t sizes[4] = {p.displayW, p.displayH, p.renderW, p.renderH};
+    if (!mFsr2 || !std::equal(sizes, sizes + 4, mFsr2Sizes))
+    {
+        if (mFsr2 && !mFsr2->resizesInPlace(p.displayW, p.displayH, p.renderW, p.renderH) && mCtx->cmdSerial == mFsr2Serial)
+            mCtx->flushCommands(VkContext::Stall::Explicit);     // see retireFsr2
+        const bool keptContext = mFsr2 && mFsr2->resizesInPlace(p.displayW, p.displayH, p.renderW, p.renderH);
+        if (!mFsr2) mFsr2 = std::make_unique<VulkanFsrUpscaler>();
+        if (!mFsr2->resize(*mCtx, p.displayW, p.displayH, p.renderW, p.renderH))
+        {
+            mFsr2.reset();
+            return fsr2Fail("the upscaler could not be created");
+        }
+        std::copy(sizes, sizes + 4, mFsr2Sizes);
+        mFsr2SwapchainGeneration = mCtx->swapchainGeneration;     // a new upscaler has no history to reset
+        if (keptContext) keepFsr2Reset(true);     // the kept history was rendered at another size
+    }
+
+    // compute work cannot be recorded inside dynamic rendering; the next draw begins it again
+    endRendering();
+    VkCommandBuffer cmd = mCtx->slot().cmd;
+    mCtx->textures->emitPendingBarriers(cmd);
+    auto image = [&](int i) { return Fsr2Image{info[i].image, info[i].format, info[i].width, info[i].height, info[i].layout}; };
+    Fsr2Inputs in;
+    in.color = image(0);
+    in.depth = image(1);
+    in.motion = image(2);
+    if (names[3]) in.reactive = image(3);
+    in.jitterX = p.jitterX;
+    in.jitterY = p.jitterY;
+    in.frameTimeMs = p.frameTimeMs;
+    in.sharpness = p.sharpness;
+    // the first frame after a swapchain recreation (lost device surface, mode or size change) starts without history; the
+    // generation and a kept reset are only marked done once the SDK has accepted the dispatch (below)
+    in.reset = mFsr2ResetKept || mCtx->swapchainGeneration != mFsr2SwapchainGeneration;
+    mFsr2LastReset = in.reset;
+    in.cameraNear = p.cameraNear;
+    in.cameraFar = p.cameraFar;
+    in.fovY = p.fovY;
+    const bool ok = mFsr2->dispatch(cmd, in, image(4));
+    mFsr2Serial = mCtx->cmdSerial;
+    // Every image handed over ends in SHADER_READ_ONLY_OPTIMAL, whatever the SDK answered. The wrapper orders its compute work
+    // only before later compute and fragment shading, while this backend's next transitions wait on the vertex and fragment
+    // stages (stagesOf): one barrier orders the compute shaders before every later stage.
+    for (int i = 0; i < 5; ++i)
+        if (names[i]) mCtx->textures->setTrackedLayout(names[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    after.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    after.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &after, 0, nullptr, 0, nullptr);
+    if (!ok) return fsr2Fail("the SDK refused the dispatch");
+    mFsr2SwapchainGeneration = mCtx->swapchainGeneration;
+    mFsr2ResetKept = false;
+    mFsr2Failures = 0;
+    mFsr2LastFailed = false;
+    mFsr2LastOk = true;
+    return true;
 }

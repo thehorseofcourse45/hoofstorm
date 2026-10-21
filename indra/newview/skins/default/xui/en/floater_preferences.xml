@@ -39,6 +39,15 @@
          function="Pref.Cancel" />
     </button>
 
+    <string name="fsr_hint_off">FSR off</string>
+    <string name="fsr_hint_on">Renders at [IW]x[IH], upscaled to [OW]x[OH]</string>
+    <string name="fsr2_hint_off">Temporal upscaler off</string>
+    <string name="fsr2_hint_on">Renders at [IW]x[IH], temporally upscaled to [OW]x[OH]</string>
+    <string name="fsr2_hint_native">Renders at [OW]x[OH] with temporal anti-aliasing</string>
+    <string name="fsr2_hint_opengl">The temporal upscaler needs the Vulkan renderer</string>
+    <string name="fsr2_tip_opengl">The temporal upscaler (FSR 2/3) needs the Vulkan renderer. It is not available with OpenGL.</string>
+    <string name="fsr2_tip_aa">Not used while the temporal upscaler is on: it anti-aliases the image itself.</string>
+
     <panel
      name="search_panel"
      layout="topleft"

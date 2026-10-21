@@ -42,6 +42,7 @@
 #include "llheroprobemanager.h"
 
 #include <stack>
+#include <unordered_map>
 
 class LLViewerTexture;
 class LLFace;
@@ -155,14 +156,16 @@ public:
     void copyScreenSpaceReflections(LLRenderTarget* src, LLRenderTarget* dst);
     void generateLuminance(LLRenderTarget* src, LLRenderTarget* dst);
     void generateExposure(LLRenderTarget* src, LLRenderTarget* dst, bool use_history = true);
-    void tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_correct);
-    void gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst);
+    // filter: how src is sampled; bilinear only when src is smaller than dst (FSR 2 plain-path frames stretch the render-size scene)
+    void tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_correct, LLTexUnit::eTextureFilterOptions filter = LLTexUnit::TFO_POINT);
+    void gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst, LLTexUnit::eTextureFilterOptions filter = LLTexUnit::TFO_POINT);
     void generateGlow(LLRenderTarget* src);
     void applyCAS(LLRenderTarget* src, LLRenderTarget* dst);
     void applyFXAA(LLRenderTarget* src, LLRenderTarget* dst);
     void generateSMAABuffers(LLRenderTarget* src);
     void applySMAA(LLRenderTarget* src, LLRenderTarget* dst);
-    void renderDoF(LLRenderTarget* src, LLRenderTarget* dst);
+    // cof: scratch for the circle of confusion, the size of src (default mRT->deferredLight, sized like mRT->screen)
+    void renderDoF(LLRenderTarget* src, LLRenderTarget* dst, LLRenderTarget* cof = nullptr);
     void copyRenderTarget(LLRenderTarget* src, LLRenderTarget* dst);
     void combineGlow(LLRenderTarget* src, LLRenderTarget* dst);
     void visualizeBuffers(LLRenderTarget* src, LLRenderTarget* dst, U32 bufferIndex);
@@ -766,6 +769,11 @@ public:
 
     // FXAA helper target
     LLRenderTarget          mFXAAMap;
+    LLRenderTarget          mFSRMap;    // window-sized EASU output while FSR is active
+    LLRenderTarget          mFSR2MotionMap; // FSR 2: render-size RG16F camera motion (UV units, one mip level) while isFsr2Active()
+    LLRenderTarget          mFSR2ReactiveMap; // FSR 2: render-size R8 reactive mask (0..0.9, one mip level) while isFsr2Active()
+    LLRenderTarget          mFSR2Map;   // FSR 2: display-size RGBA16F upscaler output (storage, one mip level); tonemap reads it
+    LLRenderTarget          mFSR2PostMap; // FSR 2: display-size scratch for CAS and DoF (mRT->deferredLight is render size)
     LLRenderTarget          mSMAABlendBuffer;
 
     // render ui to buffer target
@@ -1085,6 +1093,118 @@ public:
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
     static F32 RenderResolutionMultiplier;
 // [/SL:KB]
+    static bool RenderFSREnabled;
+    static U32 RenderFSRQuality;
+    static F32 RenderFSRCustomScale;
+    static F32 RenderFSRSharpness;
+    static bool RenderFSRDynamic;
+    static U32 RenderFSRTargetFPS;
+    static bool RenderFSR2Enabled;
+    static U32 RenderFSR2Quality;
+    static F32 RenderFSR2Sharpness;
+    static bool RenderFSR2Dynamic;
+    // Scene render scale per axis: the temporal upscaler mode when it is selected, else the FSR preset when FSR is on,
+    // else RenderResolutionMultiplier. Dynamic scaling (either upscaler) replaces the preset.
+    static F32 getRenderScale();
+    // RenderFSR2Enabled is on and the Vulkan renderer is running (the setting picks the render scale).
+    static bool fsr2Selected();
+    // The temporal upscaler should run this frame: selected, not a cube snapshot, backend not failed, and
+    // Native AA (quality 0, scale 1.0) or a render scale below 1.
+    static bool isFsr2Active();
+    // Set while a snapshot renders: the scene is drawn at full size so FSR / the render multiplier do not soften the picture.
+    static bool sSnapshotFullScale;
+
+    // FSR 2 jitter and camera history. A displayed frame calls beginFsr2Frame() before the main camera is set up and
+    // endFsr2Frame() after the 3D scene; only LLViewerCamera::setPerspective calls between them jitter (never picking,
+    // tiled or full snapshots, cube snapshots for probes and mirrors, previews or the UI, which run outside or are excluded).
+    void beginFsr2Frame();
+    void endFsr2Frame();
+    // The camera setup in progress is the main scene view and gets the jitter.
+    bool fsr2JitterThisView() const;
+    // Column-major translation for this frame's jitter (fsr2JitterProjection at the main render size).
+    glm::mat4 getFsr2JitterMatrix() const;
+    // Called by setPerspective after it jittered the main view: keeps the unjittered matrices for reprojection.
+    void setFsr2SceneMatrices(const glm::mat4& unjittered_proj, const glm::mat4& jittered_proj, const glm::mat4& modelview);
+    // This frame's sub-pixel jitter in render pixels (AMD Halton 2,3 over mFsr2Phase); never (0, 0).
+    glm::vec2 getFsr2Jitter() const;
+    // While the main scene is jittered: puts the unjittered projection on the gGL stack so full-screen passes that rebuild
+    // positions from depth (inv_proj, SSR's projection_matrix) do not shimmer. Does nothing for any other projection.
+    class Fsr2UnjitteredScope
+    {
+    public:
+        Fsr2UnjitteredScope();
+        ~Fsr2UnjitteredScope();
+    private:
+        bool mActive;
+    };
+    // Camera motion vectors for FSR 2 into dest (mFSR2MotionMap): UV units, current pixel to its previous position, from the
+    // depth of depthSource with mCurViewProjUnjittered and mPrevViewProj; zero on a camera cut. Does nothing without the
+    // program or a complete dest. Call after endFsr2Frame (Task 9: at the start of renderFinalize).
+    void generateFsr2Motion(LLRenderTarget* depthSource, LLRenderTarget* dest);
+    // Avatar motion vectors for FSR 2, over the camera motion generateFsr2Motion wrote into dest: redraws the visible avatar body
+    // meshes and the opaque rigged attachments with the velocity programs (this and last frame's bone palettes), keeping only pixels
+    // not behind the depth of depthSource. Nothing is written on a camera cut or when a program is missing. Call right after
+    // generateFsr2Motion.
+    void renderFsr2AvatarVelocity(LLRenderTarget* depthSource, LLRenderTarget* dest);
+    // render position of each visible avatar at the last motion pass, for the per-avatar movement in the motion vectors
+    std::unordered_map<LLUUID, LLVector3> mFsr2AvatarPrevPos;
+    // Reactive mask for FSR 2 into dest (mFSR2ReactiveMap) from the G-buffer of mRT->deferredScreen: kFsr2ReactiveMax where
+    // normal.w equals kFsr2ReactiveFlag, exactly 0 elsewhere (v1 marks nothing: no G-buffer code exists for avatars or
+    // alpha-blended surfaces, see fsr2ReactiveF.glsl). Does nothing without the program or a complete dest. Task 9 calls it
+    // next to generateFsr2Motion.
+    void generateFsr2Reactive(LLRenderTarget* dest);
+    glm::mat4 mPrevViewProj = glm::mat4(1.f);           // previous displayed frame's unjittered projection * modelview
+    glm::mat4 mCurViewProjUnjittered = glm::mat4(1.f);  // this frame's unjittered projection * modelview
+    int mFsr2Phase = 0;                                 // jitter phase, advanced once per displayed frame
+    int mFsr2PhaseCount = 8;                            // sequence length for this frame's render scale
+    bool mFsr2CameraCut = true;                         // this frame has no usable previous frame: mPrevViewProj == current
+    bool mFsr2SceneJittered = false;                    // this displayed frame's main scene was rendered with the jitter
+    // The next upscale starts without history: teleport finished, resize or render-scale change (target reallocation),
+    // the setting toggled. Consumed by the next dispatch; camera cuts (mFsr2CameraCut) and a recreated swapchain (backend)
+    // reset as well.
+    void requestFsr2Reset() { mFsr2ResetPending = true; }
+    // Texture LOD bias bracket: display() calls this right before the main-scene geometry; endFsr2Frame (and beginFsr2Frame,
+    // the top of renderFinalize, any reallocation) sets it back to 0. Biased only for the jittered main scene of an upscaled frame.
+    void beginFsr2SceneTextures();
+    // Fallback chain temporal upscaler -> FSR 1.0 -> bilinear. Called when the temporal upscaler cannot run: a program failed
+    // to compile (setShaders), a target failed to allocate, or the backend tripped its failure rule (create, resize or three
+    // dispatch errors in a row; polled in beginFsr2Frame). Only notes the reason; applyFsr2Fallback runs once from the idle
+    // loop, outside setShaders and the frame. Later requests until then are ignored.
+    void requestFsr2Fallback(const std::string& reason);
+private:
+    // Unticks RenderFSR2Enabled, logs one warning with the reason, posts the chat message (as FSR 1.0's failure does) and turns
+    // FSR 1.0 on at the closest preset (fsr2FallbackFsrQuality; Native AA stays at full size with FSR 1.0 off). The listeners
+    // reallocate the screen targets on the next frame. Nothing when the user unticked the setting meanwhile.
+    void applyFsr2Fallback();
+    bool mFsr2FallbackPending = false;
+    std::string mFsr2FallbackReason;
+    // renderFinalize: motion, reactive (cleared once while v1 marks nothing), the upscale into mFSR2Map and the glow alpha
+    // copied back. False, with mFSR2Map unused, when this frame takes the plain path (no jittered scene, sizes skipped,
+    // a program or target missing, the dispatch refused or the backend failed).
+    bool renderFsr2Upscale();
+    // Frees the backend upscaler (posted in order, before the targets it saw are freed) when one may exist.
+    void releaseFsr2Upscaler();
+    void setFsr2LodBias(F32 bias);                      // applies the texture LOD bias when it changes (posted in order)
+    bool mFsr2ResetPending = true;
+    bool mFsr2PostDisplaySize = false;                  // the FSR 2 targets exist and the post chain targets are display size
+    bool mFsr2InputsSingleLevel = false;                // mMainRT.screen and its depth were made for the upscaler (one mip level)
+    bool mFsr2Dispatched = false;                       // a dispatch was issued since the last release
+    bool mFsr2ReactiveCleared = false;                  // mFSR2ReactiveMap holds the constant 0 mask
+    F32 mFsr2LodBias = 0.f;                             // texture LOD bias in effect (0 outside the main-scene bracket)
+    bool mFsr2SceneView = false;                        // between beginFsr2Frame and endFsr2Frame with FSR 2 active
+    bool mFsr2PrevValid = false;                        // mCurViewProjUnjittered holds the last displayed frame
+    U32 mFsr2RenderW = 0, mFsr2RenderH = 0;             // render size the history was made at
+    LLVector3 mFsr2LastOrigin;                          // camera origin of the last displayed frame
+    glm::mat4 mFsr2UnjitteredProj = glm::mat4(1.f);
+    glm::mat4 mFsr2JitteredProj = glm::mat4(1.f);
+public:
+    // FSR will upscale the final image: enabled, programs and target ready, scene smaller than the window.
+    bool fsrActive() const;
+    // Dynamic FSR scaling: call once per frame; flags a render target resize when the scale changes.
+    static void updateFSRDynamic(F32 frameSeconds);
+    static void resetFSRDynamic();
+    // "FSR on, 67%" while FSR is upscaling, else empty.
+    std::string getFSRStatusText() const;
     static bool RenderUIBuffer;
     static S32 RenderShadowDetail;
     static S32 RenderShadowSplits;

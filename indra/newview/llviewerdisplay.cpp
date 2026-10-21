@@ -866,6 +866,18 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         }
 
         stop_glerror();
+        {
+            // render scale changes resize the screen targets before the camera setup, so FSR 2's jitter, phase count
+            // and history reset use this frame's render size
+            LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Resize Screen");
+            LLPipeline::updateFSRDynamic(gFrameIntervalSeconds.value());
+            if (gResizeScreenTexture)
+            {
+                gPipeline.resizeScreenTexture();
+                gResizeScreenTexture = false;
+            }
+        }
+        gPipeline.beginFsr2Frame(); // FSR 2: next jitter phase; the main camera set up below is jittered
         display_update_camera();
         stop_glerror();
 
@@ -925,12 +937,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("display - 2")
-            if (gResizeScreenTexture)
-            {
-                gPipeline.resizeScreenTexture();
-                gResizeScreenTexture = false;
-            }
-
             gGL.setColorMask(true, true);
             getFramebufferBackend().setClearColor(0.f, 0.f, 0.f, 0.f);
 
@@ -1103,6 +1109,10 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         gGL.setColorMask(true, true);
 
+        // FSR 2: the texture LOD bias covers the main-scene geometry from here to endFsr2Frame (shadows and impostors above
+        // are already drawn without it)
+        gPipeline.beginFsr2SceneTextures();
+
         gPipeline.mRT->deferredScreen.bindTarget();
         if (gUseWireframe)
         {
@@ -1172,6 +1182,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             gPipeline.renderDeferredLighting();
         }
+        gPipeline.endFsr2Frame();   // post, UI and picking use the unjittered projection
 
         LLPipeline::sUnderWaterRender = false;
 

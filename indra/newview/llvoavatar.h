@@ -963,6 +963,10 @@ public:
         // Float array ready to be sent to GL
         std::vector<F32> mGLMp;
 
+        // The palette before the last rebuild (same layout), for the FSR 2 avatar velocity pass; only meaningful while mPrevValid
+        std::vector<F32> mPrevGLMp;
+        bool mPrevValid = false;
+
         // Root joint world matrix the palette was built with: while the animation update is skipped (distance throttle) and the
         // root has not moved, the joints cannot have changed and the palette is reused.
         LLMatrix4a mRootMatrix;

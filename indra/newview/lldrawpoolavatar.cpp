@@ -416,6 +416,41 @@ void LLDrawPoolAvatar::renderShadow(S32 pass)
     }
 }
 
+void LLDrawPoolAvatar::renderFsr2Velocity()
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+
+    if (mDrawFace.empty())
+    {
+        return;
+    }
+    const LLFace* facep = mDrawFace[0];
+    if (!facep->getDrawable())
+    {
+        return;
+    }
+    LLVOAvatar* avatarp = (LLVOAvatar*)facep->getDrawable()->getVObj().get();
+    if (avatarp->isDead() || avatarp->isUIAvatar() || avatarp->mDrawable.isNull() || !avatarp->mDrawable->isVisible() ||
+        avatarp->isImpostor() || avatarp->getOverallAppearance() != LLVOAvatar::AOA_NORMAL)
+    {
+        return;
+    }
+    static LLCachedControl<bool> friends_only(gSavedSettings, "RenderAvatarFriendsOnly", false);
+    if (friends_only() && !avatarp->isControlAvatar() && !avatarp->isSelf() && !avatarp->isBuddy())
+    {
+        return;
+    }
+
+    sVertexProgram = &gDeferredFSR2AvatarBodyVelocityProgram;
+    sDiffuseChannel = 0;
+    sRenderingSkinned = true;
+    sSkipTransparent = true;
+    avatarp->renderSkinned();
+    sSkipTransparent = false;
+    sRenderingSkinned = false;
+    sVertexProgram = NULL;
+}
+
 S32 LLDrawPoolAvatar::getNumPasses()
 {
     return 3;

@@ -387,6 +387,8 @@ public:
     void pushUntexturedBatch(LLDrawInfo& params);
     void pushBumpBatch(LLDrawInfo& params, bool texture, bool batch_textures = false);
     static bool uploadMatrixPalette(LLDrawInfo& params);
+    // While true (the FSR 2 avatar velocity pass) every palette upload also sends last frame's palette as matrixPalettePrev
+    static bool sFsr2VelocityPass;
     // <FS:Beq> be defensive about UAF with skinInfo during LocalMesh
     // static bool uploadMatrixPalette(LLVOAvatar* avatar, LLMeshSkinInfo* skinInfo);
     // static bool uploadMatrixPalette(LLVOAvatar* avatar, LLMeshSkinInfo* skinInfo, const LLVOAvatar*& lastAvatar, U64& lastMeshId, bool& skipLastSkin);

@@ -2332,6 +2332,12 @@ if (WINDOWS)
         )
     target_compile_options(${VIEWER_BINARY_NAME} PRIVATE /bigobj)
 
+    if (LL_VULKAN_RUNTIME)
+        # a PC without a Vulkan driver still starts and falls back to OpenGL (activateVulkanRenderBackend checks for the DLL first)
+        target_link_libraries(${VIEWER_BINARY_NAME} delayimp)
+        target_link_options(${VIEWER_BINARY_NAME} PRIVATE /DELAYLOAD:vulkan-1.dll)
+    endif ()
+
     # If adding a file to viewer_manifest.py in the WindowsManifest.construct() method, be sure to add the dependency
     # here.
     # *NOTE:Mani - This is a crappy hack to have important dependencies for the viewer_manifest copy action

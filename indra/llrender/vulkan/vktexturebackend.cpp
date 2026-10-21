@@ -380,14 +380,18 @@ void VulkanTextureBackend::destroyImage(Tex& t)
     const auto device = mCtx->device;
     const auto image = t.image;
     const auto memory = t.memory;
+    auto& counter = t.asTarget ? mCtx->targetMemBytes : mCtx->textureMemBytes;
+    const int64_t bytes = (int64_t) t.memBytes;
+    t.memBytes = 0;
     auto views = std::move(t.views);
     t.views.clear();
     t.cView = VK_NULL_HANDLE;
     t.aView = VK_NULL_HANDLE;
-    mCtx->deferFree([device, image, memory, views] {
+    mCtx->deferFree([device, image, memory, views, &counter, bytes] {
         for (const auto& view : views) vkDestroyImageView(device, view.second, nullptr);
         vkDestroyImage(device, image, nullptr);
         vkFreeMemory(device, memory, nullptr);
+        counter -= bytes;
     });
     t.layout = VK_IMAGE_LAYOUT_UNDEFINED;
     t.image = VK_NULL_HANDLE;
@@ -397,8 +401,9 @@ void VulkanTextureBackend::destroyImage(Tex& t)
 void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t layers, U32 glInternal, bool cube, bool cubeArray,
                                        bool rect)
 {
+    const uint32_t levels = rect || t.storageImage ? 1 : levelsFor(w, h);
     if (t.image && t.width == w && t.height == h && t.layers == layers && t.glInternal == glInternal && t.cube == cube &&
-        t.cubeArray == cubeArray)
+        t.cubeArray == cubeArray && t.levels == levels)
     {
         return;
     }
@@ -412,7 +417,7 @@ void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t 
     t.layers = layers;
     t.cube = cube;
     t.cubeArray = cubeArray;
-    t.levels = rect ? 1 : levelsFor(w, h);
+    t.levels = levels;
 
     VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ici.flags = (cube || cubeArray) ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0;
@@ -430,6 +435,9 @@ void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t 
     t.attachmentCapable = !fi.compressed && (props.optimalTilingFeatures & feature);
     if (t.attachmentCapable)
         ici.usage |= fi.kind == Kind::D32 ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    t.storage = t.storageImage && !fi.compressed && (props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
+    if (t.storage)
+        ici.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VK_CHECK(vkCreateImage(mCtx->device, &ici, nullptr, &t.image));
     VkMemoryRequirements req;
@@ -437,8 +445,30 @@ void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t 
     VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     mai.allocationSize = req.size;
     mai.memoryTypeIndex = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VK_CHECK(vkAllocateMemory(mCtx->device, &mai, nullptr, &t.memory));
+    VkResult r = vkAllocateMemory(mCtx->device, &mai, nullptr, &t.memory);
+    // VRAM full: spill to any other allowed memory type, as GL drivers do, before giving up
+    for (uint32_t i = 0; r != VK_SUCCESS && i < mCtx->memProps.memoryTypeCount; ++i)
+    {
+        if ((req.memoryTypeBits & (1u << i)) && i != mai.memoryTypeIndex)
+        {
+            VkMemoryAllocateInfo spill = mai;
+            spill.memoryTypeIndex = i;
+            r = vkAllocateMemory(mCtx->device, &spill, nullptr, &t.memory);
+        }
+    }
+    if (r != VK_SUCCESS)
+    {
+        // out of memory: leave the texture without an image; binds use the fallback and uploads are skipped
+        fprintf(stderr, "WARNING: texture %ux%u (%llu bytes) not allocated, VkResult %d\n", w, h, (unsigned long long) req.size, (int) r);
+        vkDestroyImage(mCtx->device, t.image, nullptr);
+        t.image = VK_NULL_HANDLE;
+        t.memory = VK_NULL_HANDLE;
+        return;
+    }
     VK_CHECK(vkBindImageMemory(mCtx->device, t.image, t.memory, 0));
+    t.memBytes = req.size;
+    t.asTarget = false;
+    mCtx->textureMemBytes += (int64_t) req.size;
     ++imagesCreated;
 
     // GL starts a level out as zeros, Vulkan as garbage: clear the image, then leave it ready for sampling
@@ -1060,6 +1090,11 @@ void VulkanTextureBackend::replaceWithMipLevel(U32 target, S32 mip, S32 internal
     t.cView = VK_NULL_HANDLE;
     t.aView = VK_NULL_HANDLE;
     ensureImage(t, (uint32_t) width, (uint32_t) height, old.layers, internalFormat, old.cube, old.cubeArray, false);
+    if (!t.image)
+    {
+        destroyImage(old);
+        return;
+    }
     const VkImageAspectFlags aspect = aspectOf(t.info.format);
     submitNow([&](VkCommandBuffer cmd) {
         transition(t, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -1219,14 +1254,29 @@ VkImageView VulkanTextureBackend::viewOf(Tex& t)
     return view;
 }
 
-VkSampler VulkanTextureBackend::samplerOf(const Tex& t)
+F32 VulkanTextureBackend::biasFor(const Tex& t) const
+{
+    const bool usesMips = (uint32_t) t.ss.min >= glc::NEAREST_MIPMAP_NEAREST;
+    return (mLodBias != 0.f && usesMips && !t.ss.compare && !t.cube && !t.cubeArray && !t.asTarget) ? mLodBias : 0.f;
+}
+
+void VulkanTextureBackend::setLodBias(F32 bias)
+{
+    const F32 limit = mCtx->maxSamplerLodBias;     // set per frame by the upscaler's bracket: no device query here
+    // a fixed step keeps the sampler cache small when dynamic scaling moves the bias
+    mLodBias = std::round(std::min(std::max(bias, -limit), limit) * 8.f) / 8.f;
+}
+
+VkSampler VulkanTextureBackend::samplerOf(const Tex& t, F32 bias)
 {
     const SamplerState& s = t.ss;
-    uint32_t anisotropyBits;
+    uint32_t anisotropyBits, biasBits;
     memcpy(&anisotropyBits, &s.anisotropy, sizeof(anisotropyBits));
+    memcpy(&biasBits, &bias, sizeof(biasBits));
     const uint32_t values[] = {uint32_t(s.wrapS), uint32_t(s.wrapT), uint32_t(s.wrapR), uint32_t(s.mag),
-        uint32_t(s.min), anisotropyBits, uint32_t(s.compare), uint32_t(s.compareFunc)};
-    const std::string key(reinterpret_cast<const char*>(values), sizeof(values));
+        uint32_t(s.min), anisotropyBits, uint32_t(s.compare), uint32_t(s.compareFunc), biasBits};
+    // without a bias the key keeps its old length, so the cache holds exactly the samplers it held before the bias existed
+    const std::string key(reinterpret_cast<const char*>(values), bias != 0.f ? sizeof(values) : sizeof(values) - sizeof(biasBits));
     auto it = mSamplers.find(key);
     if (it != mSamplers.end())
     {
@@ -1246,6 +1296,7 @@ VkSampler VulkanTextureBackend::samplerOf(const Tex& t)
     sci.maxAnisotropy = std::min(s.anisotropy, mCtx->maxAnisotropy);
     sci.compareEnable = s.compare ? VK_TRUE : VK_FALSE;
     sci.compareOp = (VkCompareOp) (s.compareFunc - glc::NEVER);
+    sci.mipLodBias = bias;
     sci.minLod = 0.0f;
     sci.maxLod = usesMips ? VK_LOD_CLAMP_NONE : 0.25f;      // a min filter without mips never leaves level 0
     sci.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
@@ -1305,14 +1356,16 @@ void VulkanTextureBackend::unitDescriptor(uint32_t unit, int kind, const std::st
         if (!mCtx->feedbackSubstitutions++)
             fprintf(stderr, "WARNING: a draw samples its own render target; using a fallback texture (counted in VulkanPacing)\n");
     }
-    if (!sampleOk)
+    if (!sampleOk || !t->image)
     {
         t = &fallback(samplerType);
     }
-    if (!t->cSampler || !(t->cSs == t->ss))
+    const F32 bias = biasFor(*t);
+    if (!t->cSampler || !(t->cSs == t->ss) || t->cBias != bias)
     {
-        t->cSampler = samplerOf(*t);
+        t->cSampler = samplerOf(*t, bias);
         t->cSs = t->ss;
+        t->cBias = bias;
     }
     if (!t->cView || t->cImage != t->image || t->cLevels != t->levels || t->cBase != t->baseLevel || t->cMax != t->maxLevel ||
         memcmp(t->cSwizzle, t->swizzle, sizeof(t->swizzle)) != 0)
@@ -1361,6 +1414,35 @@ void VulkanTextureBackend::flushBarriers(VkCommandBuffer cmd)
     vkCmdPipelineBarrier(cmd, mPendingSrc, mPendingDst, 0, 0, nullptr, 0, nullptr, (uint32_t) mPendingBarriers.size(), mPendingBarriers.data());
     mPendingBarriers.clear();
     mPendingSrc = mPendingDst = 0;
+}
+
+void VulkanTextureBackend::emitPendingBarriers(VkCommandBuffer cmd)
+{
+    if (mPendingBarriers.empty()) return;
+    vkCmdPipelineBarrier(cmd, mPendingSrc, mPendingDst, 0, 0, nullptr, 0, nullptr, (uint32_t) mPendingBarriers.size(), mPendingBarriers.data());
+    mPendingBarriers.clear();
+    mPendingSrc = mPendingDst = 0;
+}
+
+bool VulkanTextureBackend::imageInfo(U32 name, ImageInfo& out) const
+{
+    auto it = mTextures.find(name);
+    if (it == mTextures.end() || !it->second.image) return false;
+    const Tex& t = it->second;
+    out = {t.image, t.info.format, t.width, t.height, t.levels, t.layers, t.layout, t.storage};
+    return true;
+}
+
+void VulkanTextureBackend::setTrackedLayout(U32 name, VkImageLayout layout)
+{
+    auto it = mTextures.find(name);
+    if (it != mTextures.end() && it->second.image) it->second.layout = layout;
+}
+
+void VulkanTextureBackend::setStorageImage(U32 name)
+{
+    auto it = mTextures.find(name);
+    if (it != mTextures.end()) it->second.storageImage = true;
 }
 
 void VulkanTextureBackend::copyFromFramebuffer2D(U32 target, S32 level, S32 xo, S32 yo, S32 x, S32 y, S32 w, S32 h)

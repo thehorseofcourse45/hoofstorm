@@ -262,6 +262,41 @@ int main(int argc, char** argv)
         waitRenderBackendIdle();
         expect("worker renderer exit preserves main-thread cached buffers",LLVertexBuffer::getBytesAllocated()==cacheBytes);
         expect("rendering survives worker renderer exit",frame());
+        {
+            // FSR 2 through the global entry: queued to the render thread when it is on, recorded directly when it is off
+            auto& tex=getTextureBackend();
+            U32 names[4];tex.generate(4,names);
+            const U32 formats[4]={GL_RGBA16F,GL_DEPTH_COMPONENT32F,GL_RG16F,GL_RGBA16F};
+            for(int i=0;i<4;++i)
+            {
+                setRenderBackendStorageTexture(names[i]);
+                tex.bind(GL_TEXTURE_2D,names[i]);
+                tex.image2D(GL_TEXTURE_2D,0,formats[i],i==3?640:320,i==3?480:240,i==1?GL_DEPTH_COMPONENT:GL_RGBA,GL_FLOAT,nullptr);
+            }
+            tex.bind(GL_TEXTURE_2D,0);
+            RenderBackendFsr2Params p;
+            p.colorTex=names[0];p.depthTex=names[1];p.motionTex=names[2];p.outputTex=names[3];
+            p.renderW=320;p.renderH=240;p.displayW=640;p.displayH=480;p.reset=true;
+            const float clear[4]={0,0,0,1};
+            bool ok=beginRenderBackendFrame(clear) && dispatchRenderBackendFsr2(p) && frame();
+            waitRenderBackendIdle();
+            // set by the backend (the render thread when it is on) only when the dispatch was recorded and the SDK accepted it
+            ok=ok && lastRenderBackendFsr2Succeeded() && !isRenderBackendFsr2Failed();
+            RenderBackendFsr2Params larger=p;larger.renderW=800;larger.renderH=600;     // render size above the display size
+            const bool refused=beginRenderBackendFrame(clear) && !dispatchRenderBackendFsr2(larger) && frame();
+            releaseRenderBackendFsr2();
+            tex.destroy(4,names);
+            waitRenderBackendIdle();
+            expect("FSR 2 upscale through the global entry was accepted by the backend; drawing and presentation go on after it",ok);
+            expect("FSR 2 render size above display size answers false, render thread on or off",refused);
+            // the upscaler's texture LOD bias is applied in order with the draws (posted when the render thread is on)
+            setRenderBackendTextureLodBias(-1.5f);
+            bool biased=frame();
+            setRenderBackendTextureLodBias(0.f);
+            biased=frame() && biased;
+            waitRenderBackendIdle();
+            expect("texture LOD bias set and restored through the global entry; drawing and presentation go on",biased);
+        }
         if(argc>1 && !strcmp(argv[1],"--pacing"))
         {
             int frames=0;

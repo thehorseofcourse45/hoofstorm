@@ -44,6 +44,8 @@ bool renderBackendObjectsCreated();
 class LLGLManager;
 bool initializeVulkanCapabilities(LLGLManager& manager);
 void waitRenderBackendIdle();
+// Real device-local memory use and OS budget in MB (VK_EXT_memory_budget); false when not Vulkan or unsupported.
+bool getRenderBackendVRAMBudget(std::uint32_t& usedMB, std::uint32_t& budgetMB);
 // Draws whose pipeline is still compiling are skipped unless a caller needs every draw (benchmarks): hold a scope around that work.
 void pushSyncPipelines();
 void popSyncPipelines();
@@ -53,6 +55,41 @@ std::uint32_t createRenderUniformBuffer();
 void deleteRenderUniformBuffer(std::uint32_t buffer);
 void uploadRenderUniformBuffer(std::uint32_t buffer, const void* data, std::size_t bytes);
 void bindRenderUniformBuffer(std::uint32_t binding, std::uint32_t buffer);
+
+// FSR 2 (FidelityFX FSR 3.1) temporal upscale, Vulkan only. Textures are GL names. color: HDR, render size. depth: D32/D16,
+// 0 near 1 far. motion: RG16F/RG32F, current-to-previous motion in UV units. reactive: optional (0), R8. output: display size,
+// made with setRenderBackendStorageTexture and not sRGB. Every image has one mip level and one layer (setRenderBackendStorageTexture
+// gives that). jitter in render pixels; camera near/far in metres, fovY in radians (the SDK linearises depth with them).
+struct RenderBackendFsr2Params
+{
+    unsigned colorTex = 0, depthTex = 0, motionTex = 0, reactiveTex = 0, outputTex = 0;
+    unsigned renderW = 0, renderH = 0, displayW = 0, displayH = 0;
+    float jitterX = 0, jitterY = 0, frameTimeMs = 16.7f, sharpness = 0;
+    bool reset = false;
+    float cameraNear = 0.1f, cameraFar = 1000.0f, fovY = 1.0f;
+};
+// Records the upscale into the current frame; afterwards every image passed is ready for sampling. False when the Vulkan backend is
+// not active, no frame is recording, a size is zero or render > display, an image is unsuitable, the upscaler cannot be created,
+// or after isRenderBackendFsr2Failed(). The upscaler is created on first use and recreated when a size changes. With the render
+// thread on, the work is queued and true means queued: a failure found there only counts toward isRenderBackendFsr2Failed().
+// params.reset is kept until a dispatch the SDK accepts uses it, so the caller may treat it as sent once this returns true.
+bool dispatchRenderBackendFsr2(const RenderBackendFsr2Params& params);
+void releaseRenderBackendFsr2();     // frees the upscaler and its history, VRAM count to 0, failure state cleared
+bool isRenderBackendFsr2Failed();    // three dispatches in a row failed; nothing is attempted until releaseRenderBackendFsr2()
+// The last dispatch that reached the backend was recorded and accepted by the SDK. With the render thread on, read it after
+// waitRenderBackendIdle() (tests).
+bool lastRenderBackendFsr2Succeeded();
+// The last dispatch the backend finished counting failed (a refusal, a create failure or an SDK error); a recorded dispatch or a
+// release clears it. Safe to read every frame: with the render thread on it describes the newest dispatch that thread has run,
+// usually the previous frame's (one frame late), never a dispatch still in progress.
+bool lastRenderBackendFsr2Failed();
+// Call after generating the texture name and before defining its storage: one mip level, plus storage usage where the format
+// allows it (for FSR 2 images). No effect with OpenGL.
+void setRenderBackendStorageTexture(unsigned texture);
+// Texture LOD bias for the temporal upscaler (fsr2MipBias), on sampled 2D textures that filter through mips; render targets,
+// cube maps and shadow samplers keep theirs. 0 is the plain state. Applied in order with the draws, so the viewer sets it around
+// the jittered main-scene passes only (LLPipeline::beginFsr2SceneTextures / endFsr2Frame). No effect with OpenGL.
+void setRenderBackendTextureLodBias(float bias);
 
 bool renderQuerySupported(std::uint32_t target);
 void generateRenderQueries(int count, std::uint32_t* ids);

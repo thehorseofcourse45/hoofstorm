@@ -5,6 +5,19 @@
 #include "glconsts.h"
 #include <cstring>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
+
+// The viewer's class1/deferred shader directory (CMake: LL_VIEWER_DEFERRED_SHADERS).
+static bool readViewerShader(const char* name, std::string& text)
+{
+    std::ifstream in(std::string(LL_VIEWER_DEFERRED_SHADERS) + "/" + name, std::ios::binary);
+    if (!in) return false;
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    text = buffer.str();
+    return true;
+}
 
 bool test_shaders(VkContext& ctx, VulkanRenderStateBackend& st, VulkanVertexBufferBackend& vb,
                   VulkanShaderBackend& shaders, VulkanFramebufferBackend& fb)
@@ -150,6 +163,124 @@ bool test_shaders(VkContext& ctx, VulkanRenderStateBackend& st, VulkanVertexBuff
     vb.free(BufferKind::Vertex,48,vertices,cpu);
     shaders.deleteProgramAndObjects(program);
     shaders.deleteProgramAndObjects(cached);
+
+    // FSR 2 motion vectors: the viewer's fsr2MotionF.glsl, with the version and stage lines LLShaderMgr puts in front of it,
+    // compiles and links with the viewer's post vertex shader and exposes the uniforms LLPipeline::generateFsr2Motion sets.
+    {
+        std::string vertexBody, fragmentBody;
+        const bool found = readViewerShader("postDeferredNoTCV.glsl", vertexBody) && readViewerShader("fsr2MotionF.glsl", fragmentBody);
+        expect("fsr2MotionF.glsl and its vertex shader are readable", found);
+        if (found)
+        {
+            const std::string vertexSource = "#version 400\n#define VERTEX_SHADER 1\n" + vertexBody;
+            const std::string fragmentSource = "#version 400\n#define FRAGMENT_SHADER 1\n" + fragmentBody;
+            const char* stageSources[] = {vertexSource.c_str(), fragmentSource.c_str()};
+            U32 motion = shaders.createProgram();
+            bool compiled = true;
+            for (int i = 0; i < 2; ++i)
+            {
+                U32 object = shaders.createObject(i ? 0x8B30 : 0x8B31);
+                std::string log;
+                if (!shaders.compileObject(object, 1, &stageSources[i], log))
+                {
+                    compiled = false;
+                    fprintf(stderr, "%s\n", log.c_str());
+                }
+                shaders.attachObject(motion, object);
+            }
+            expect("fsr2MotionF.glsl compiles", compiled);
+            shaders.bindAttribLocation(motion, 0, "position");
+            const bool motionLinked = compiled && shaders.link(motion);
+            expect("FSR 2 motion program links", motionLinked);
+            bool uniforms = motionLinked;
+            for (const char* name : {"depthMap", "inv_view_proj_cur", "view_proj_cur", "view_proj_prev", "motion_y_sign"})
+                uniforms = motionLinked && shaders.getUniformLocation(motion, name) >= 0 && uniforms;
+            expect("FSR 2 motion program exposes its uniforms", uniforms);
+            shaders.deleteProgramAndObjects(motion);
+        }
+    }
+
+    // FSR 2 avatar velocity: the rigged and body vertex shaders with the shared fragment shader. MAX_JOINTS_PER_MESH_OBJECT is a define
+    // LLViewerShaderMgr puts in front of every shader; the test supplies it the same way.
+    for (const char* vertexFile : {"fsr2AvatarVelocityV.glsl", "fsr2AvatarBodyVelocityV.glsl"})
+    {
+        const bool rigged = std::string(vertexFile) == "fsr2AvatarVelocityV.glsl";
+        std::string vertexBody, fragmentBody;
+        const bool found = readViewerShader(vertexFile, vertexBody) && readViewerShader("fsr2AvatarVelocityF.glsl", fragmentBody);
+        expect((std::string(vertexFile) + " and fsr2AvatarVelocityF.glsl are readable").c_str(), found);
+        if (!found) continue;
+        const std::string vertexSource = "#version 400\n#define VERTEX_SHADER 1\n#define MAX_JOINTS_PER_MESH_OBJECT 110\n" + vertexBody;
+        const std::string fragmentSource = "#version 400\n#define FRAGMENT_SHADER 1\n" + fragmentBody;
+        const char* stageSources[] = {vertexSource.c_str(), fragmentSource.c_str()};
+        U32 velocity = shaders.createProgram();
+        bool compiled = true;
+        for (int i = 0; i < 2; ++i)
+        {
+            U32 object = shaders.createObject(i ? 0x8B30 : 0x8B31);
+            std::string log;
+            if (!shaders.compileObject(object, 1, &stageSources[i], log))
+            {
+                compiled = false;
+                fprintf(stderr, "%s\n", log.c_str());
+            }
+            shaders.attachObject(velocity, object);
+        }
+        expect((std::string(vertexFile) + " program compiles").c_str(), compiled);
+        // the attribute table LLShaderMgr::initAttribsAndUniforms binds for every viewer program
+        const char* viewerAttribs[] = {"position", "normal", "texcoord0", "texcoord1", "texcoord2", "texcoord3", "diffuse_color", "emissive",
+                                       "tangent", "weight", "weight4", "clothing", "joint", "texture_index"};
+        for (U32 a = 0; a < 14; ++a) shaders.bindAttribLocation(velocity, a, viewerAttribs[a]);
+        const bool linked = compiled && shaders.link(velocity);
+        expect((std::string(vertexFile) + " program links").c_str(), linked);
+        bool uniforms = linked;
+        const char* names[] = {rigged ? "view_proj_cur" : "proj_unjittered", "matrixPalette", "matrixPalettePrev", "depthMap", "depth_params",
+                               "motion_y_sign"};
+        for (const char* name : names)
+            uniforms = linked && shaders.getUniformLocation(velocity, name) >= 0 && uniforms;
+        if (rigged) uniforms = linked && shaders.getUniformLocation(velocity, "view_proj_prev") >= 0 && uniforms;
+        if (!rigged)
+        {
+            for (const char* name : {"prev_valid", "prev_clip_from_cur_clip"})
+                uniforms = linked && shaders.getUniformLocation(velocity, name) >= 0 && uniforms;
+        }
+        expect((std::string(vertexFile) + " program exposes its uniforms").c_str(), uniforms);
+        shaders.deleteProgramAndObjects(velocity);
+    }
+
+    // FSR 2 reactive mask: the viewer's fsr2ReactiveF.glsl, the same way, with the uniforms LLPipeline::generateFsr2Reactive sets.
+    {
+        std::string vertexBody, fragmentBody;
+        const bool found = readViewerShader("postDeferredNoTCV.glsl", vertexBody) && readViewerShader("fsr2ReactiveF.glsl", fragmentBody);
+        expect("fsr2ReactiveF.glsl and its vertex shader are readable", found);
+        if (found)
+        {
+            const std::string vertexSource = "#version 400\n#define VERTEX_SHADER 1\n" + vertexBody;
+            const std::string fragmentSource = "#version 400\n#define FRAGMENT_SHADER 1\n" + fragmentBody;
+            const char* stageSources[] = {vertexSource.c_str(), fragmentSource.c_str()};
+            U32 reactive = shaders.createProgram();
+            bool compiled = true;
+            for (int i = 0; i < 2; ++i)
+            {
+                U32 object = shaders.createObject(i ? 0x8B30 : 0x8B31);
+                std::string log;
+                if (!shaders.compileObject(object, 1, &stageSources[i], log))
+                {
+                    compiled = false;
+                    fprintf(stderr, "%s\n", log.c_str());
+                }
+                shaders.attachObject(reactive, object);
+            }
+            expect("fsr2ReactiveF.glsl compiles", compiled);
+            shaders.bindAttribLocation(reactive, 0, "position");
+            const bool reactiveLinked = compiled && shaders.link(reactive);
+            expect("FSR 2 reactive program links", reactiveLinked);
+            bool uniforms = reactiveLinked;
+            for (const char* name : {"normalMap", "reactive_flag", "reactive_value"})
+                uniforms = reactiveLinked && shaders.getUniformLocation(reactive, name) >= 0 && uniforms;
+            expect("FSR 2 reactive program exposes its uniforms", uniforms);
+            shaders.deleteProgramAndObjects(reactive);
+        }
+    }
     printf("shader geometry/cache: %d checks, %s\n",checks,passed?"PASS":"FAIL");
     return passed;
 }

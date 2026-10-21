@@ -1877,6 +1877,252 @@ If you do not understand the distinction then leave this control alone."
          top_pad="5"
          width="477"/>
     </panel>
+
+<!--Upscaling-->
+    <panel
+     top_pad="5"
+     bottom="-1"
+     left="1"
+     right="-1"
+     follows="all"
+     label="Upscaling"
+     name="Upscaling" >
+        <check_box
+         control_name="RenderFSREnabled"
+         height="16"
+         label="FSR upscaling"
+         layout="topleft"
+         left="10"
+         top="20"
+         name="fsr_enabled"
+         tool_tip="Renders the 3D view smaller, then upscales and sharpens it with AMD FidelityFX Super Resolution 1.0. Faster, slightly softer."
+         width="260">
+          <check_box.commit_callback
+           function="Pref.FSRChanged" />
+        </check_box>
+        <combo_box
+         control_name="RenderFSRQuality"
+         enabled_control="RenderFSREnabled"
+         height="23"
+         initial_value="1"
+         follows="left|top"
+         layout="topleft"
+         left_delta="5"
+         name="fsr_quality"
+         top_pad="3"
+         width="260">
+          <combo_box.item
+           label="Ultra Quality (77%)"
+           name="FSRUltraQuality"
+           value="0" />
+          <combo_box.item
+           label="Quality (67%)"
+           name="FSRQuality"
+           value="1" />
+          <combo_box.item
+           label="Balanced (59%)"
+           name="FSRBalanced"
+           value="2" />
+          <combo_box.item
+           label="Performance (50%)"
+           name="FSRPerformance"
+           value="3" />
+          <combo_box.item
+           label="Custom"
+           name="FSRCustom"
+           value="4" />
+          <combo_box.commit_callback
+           function="Pref.FSRChanged" />
+        </combo_box>
+        <slider
+         control_name="RenderFSRCustomScale"
+         decimal_digits="2"
+         follows="left|top"
+         height="15"
+         increment="0.01"
+         initial_value="0.67"
+         label="Custom scale"
+         label_width="80"
+         layout="topleft"
+         left_delta="0"
+         max_val="1"
+         min_val="0.5"
+         name="fsr_custom_scale"
+         top_pad="3"
+         width="260">
+          <slider.commit_callback
+           function="Pref.FSRChanged" />
+        </slider>
+        <slider
+         control_name="RenderFSRSharpness"
+         enabled_control="RenderFSREnabled"
+         decimal_digits="2"
+         follows="left|top"
+         height="15"
+         increment="0.05"
+         initial_value="0.9"
+         label="Sharpness"
+         label_width="80"
+         layout="topleft"
+         left_delta="0"
+         max_val="1"
+         min_val="0"
+         name="fsr_sharpness"
+         top_pad="3"
+         width="260" />
+        <check_box
+         control_name="RenderFSRDynamic"
+         enabled_control="RenderFSREnabled"
+         height="16"
+         label="Dynamic scaling: hold a target frame rate"
+         layout="topleft"
+         left_delta="0"
+         top_pad="8"
+         name="fsr_dynamic"
+         tool_tip="Lowers the render scale when the frame rate drops below the target and raises it again when there is room. The quality chosen above is the lowest scale it uses. Pauses while the window is not focused."
+         width="300" />
+        <slider
+         control_name="RenderFSRTargetFPS"
+         enabled_control="RenderFSRDynamic"
+         decimal_digits="0"
+         follows="left|top"
+         height="15"
+         increment="5"
+         initial_value="60"
+         label="Target FPS"
+         label_width="80"
+         layout="topleft"
+         left_delta="0"
+         max_val="240"
+         min_val="20"
+         name="fsr_target_fps"
+         top_pad="3"
+         width="260" />
+        <text
+         type="string"
+         length="1"
+         follows="left|top"
+         height="40"
+         layout="topleft"
+         left_delta="0"
+         name="fsr_info"
+         top_pad="3"
+         word_wrap="true"
+         width="260">
+          Renders the 3D view smaller, then upscales it.
+        </text>
+
+<!--Temporal upscaler (FSR 2/3), Vulkan renderer only; shares the column layout with FSR 1.0 on its left-->
+        <check_box
+         control_name="RenderFSR2Enabled"
+         height="16"
+         label="Temporal upscaler (FSR 2/3)"
+         layout="topleft"
+         left="285"
+         top="20"
+         name="fsr2_enabled"
+         tool_tip="Renders the 3D view smaller, then rebuilds it from several frames with AMD FidelityFX Super Resolution 3.1 (temporal upscaler). Sharper than FSR upscaling at the same speed. Vulkan renderer only. Turns FSR upscaling off."
+         width="240">
+          <check_box.commit_callback
+           function="Pref.FSRChanged" />
+        </check_box>
+        <combo_box
+         control_name="RenderFSR2Quality"
+         enabled_control="RenderFSR2Enabled"
+         height="23"
+         initial_value="1"
+         follows="left|top"
+         layout="topleft"
+         left_delta="5"
+         name="fsr2_quality"
+         top_pad="3"
+         width="235">
+          <combo_box.item
+           label="Native AA (100%)"
+           name="FSR2NativeAA"
+           value="0" />
+          <combo_box.item
+           label="Quality (67%)"
+           name="FSR2Quality"
+           value="1" />
+          <combo_box.item
+           label="Balanced (59%)"
+           name="FSR2Balanced"
+           value="2" />
+          <combo_box.item
+           label="Performance (50%)"
+           name="FSR2Performance"
+           value="3" />
+          <combo_box.item
+           label="Ultra Performance (33%)"
+           name="FSR2UltraPerformance"
+           value="4" />
+          <combo_box.commit_callback
+           function="Pref.FSRChanged" />
+        </combo_box>
+        <slider
+         control_name="RenderFSR2Sharpness"
+         enabled_control="RenderFSR2Enabled"
+         decimal_digits="2"
+         follows="left|top"
+         height="15"
+         increment="0.05"
+         initial_value="0.5"
+         label="Sharpness"
+         label_width="80"
+         layout="topleft"
+         left_delta="0"
+         max_val="1"
+         min_val="0"
+         name="fsr2_sharpness"
+         top_pad="3"
+         width="235" />
+        <check_box
+         control_name="RenderFSR2Dynamic"
+         enabled_control="RenderFSR2Enabled"
+         height="16"
+         label="Dynamic scaling: hold a target frame rate"
+         layout="topleft"
+         left_delta="0"
+         top_pad="8"
+         name="fsr2_dynamic"
+         tool_tip="Lowers the render scale when the frame rate drops below the target and raises it again when there is room. The mode chosen above is the lowest scale it uses. Pauses while the window is not focused."
+         width="235">
+          <check_box.commit_callback
+           function="Pref.FSRChanged" />
+        </check_box>
+        <slider
+         control_name="RenderFSRTargetFPS"
+         enabled_control="RenderFSR2Dynamic"
+         decimal_digits="0"
+         follows="left|top"
+         height="15"
+         increment="5"
+         initial_value="60"
+         label="Target FPS"
+         label_width="80"
+         layout="topleft"
+         left_delta="0"
+         max_val="240"
+         min_val="20"
+         name="fsr2_target_fps"
+         tool_tip="The same target frame rate as for FSR upscaling."
+         top_pad="3"
+         width="235" />
+        <text
+         type="string"
+         length="1"
+         follows="left|top"
+         height="40"
+         layout="topleft"
+         left_delta="0"
+         name="fsr2_info"
+         top_pad="3"
+         word_wrap="true"
+         width="235">
+          Temporal upscaler off
+        </text>
+    </panel>
 </tab_container>
 
 <!-- These two check boxes are dummies and will never be displayed.  They are here so the control variables

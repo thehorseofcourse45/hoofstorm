@@ -45,6 +45,8 @@
 #include "llviewercontrol.h"
 #include "llviewertexturelist.h"
 #include "llviewerjointmesh.h"
+#include "llfsr2.h"
+#include "llappviewer.h"
 #include "llvoavatar.h"
 #include "llsky.h"
 #include "pipeline.h"
@@ -88,6 +90,9 @@ LLViewerJointMesh::~LLViewerJointMesh()
 }
 
 const S32 NUM_AXES = 3;
+
+extern bool gCubeSnapshot;
+static LLStaticHashedString sFsr2PrevValid("prev_valid");
 
 // register layoud
 // rotation X 0-n
@@ -183,6 +188,25 @@ void LLViewerJointMesh::uploadJointMatrices()
         if (LLGLSLShader::sCurBoundShaderPtr)
         {
             LLGLSLShader::sCurBoundShaderPtr->uniform4fv(LLViewerShaderMgr::AVATAR_MATRIX, 45, mat);
+            if (LLRenderPass::sFsr2VelocityPass)
+            {
+                // the velocity pass: last frame's matrices, or none (the shader then derives the previous position from the camera alone)
+                const bool usable = mPrevMatValid && mCurMatFrame == gFrameCount;
+                LLGLSLShader::sCurBoundShaderPtr->uniform4fv(LLViewerShaderMgr::AVATAR_MATRIX_PREV, 45, usable ? mPrevMat : mat);
+                LLGLSLShader::sCurBoundShaderPtr->uniform1f(sFsr2PrevValid, usable ? 1.f : 0.f);
+            }
+        }
+        if (!LLRenderPass::sFsr2VelocityPass && LLPipeline::sRenderDeferred && !LLPipeline::sShadowRender &&
+            !LLPipeline::sImpostorRender && !LLPipeline::sReflectionRender && !gCubeSnapshot && mCurMatFrame != gFrameCount)
+        {
+            // first main-view upload this frame: what was current becomes the previous one
+            mPrevMatValid = fsr2PrevPaletteUsable(mCurMatFrame != 0, (unsigned)num_joints, (unsigned)num_joints, gFrameCount - mCurMatFrame);
+            if (mPrevMatValid)
+            {
+                memcpy(mPrevMat, mCurMat, sizeof(mCurMat));
+            }
+            memcpy(mCurMat, mat, sizeof(mCurMat));
+            mCurMatFrame = gFrameCount;
         }
         stop_glerror();
 }

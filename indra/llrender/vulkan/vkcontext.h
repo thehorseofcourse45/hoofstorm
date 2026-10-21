@@ -68,6 +68,9 @@ struct VkContext
     uint32_t queueFamily = 0;
     VkQueue queue = VK_NULL_HANDLE;
     VkPhysicalDeviceMemoryProperties memProps{};
+    bool memoryBudget = false;      // VK_EXT_memory_budget enabled
+    // Process usage and OS budget of the device-local heaps, in bytes; false without the extension. Safe from any thread.
+    bool deviceLocalBudget(uint64_t& usage, uint64_t& budget) const;
     bool validation = false;
 
     // swapchain
@@ -187,6 +190,10 @@ struct VkContext
 
     bool samplerAnisotropy = false;
     float maxAnisotropy = 1.0f;
+    float maxSamplerLodBias = 2.0f;     // device limit (2 is the minimum Vulkan guarantees)
+    // FidelityFX upscaler compute needs: storage-image writes without a format whenever supported; its FP16 shader variants only
+    // with fp16Math (shaderFloat16, shaderInt16 and the 16-bit buffer access features all enabled).
+    bool fp16Math = false;
 
     // GL clip depth is -1..1, Vulkan's is 0..1. With VK_EXT_depth_clip_control the pipeline can ask for GL's range.
     bool depthClipControl = false;
@@ -275,6 +282,13 @@ struct VkContext
     bool tolerateFeedback = false;
     uint64_t feedbackSubstitutions = 0;
     uint64_t bufferAllocations = 0, bufferPoolHits = 0, bufferPoolEvictions = 0;
+    // Live vkAllocateMemory bytes by owner, for the VulkanPacing log; atomic because the reaper thread frees.
+    std::atomic<int64_t> textureMemBytes{0}, targetMemBytes{0}, hostBufferMemBytes{0}, stagingMemBytes{0};
+    std::atomic<int64_t> upscalerMemBytes{0};   // VulkanFsrUpscaler: SDK history, internal targets and pipelines
+    uint32_t failMemoryTypes = 0;           // test hook: bit i makes slab-block allocation from memory type i fail
+    bool failFsr2Create = false;            // test hook: VulkanFsrUpscaler::create/resize fail as if the SDK had refused
+    bool failFsr2Dispatch = false;          // test hook: VulkanFsrUpscaler::dispatch records its barriers, the SDK call fails
+    uint64_t fsr2CreateCalls = 0, fsr2DispatchCalls = 0;    // VulkanFsrUpscaler::create/resize and SDK dispatch attempts
     uint64_t bufferMemoryAllocations = 0;   // vkAllocateMemory calls behind vertex/index storage
     uint64_t textureUploadAllocations = 0, textureRingUploads = 0;
     std::chrono::steady_clock::time_point recordingStarted;

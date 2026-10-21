@@ -82,6 +82,9 @@
 #include "llviewereventrecorder.h"
 #include "llviewermessage.h"
 #include "llviewerwindow.h"
+#include "llfsr.h"
+#include "llfsr2.h"
+#include "llrenderbackend.h"
 #include "llviewerthrottle.h"
 #include "llvoavatarself.h"
 #include "llvotree.h"
@@ -507,6 +510,7 @@ LLFloaterPreference::LLFloaterPreference(const LLSD& key)
     mCommitCallbackRegistrar.add("Pref.WindowedMod",            boost::bind(&LLFloaterPreference::onCommitWindowedMode, this));
     mCommitCallbackRegistrar.add("Pref.UpdateSliderText",       boost::bind(&LLFloaterPreference::refreshUI,this));
     mCommitCallbackRegistrar.add("Pref.QualityPerformance",     boost::bind(&LLFloaterPreference::onChangeQuality, this, _2));
+    mCommitCallbackRegistrar.add("Pref.FSRChanged",             boost::bind(&LLFloaterPreference::onChangeFSR, this));
     mCommitCallbackRegistrar.add("Pref.applyUIColor",           boost::bind(&LLFloaterPreference::applyUIColor, this ,_1, _2));
     mCommitCallbackRegistrar.add("Pref.getUIColor",             boost::bind(&LLFloaterPreference::getUIColor, this ,_1, _2));
     mCommitCallbackRegistrar.add("Pref.MaturitySettings",       boost::bind(&LLFloaterPreference::onChangeMaturity, this));
@@ -538,6 +542,8 @@ LLFloaterPreference::LLFloaterPreference(const LLSD& key)
 
     mComplexityChangedSignal = gSavedSettings.getControl("RenderAvatarMaxComplexity")->getCommitSignal()->connect(boost::bind(&LLFloaterPreference::updateComplexityText, this));
     mImpostorsChangedSignal = gSavedSettings.getControl("RenderAvatarMaxNonImpostors")->getSignal()->connect(boost::bind(&LLFloaterPreference::updateIndirectMaxNonImpostors, this, _2));
+    mFSR2ChangedSignal = gSavedSettings.getControl("RenderFSR2Enabled")->getSignal()->connect(boost::bind(&LLFloaterPreference::updateFSRInfo, this));
+    mFSRChangedSignal = gSavedSettings.getControl("RenderFSREnabled")->getSignal()->connect(boost::bind(&LLFloaterPreference::updateFSRInfo, this));
 
     mCommitCallbackRegistrar.add("Pref.ClearLog",               boost::bind(&LLConversationLog::onClearLog, &LLConversationLog::instance()));
     mCommitCallbackRegistrar.add("Pref.DeleteTranscripts",      boost::bind(&LLFloaterPreference::onDeleteTranscripts, this));
@@ -954,6 +960,8 @@ LLFloaterPreference::~LLFloaterPreference()
     }
     mComplexityChangedSignal.disconnect();
     mImpostorsChangedSignal.disconnect();
+    mFSR2ChangedSignal.disconnect();
+    mFSRChangedSignal.disconnect();
 }
 
 // <FS:Zi> FIRE-19539 - Include the alert messages in Prefs>Notifications>Alerts in preference Search.
@@ -2213,6 +2221,8 @@ void LLFloaterPreference::refreshEnabledState()
         fsaa_ctrl->setEnabled(false);
     }
 
+    updateFSR2State();  // FXAA / SMAA are greyed while the temporal upscaler is on
+
     // WindLight
     LLSliderCtrl* sky = getChild<LLSliderCtrl>("SkyMeshDetail");
     sky->setEnabled(true);
@@ -2391,6 +2401,118 @@ void LLFloaterPreference::refresh()
     {
         mLanguageCombobox->selectByValue(LLSD(current_language));
     }
+
+    updateFSRInfo();
+}
+
+void LLFloaterPreference::onChangeFSR()
+{
+    updateFSRInfo();
+}
+
+void LLFloaterPreference::updateFSR2State()
+{
+    // The temporal upscaler exists only in the Vulkan renderer. With OpenGL its controls are disabled and say why; with Vulkan
+    // they follow the checkbox (the quality, sharpness and dynamic controls also have enabled_control, which only reacts to a
+    // change of the setting, so this sets them explicitly as well).
+    const bool vulkan = isVulkanRenderBackendActive();
+    const bool on = vulkan && gSavedSettings.getBOOL("RenderFSR2Enabled");
+    const bool dynamic = on && gSavedSettings.getBOOL("RenderFSR2Dynamic");
+
+    if (LLUICtrl* ctrl = findChild<LLUICtrl>("fsr2_enabled"))
+    {
+        ctrl->setEnabled(vulkan);
+        if (!vulkan)
+        {
+            ctrl->setToolTip(getString("fsr2_tip_opengl"));
+        }
+    }
+    struct Dependent { const char* name; bool enable; };
+    const Dependent dependents[] = { { "fsr2_quality", on }, { "fsr2_sharpness", on }, { "fsr2_dynamic", on }, { "fsr2_target_fps", dynamic } };
+    for (const Dependent& dep : dependents)
+    {
+        if (LLUICtrl* ctrl = findChild<LLUICtrl>(dep.name))
+        {
+            ctrl->setEnabled(dep.enable);
+            if (!vulkan)
+            {
+                ctrl->setToolTip(getString("fsr2_tip_opengl"));
+            }
+        }
+    }
+
+    // FXAA / SMAA run after the post chain on frames the upscaler did not handle; while it is on it anti-aliases every frame
+    // itself, so the combos are greyed (the saved choice is kept for when it is turned off). Off, they get back the state
+    // refreshEnabledState and LLPanelPreferenceGraphics::postBuild give them.
+    LLUICtrl* fsaa = findChild<LLUICtrl>("fsaa");
+    LLUICtrl* fsaa_quality = findChild<LLUICtrl>("fsaa quality");
+    if (fsaa && fsaa_quality)
+    {
+        const bool shaders_ok = gFXAAProgram[0].isComplete() || gSMAAEdgeDetectProgram[0].isComplete();
+        const bool aa_ok = shaders_ok && gPipeline.canUseAntiAliasing() &&
+                           LLFeatureManager::instance().isFeatureAvailable("RenderFSAASamples");
+        fsaa->setEnabled(!on && aa_ok);
+        fsaa_quality->setEnabled(!on && shaders_ok);
+        const std::string tip = on ? getString("fsr2_tip_aa") : LLStringUtil::null;
+        fsaa->setToolTip(tip);
+        fsaa_quality->setToolTip(tip);
+    }
+
+    // the render size line for the temporal upscaler
+    LLTextBox* info = findChild<LLTextBox>("fsr2_info");
+    if (info)
+    {
+        const U32 mode = gSavedSettings.getU32("RenderFSR2Quality");
+        const U32 out_w = gViewerWindow ? (U32)gViewerWindow->getWorldViewWidthRaw() : 0;
+        const U32 out_h = gViewerWindow ? (U32)gViewerWindow->getWorldViewHeightRaw() : 0;
+        if (!on || out_w == 0 || out_h == 0)
+        {
+            info->setText(getString(vulkan ? "fsr2_hint_off" : "fsr2_hint_opengl"));
+        }
+        else
+        {
+            const F32 scale = fsr2RenderScale(mode);
+            LLStringUtil::format_map_t args;
+            args["[IW]"] = llformat("%u", (U32)(out_w * scale));
+            args["[IH]"] = llformat("%u", (U32)(out_h * scale));
+            args["[OW]"] = llformat("%u", out_w);
+            args["[OH]"] = llformat("%u", out_h);
+            info->setText(getString(mode == 0 ? "fsr2_hint_native" : "fsr2_hint_on", args));
+        }
+    }
+}
+
+void LLFloaterPreference::updateFSRInfo()
+{
+    updateFSR2State();
+
+    LLUICtrl* enabled = findChild<LLUICtrl>("fsr_enabled");
+    LLUICtrl* quality = findChild<LLUICtrl>("fsr_quality");
+    LLUICtrl* custom = findChild<LLUICtrl>("fsr_custom_scale");
+    LLTextBox* info = findChild<LLTextBox>("fsr_info");
+    if (!enabled || !quality || !custom || !info)
+    {
+        return;
+    }
+
+    const bool on = enabled->getValue().asBoolean();
+    const U32 preset = (U32)quality->getValue().asInteger();
+    const F32 scale = effectiveRenderScale(true, preset, (F32)custom->getValue().asReal(), 1.f);
+    custom->setEnabled(on && preset == 4);
+
+    const U32 out_w = gViewerWindow ? (U32)gViewerWindow->getWorldViewWidthRaw() : 0;
+    const U32 out_h = gViewerWindow ? (U32)gViewerWindow->getWorldViewHeightRaw() : 0;
+    if (!on || out_w == 0 || out_h == 0)
+    {
+        info->setText(getString("fsr_hint_off"));
+        return;
+    }
+    LLStringUtil::format_map_t args;
+    args["[IW]"] = llformat("%u", (U32)(out_w * scale));
+    args["[IH]"] = llformat("%u", (U32)(out_h * scale));
+    args["[OW]"] = llformat("%u", out_w);
+    args["[OH]"] = llformat("%u", out_h);
+    info->setText(getString("fsr_hint_on", args));
 }
 
 void LLFloaterPreference::onCommitWindowedMode()

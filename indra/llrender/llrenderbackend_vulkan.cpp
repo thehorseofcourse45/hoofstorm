@@ -247,6 +247,13 @@ struct NativeRenderer
         LL_INFOS("VulkanPacing") << "texture staging alloc/ring=" << context.textureUploadAllocations-previousTextureUploadAllocations
             << "/" << context.textureRingUploads-previousTextureRingUploads << LL_ENDL;
         previousTextureUploadAllocations=context.textureUploadAllocations; previousTextureRingUploads=context.textureRingUploads;
+        uint64_t vramUsed = 0, vramBudget = 0;
+        if (context.deviceLocalBudget(vramUsed, vramBudget))
+            LL_INFOS("VulkanPacing") << "VRAM used/budget MB=" << (vramUsed >> 20) << "/" << (vramBudget >> 20)
+                << "; buffer memory allocations=" << context.bufferMemoryAllocations << LL_ENDL;
+        LL_INFOS("VulkanPacing") << "VRAM by owner MB: textures=" << (context.textureMemBytes >> 20) << " render targets=" << (context.targetMemBytes >> 20)
+            << " host buffers=" << (context.hostBufferMemBytes >> 20) << " device buffers=" << (context.bufferVramBytes >> 20)
+            << " upload staging=" << (context.stagingMemBytes >> 20) << " upscaler=" << (context.upscalerMemBytes >> 20) << LL_ENDL;
         previousStalls=context.stallCounts; previousStallMs=context.stallMs;
         previousCacheHits=context.pipelineCacheHits;
         previousBlocking = context.blockingSubmissions;
@@ -305,6 +312,11 @@ bool activateVulkanRenderBackend(void* instance, void* window, bool validation, 
     if (!instance || !window || !IsWindow((HWND)window))
     {
         error = "Vulkan activation requires a valid native instance and window";
+        return false;
+    }
+    if (!LoadLibraryA("vulkan-1.dll"))     // delay-loaded: no driver means fall back, not crash
+    {
+        error = "vulkan-1.dll not found; no Vulkan driver installed";
         return false;
     }
     // The GUI viewer has no stderr, so the backend's FATAL abort messages would vanish; keep them in the log folder.
@@ -578,6 +590,20 @@ bool initializeVulkanCapabilities(LLGLManager& m)
     (void)m; return false;
 #endif
 }
+bool getRenderBackendVRAMBudget(std::uint32_t& usedMB, std::uint32_t& budgetMB)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    std::uint64_t used = 0, budget = 0;
+    if (sNative && sNative->context.deviceLocalBudget(used, budget))
+    {
+        usedMB = static_cast<std::uint32_t>(used >> 20);
+        budgetMB = static_cast<std::uint32_t>(budget >> 20);
+        return true;
+    }
+#endif
+    (void)usedMB; (void)budgetMB;
+    return false;
+}
 std::uint32_t createRenderUniformBuffer()
 {
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
@@ -764,4 +790,76 @@ void getRenderQuery32(std::uint32_t id, std::uint32_t parameter, std::uint32_t* 
     }
 #endif
     glGetQueryObjectuiv(id,parameter,value);
+}
+
+bool dispatchRenderBackendFsr2(const RenderBackendFsr2Params& params)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (!sNative || sNative->framebuffers->fsr2Failed()) return false;
+    // the size checks dispatchFsr2 skips without counting a failure: made here too, so they answer false with the thread on
+    if (!params.renderW || !params.renderH || !params.displayW || !params.displayH ||
+        params.renderW > params.displayW || params.renderH > params.displayH) return false;
+    if (sNative->thread)
+    {
+        // The texture state the checks need lives on the render thread: queue the work instead of waiting for its answer.
+        if (!sNative->frameActive) return false;
+        // The caller treats a queued reset as sent; dispatchFsr2 keeps it until the SDK accepts a dispatch, and a dispatch dropped
+        // with a failed frame hands it on the same way.
+        sNative->thread->post([fb = sNative->framebuffers.get(), sh = &sNative->shared, params] {
+            if (!sh->frameFailed) fb->dispatchFsr2(params);
+            else fb->keepFsr2Reset(params.reset);
+        });
+        return true;
+    }
+    return sNative->framebuffers->dispatchFsr2(params);
+#else
+    (void)params;
+    return false;
+#endif
+}
+void releaseRenderBackendFsr2()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread) { sNative->thread->post([fb = sNative->framebuffers.get()] { fb->releaseFsr2(); }); return; }
+    if (sNative) sNative->framebuffers->releaseFsr2();
+#endif
+}
+bool isRenderBackendFsr2Failed()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) return sNative->framebuffers->fsr2Failed();     // atomic: set on the render thread when threaded
+#endif
+    return false;
+}
+bool lastRenderBackendFsr2Succeeded()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) return sNative->framebuffers->fsr2LastOk();     // atomic, as above
+#endif
+    return false;
+}
+bool lastRenderBackendFsr2Failed()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative) return sNative->framebuffers->fsr2LastFailed(); // atomic, as above
+#endif
+    return false;
+}
+void setRenderBackendStorageTexture(unsigned texture)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread) { sNative->thread->post([t = sNative->textures.get(), texture] { t->setStorageImage(texture); }); return; }
+    if (sNative) sNative->textures->setStorageImage(texture);
+#else
+    (void)texture;
+#endif
+}
+void setRenderBackendTextureLodBias(float bias)
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (sNative && sNative->thread) { sNative->thread->post([t = sNative->textures.get(), bias] { t->setLodBias(bias); }); return; }
+    if (sNative) sNative->textures->setLodBias(bias);
+#else
+    (void)bias;
+#endif
 }
