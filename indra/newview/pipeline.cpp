@@ -327,6 +327,13 @@ static LLStaticHashedString sViewProjPrev("view_proj_prev");
 static LLStaticHashedString sMotionYSign("motion_y_sign");
 static LLStaticHashedString sReactiveFlag("reactive_flag");
 static LLStaticHashedString sReactiveValue("reactive_value");
+static LLStaticHashedString sAvatarCount("avatar_count");
+static LLStaticHashedString sFsr2DepthParams("depth_params");
+static LLStaticHashedString sFsr2ProjUnjittered("proj_unjittered");
+static LLStaticHashedString sFsr2PrevFromCur("prev_clip_from_cur_clip");
+static LLStaticHashedString sFsr2ViewProjCur("view_proj_cur");
+static LLStaticHashedString sFsr2ViewProjPrev("view_proj_prev");
+static LLStaticHashedString sAvatarBox("avatar_box");
 static LLStaticHashedString sAmbiance("ambiance");
 static LLStaticHashedString sAlphaScale("alpha_scale");
 static LLStaticHashedString sNormMat("norm_mat");
@@ -983,6 +990,82 @@ glm::vec2 LLPipeline::getFsr2Jitter() const
     return jitter;
 }
 
+// Screen boxes of the visible avatars that moved since the last call, for the motion shader: three vec4 per avatar, (min xy, max
+// xy), (min z, max z, 0, 0) in the unjittered NDC the shader uses, and (movement in agent space, 0). A box with a corner behind
+// the camera covers the whole screen up to its far side, so a close avatar is never missed. prev_pos holds every avatar's render
+// position at the last call and is replaced by this call's; with no history (a camera cut) nothing moved.
+static S32 collectFsr2AvatarBoxes(const glm::mat4& view_proj, bool have_history, std::unordered_map<LLUUID, LLVector3>& prev_pos,
+                                  glm::vec4* out)
+{
+    constexpr F32 kPadXY = 0.02f;   // NDC; covers the jitter and the animation between the box update and the frame
+    constexpr F32 kPadZ = 2e-5f;    // NDC z is very flat at distance, so this is about a metre at 100 m and nothing close up
+    constexpr F32 kMinMove2 = 1e-8f;
+    constexpr F32 kMaxMove2 = 20.f * 20.f;   // more than this in one frame is a teleport or a region shift, not movement
+    std::unordered_map<LLUUID, LLVector3> now;
+    S32 count = 0;
+    for (LLCharacter* character : LLCharacter::sInstances)
+    {
+        LLVOAvatar* avatar = (LLVOAvatar*)character;
+        if (avatar->isDead() || avatar->mDrawable.isNull())
+        {
+            continue;
+        }
+        const LLVector3 pos = avatar->getRenderPosition();
+        now[avatar->getID()] = pos;
+        auto it = prev_pos.find(avatar->getID());
+        if (!have_history || it == prev_pos.end() || count >= kFsr2ReactiveAvatarsMax || !avatar->mDrawable->isVisible())
+        {
+            continue;
+        }
+        const LLVector3 move = pos - it->second;
+        const F32 move2 = move.magVecSquared();
+        if (move2 < kMinMove2 || move2 > kMaxMove2)
+        {
+            continue;
+        }
+        const LLVector4a* ext = avatar->mDrawable->getSpatialExtents();
+        const F32* lo = ext[0].getF32ptr();
+        const F32* hi = ext[1].getF32ptr();
+        glm::vec3 mn(1e9f), mx(-1e9f);
+        bool behind = false, any = false;
+        for (int i = 0; i < 8; ++i)
+        {
+            const glm::vec4 c = view_proj * glm::vec4((i & 1) ? hi[0] : lo[0], (i & 2) ? hi[1] : lo[1], (i & 4) ? hi[2] : lo[2], 1.f);
+            if (c.w <= 1e-4f)
+            {
+                behind = true;
+                continue;
+            }
+            const glm::vec3 n = glm::vec3(c) / c.w;
+            mn = glm::min(mn, n);
+            mx = glm::max(mx, n);
+            any = true;
+        }
+        if (!any)
+        {
+            continue;   // entirely behind the camera
+        }
+        glm::vec2 lo_xy(mn.x - kPadXY, mn.y - kPadXY), hi_xy(mx.x + kPadXY, mx.y + kPadXY);
+        F32 lo_z = mn.z - kPadZ, hi_z = mx.z + kPadZ;
+        if (behind)
+        {
+            lo_xy = glm::vec2(-1.f);
+            hi_xy = glm::vec2(1.f);
+            lo_z = -1.f;
+        }
+        if (hi_xy.x < -1.f || lo_xy.x > 1.f || hi_xy.y < -1.f || lo_xy.y > 1.f)
+        {
+            continue;   // off screen
+        }
+        out[count * 3] = glm::vec4(lo_xy, hi_xy);
+        out[count * 3 + 1] = glm::vec4(lo_z, hi_z, 0.f, 0.f);
+        out[count * 3 + 2] = glm::vec4(move.mV[VX], move.mV[VY], move.mV[VZ], 0.f);
+        ++count;
+    }
+    prev_pos.swap(now);
+    return count;
+}
+
 void LLPipeline::generateFsr2Motion(LLRenderTarget* depthSource, LLRenderTarget* dest)
 {
     LL_PROFILE_GPU_ZONE("FSR 2 motion");
@@ -993,6 +1076,8 @@ void LLPipeline::generateFsr2Motion(LLRenderTarget* depthSource, LLRenderTarget*
     // a camera cut has no previous frame: the same matrix on both ends gives exactly zero motion in the shader
     const glm::mat4& prev = mFsr2CameraCut ? mCurViewProjUnjittered : mPrevViewProj;
     const glm::mat4 inv_cur = glm::inverse(mCurViewProjUnjittered);
+    glm::vec4 boxes[kFsr2ReactiveAvatarsMax * 3];
+    const S32 box_count = collectFsr2AvatarBoxes(mCurViewProjUnjittered, !mFsr2CameraCut, mFsr2AvatarPrevPos, boxes);
 
     dest->bindTarget();
     gDeferredFSR2MotionProgram.bind();
@@ -1001,6 +1086,11 @@ void LLPipeline::generateFsr2Motion(LLRenderTarget* depthSource, LLRenderTarget*
     gDeferredFSR2MotionProgram.uniformMatrix4fv(sViewProjCur, 1, GL_FALSE, glm::value_ptr(mCurViewProjUnjittered));
     gDeferredFSR2MotionProgram.uniformMatrix4fv(sViewProjPrev, 1, GL_FALSE, glm::value_ptr(prev));
     gDeferredFSR2MotionProgram.uniform1f(sMotionYSign, kFsr2MotionYSign);
+    gDeferredFSR2MotionProgram.uniform1i(sAvatarCount, box_count);
+    if (box_count > 0)
+    {
+        gDeferredFSR2MotionProgram.uniform4fv(sAvatarBox, box_count * 3, glm::value_ptr(boxes[0]));
+    }
     {
         LLGLDepthTest depth_test(GL_FALSE);
         LLGLDisable blend(GL_BLEND);
@@ -1009,6 +1099,93 @@ void LLPipeline::generateFsr2Motion(LLRenderTarget* depthSource, LLRenderTarget*
     }
     gDeferredFSR2MotionProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
     gDeferredFSR2MotionProgram.unbind();
+    dest->flush();
+}
+
+// Opaque rigged pass types drawn by the avatar velocity pass: the same list the sun shadow pass uses for geometry that ignores textures.
+// Alpha-masked and alpha-blended rigged mesh keep the camera motion.
+static const U32 kFsr2VelocityRiggedTypes[] = {
+    LLRenderPass::PASS_SIMPLE,
+    LLRenderPass::PASS_FULLBRIGHT,
+    LLRenderPass::PASS_SHINY,
+    LLRenderPass::PASS_BUMP,
+    LLRenderPass::PASS_FULLBRIGHT_SHINY,
+    LLRenderPass::PASS_MATERIAL,
+    LLRenderPass::PASS_MATERIAL_ALPHA_EMISSIVE,
+    LLRenderPass::PASS_SPECMAP,
+    LLRenderPass::PASS_SPECMAP_EMISSIVE,
+    LLRenderPass::PASS_NORMMAP,
+    LLRenderPass::PASS_NORMMAP_EMISSIVE,
+    LLRenderPass::PASS_NORMSPEC,
+    LLRenderPass::PASS_NORMSPEC_EMISSIVE
+};
+
+void LLPipeline::renderFsr2AvatarVelocity(LLRenderTarget* depthSource, LLRenderTarget* dest)
+{
+    LL_PROFILE_GPU_ZONE("FSR 2 avatar velocity");
+    const bool body_ok = gDeferredFSR2AvatarBodyVelocityProgram.isComplete();
+    const bool rigged_ok = gDeferredFSR2AvatarVelocityProgram.isComplete();
+    if (mFsr2CameraCut || (!body_ok && !rigged_ok) || !depthSource || !depthSource->getDepth() || !dest || !dest->isComplete())
+    {
+        return;
+    }
+    F32 near_clip, far_clip, fov_y;
+    fsr2CameraFromProjection(glm::value_ptr(mFsr2UnjitteredProj), near_clip, far_clip, fov_y);
+    const glm::mat4 prev_from_cur = mPrevViewProj * glm::inverse(mCurViewProjUnjittered);
+
+    dest->bindTarget();
+    {
+        LLGLDepthTest depth_test(GL_FALSE);
+        LLGLDisable blend(GL_BLEND);
+        LLGLEnable cull(GL_CULL_FACE);
+        gGL.setColorMask(true, true);
+        LLRenderPass::sFsr2VelocityPass = true;
+        gGLLastMatrix = NULL;
+        gGL.loadMatrix(gGLModelView);
+
+        auto bind_common = [&](LLGLSLShader& prog)
+        {
+            prog.bind();
+            prog.bindTexture(LLShaderMgr::DEFERRED_DEPTH, depthSource, true, LLTexUnit::TFO_POINT);
+            prog.uniform2f(sFsr2DepthParams, near_clip, far_clip);
+            prog.uniform1f(sMotionYSign, kFsr2MotionYSign);
+        };
+        auto unbind_common = [&](LLGLSLShader& prog)
+        {
+            prog.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+            prog.unbind();
+        };
+
+        if (body_ok)
+        {
+            bind_common(gDeferredFSR2AvatarBodyVelocityProgram);
+            gDeferredFSR2AvatarBodyVelocityProgram.uniformMatrix4fv(sFsr2ProjUnjittered, 1, GL_FALSE, glm::value_ptr(mFsr2UnjitteredProj));
+            gDeferredFSR2AvatarBodyVelocityProgram.uniformMatrix4fv(sFsr2PrevFromCur, 1, GL_FALSE, glm::value_ptr(prev_from_cur));
+            for (LLDrawPool* poolp : mPools)
+            {
+                if (poolp->getType() == LLDrawPool::POOL_AVATAR && hasRenderType(LLDrawPool::POOL_AVATAR))
+                {
+                    static_cast<LLDrawPoolAvatar*>(poolp)->renderFsr2Velocity();
+                }
+            }
+            unbind_common(gDeferredFSR2AvatarBodyVelocityProgram);
+        }
+        if (rigged_ok)
+        {
+            bind_common(gDeferredFSR2AvatarVelocityProgram);
+            gDeferredFSR2AvatarVelocityProgram.uniformMatrix4fv(sFsr2ViewProjCur, 1, GL_FALSE, glm::value_ptr(mCurViewProjUnjittered));
+            gDeferredFSR2AvatarVelocityProgram.uniformMatrix4fv(sFsr2ViewProjPrev, 1, GL_FALSE, glm::value_ptr(mPrevViewProj));
+            for (U32 type : kFsr2VelocityRiggedTypes)
+            {
+                renderObjects(type, false, false, true);
+            }
+            mSimplePool->pushRiggedGLTFBatches(LLRenderPass::PASS_GLTF_PBR + 1, false);
+            unbind_common(gDeferredFSR2AvatarVelocityProgram);
+        }
+        LLRenderPass::sFsr2VelocityPass = false;
+        gGLLastMatrix = NULL;
+        gGL.loadMatrix(gGLModelView);
+    }
     dest->flush();
 }
 
@@ -1055,6 +1232,7 @@ bool LLPipeline::renderFsr2Upscale()
     LL_PROFILE_GPU_ZONE("FSR 2");
 
     generateFsr2Motion(&mRT->deferredScreen, &mFSR2MotionMap);
+    renderFsr2AvatarVelocity(&mRT->deferredScreen, &mFSR2MotionMap);
     if (kFsr2ReactiveFlag >= 0.f)
     {
         generateFsr2Reactive(&mFSR2ReactiveMap);

@@ -28,6 +28,7 @@
 #include "llrenderbackend.h"
 
 #include "llvoavatar.h"
+#include "llfsr2.h"
 
 #include <stdio.h>
 #include <ctype.h>
@@ -11504,12 +11505,18 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
         && entry.mRootMatrix == mRoot->getWorldMatrix4a())
     {
         entry.mFrame = gFrameCount;     // pose unchanged since the palette was built
+        entry.mPrevGLMp = entry.mGLMp;  // so the avatar did not move: zero velocity
+        entry.mPrevValid = true;
     }
 
     if (entry.mFrame != gFrameCount)
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
+        const bool had_palette = !entry.mGLMp.empty();
+        const U32 prev_count = (U32)(entry.mGLMp.size() / 12);
+        const U32 frames_since_build = gFrameCount - entry.mFrame;
+        entry.mPrevGLMp.swap(entry.mGLMp);   // the old palette becomes the previous one; mGLMp is rebuilt below
         entry.mFrame = gFrameCount;
         entry.mRootMatrix = mRoot->getWorldMatrix4a();
         entry.mRootKnown = true;
@@ -11546,6 +11553,7 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
             mp[idx + 10] = m[10];
             mp[idx + 11] = m[14];
         }
+        entry.mPrevValid = fsr2PrevPaletteUsable(had_palette, prev_count, count, frames_since_build);
     }
 
     return entry;

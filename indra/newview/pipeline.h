@@ -42,6 +42,7 @@
 #include "llheroprobemanager.h"
 
 #include <stack>
+#include <unordered_map>
 
 class LLViewerTexture;
 class LLFace;
@@ -1140,6 +1141,13 @@ public:
     // depth of depthSource with mCurViewProjUnjittered and mPrevViewProj; zero on a camera cut. Does nothing without the
     // program or a complete dest. Call after endFsr2Frame (Task 9: at the start of renderFinalize).
     void generateFsr2Motion(LLRenderTarget* depthSource, LLRenderTarget* dest);
+    // Avatar motion vectors for FSR 2, over the camera motion generateFsr2Motion wrote into dest: redraws the visible avatar body
+    // meshes and the opaque rigged attachments with the velocity programs (this and last frame's bone palettes), keeping only pixels
+    // not behind the depth of depthSource. Nothing is written on a camera cut or when a program is missing. Call right after
+    // generateFsr2Motion.
+    void renderFsr2AvatarVelocity(LLRenderTarget* depthSource, LLRenderTarget* dest);
+    // render position of each visible avatar at the last motion pass, for the per-avatar movement in the motion vectors
+    std::unordered_map<LLUUID, LLVector3> mFsr2AvatarPrevPos;
     // Reactive mask for FSR 2 into dest (mFSR2ReactiveMap) from the G-buffer of mRT->deferredScreen: kFsr2ReactiveMax where
     // normal.w equals kFsr2ReactiveFlag, exactly 0 elsewhere (v1 marks nothing: no G-buffer code exists for avatars or
     // alpha-blended surfaces, see fsr2ReactiveF.glsl). Does nothing without the program or a complete dest. Task 9 calls it

@@ -53,6 +53,13 @@ public:
     // Render time method to upload batches of joint matrices
     void uploadJointMatrices();
 
+    // FSR 2 avatar velocity: the joint matrices uploaded by the main deferred pass of this and of the previous frame. They include
+    // the camera (modelview) of their frame, which is what the velocity shader wants for the body mesh.
+    F32 mCurMat[45 * 4] = {};
+    F32 mPrevMat[45 * 4] = {};
+    U32 mCurMatFrame = 0;       // gFrameCount of mCurMat, 0 = never captured
+    bool mPrevMatValid = false; // mPrevMat holds the capture before mCurMat and is recent enough to use
+
     // overloaded from base class
     U32 drawShape( F32 pixelArea, bool first_pass, bool is_dummy ) override;
 

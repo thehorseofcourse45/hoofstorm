@@ -647,6 +647,20 @@ void LLRenderPass::pushUntexturedBatch(LLDrawInfo& params)
     params.mVertexBuffer->drawRange(LLRender::TRIANGLES, params.mStart, params.mEnd, params.mCount, params.mOffset);
 }
 
+bool LLRenderPass::sFsr2VelocityPass = false;
+
+// The previous palette for the FSR 2 avatar velocity pass. Without a usable one the current palette stands in: rigged palettes are
+// in agent space, so the velocity then reduces to the camera motion the motion pass already wrote.
+static void upload_prev_palette(const LLVOAvatar::MatrixPaletteCache& mpc, U32 count)
+{
+    if (!LLRenderPass::sFsr2VelocityPass)
+    {
+        return;
+    }
+    const std::vector<F32>& prev = (mpc.mPrevValid && mpc.mPrevGLMp.size() == mpc.mGLMp.size()) ? mpc.mPrevGLMp : mpc.mGLMp;
+    LLGLSLShader::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX_PREV, count, false, (GLfloat*)&prev[0]);
+}
+
 // static
 bool LLRenderPass::uploadMatrixPalette(LLDrawInfo& params)
 {
@@ -676,6 +690,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
         count,
         false,
         (GLfloat*)&(mpc.mGLMp[0]));
+    upload_prev_palette(mpc, count);
 
     return true;
 }
@@ -712,6 +727,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
             count,
             false,
             (GLfloat*)&(mpc.mGLMp[0]));
+        upload_prev_palette(mpc, count);
     }
 
     return !skipLastSkin;
@@ -750,6 +766,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
             count,
             false,
             (GLfloat*)&(mpc.mGLMp[0]));
+        upload_prev_palette(mpc, count);
     }
 
     return !skipLastSkin;

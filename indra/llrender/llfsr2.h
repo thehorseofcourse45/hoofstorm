@@ -173,6 +173,17 @@ inline void fsr2CameraFromProjection(const float m[16], float& outNear, float& o
 constexpr float kFsr2ReactiveMax = 0.9f;
 constexpr float kFsr2ReactiveFlagNone = -1.0f;
 constexpr float kFsr2ReactiveFlag = kFsr2ReactiveFlagNone;
+// Avatar velocity keeps each skinning palette's previous version. It may be used only when one existed for the same joint count
+// and was built at most kFsr2PrevPaletteMaxAge frames ago; otherwise the avatar keeps camera motion (never a stale streak).
+constexpr unsigned kFsr2PrevPaletteMaxAge = 8;
+inline bool fsr2PrevPaletteUsable(bool had_palette, unsigned prev_count, unsigned cur_count, unsigned frames_since_build)
+{
+    return had_palette && cur_count > 0 && prev_count == cur_count && frames_since_build <= kFsr2PrevPaletteMaxAge;
+}
+
+// The motion shader (fsr2MotionF.glsl) adds a rigid per-avatar movement inside the screen boxes of the visible avatars. The same
+// limit sizes the shader's box array (MAX_AVATARS there); avatars past it get camera motion only.
+constexpr int kFsr2ReactiveAvatarsMax = 32;
 
 // Column-major projection offset (a translation in NDC) applying a sub-pixel jitter given in render pixels.
 inline void fsr2JitterProjection(float jx, float jy, float renderW, float renderH, float out[16])

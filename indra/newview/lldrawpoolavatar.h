@@ -94,6 +94,10 @@ typedef enum
     /*virtual*/ void endShadowPass(S32 pass);
     /*virtual*/ void renderShadow(S32 pass);
 
+    // FSR 2: draws this pool's avatar body with gDeferredFSR2AvatarBodyVelocityProgram, which the caller has bound and set up. Skips
+    // the avatars renderShadow skips (impostors, invisible, dead, friends-only filtered).
+    void renderFsr2Velocity();
+
     void beginRigid();
     void beginImpostor();
     void beginSkinned();

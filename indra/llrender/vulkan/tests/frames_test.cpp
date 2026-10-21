@@ -405,6 +405,12 @@ int main(int argc, char** argv)
                 const S32 locCur = shaders.getUniformLocation(motionProg, "view_proj_cur");
                 const S32 locPrev = shaders.getUniformLocation(motionProg, "view_proj_prev");
                 const S32 locSign = shaders.getUniformLocation(motionProg, "motion_y_sign");
+                const S32 locCount = shaders.getUniformLocation(motionProg, "avatar_count");
+                S32 locBox = shaders.getUniformLocation(motionProg, "avatar_box");
+                if (locBox < 0) locBox = shaders.getUniformLocation(motionProg, "avatar_box[0]");
+                check(locCount >= 0 && locBox >= 0, "motion avatar uniforms found");
+                float avatarBoxes[12] = {};   // one avatar: (min xy, max xy), (min z, max z), movement
+                int avatarCount = 0;
 
                 // camera at (1.5, 0.75, 2) looking down -z; 60 degree vertical field of view; the plane 10 m in front of it
                 const float kPi = 3.14159265358979f;
@@ -438,6 +444,8 @@ int main(int argc, char** argv)
                     shaders.uniformMatrix4fv(motionProg, locCur, 1, false, vpCur.m);
                     shaders.uniformMatrix4fv(motionProg, locPrev, 1, false, vpPrev.m);
                     shaders.uniform1f(motionProg, locSign, kFsr2MotionYSign);
+                    shaders.uniform1i(motionProg, locCount, avatarCount);
+                    if (avatarCount > 0) shaders.uniform4fv(motionProg, locBox, avatarCount * 3, avatarBoxes);
                     vb.drawArrays(0, 6, 3);
                     fb.readPixels(0, 0, MW, MH, glc::RGBA, glc::FLOAT, motion.data());
                     fb.bind(0); ctx.endFrame(false);
@@ -488,6 +496,76 @@ int main(int argc, char** argv)
                 fb.bind(0); ctx.endFrame(false);
                 printf("  marker: centre pixel %u,%u + motion -> %d,%d lit %u; flipped row %d lit %u\n", cx, cy, px, py, hit[0], wrongY, miss[0]);
                 check(hit[0] == 255 && miss[0] == 0 && py != wrongY, "uv + motion finds the previous position in memory rows (Y sign)");
+
+                // 2b. an avatar that moved 0.3 m along x since last frame, static camera: pixels inside its box (left half of the screen,
+                // z range holding the plane) get the motion of a plane that moved by that much, the others stay exactly zero
+                {
+                    const float moveX = 0.3f;
+                    // planeZ is the plane's NDC z (the plane program writes it as clip z)
+                    const float box[12] = {-1.f, -1.f, 0.f, 1.f,   planeZ - 0.001f, planeZ + 0.001f, 0.f, 0.f,   moveX, 0.f, 0.f, 0.f};
+                    std::memcpy(avatarBoxes, box, sizeof box); avatarCount = 1;
+                    runMotion(true, vpCur);
+                    avatarCount = 0;
+                    // last frame the point was `move` away: prevNdc - curNdc = -P * move / distance, half of that in UV units
+                    const double expectMoveX = -0.5 * proj.m[0] * moveX / kPlaneDistance;
+                    const float* inside = at(MW / 4, MH / 2);
+                    const float* outside = at(3 * MW / 4, MH / 2);
+                    printf("  moving avatar: inside %.6f %.6f, expected %.6f 0; outside %g %g\n", inside[0], inside[1], expectMoveX, outside[0], outside[1]);
+                    check(std::fabs(inside[0] - expectMoveX) < 1e-4 && std::fabs(inside[1]) < 1e-4 && outside[0] == 0.f && outside[1] == 0.f,
+                          "an avatar box moves its own pixels by the avatar movement and leaves the rest at camera motion");
+                }
+
+                // 2c. avatar velocity through the viewer's fsr2AvatarVelocityV/F.glsl (rigged mesh): a full-screen triangle skinned with a
+                // current palette (identity) and a previous palette moved by -0.1 in x. The camera matrices are identity, so clip = position
+                // and the previous position is 0.1 to the left: prevNdc - curNdc = -0.1, half of that in UV. The scene depth holds the plane
+                // 10 m away (visible), or a plane at the near side (the triangle is behind it: nothing may be written).
+                {
+                    std::string velocityV, velocityF;
+                    check(readViewerShader("fsr2AvatarVelocityV.glsl", velocityV) && readViewerShader("fsr2AvatarVelocityF.glsl", velocityF),
+                          "viewer avatar velocity shaders readable");
+                    const std::string attr = "in vec4 weight4;";
+                    const size_t at4 = velocityV.find(attr);
+                    check(at4 != std::string::npos, "rigged velocity shader declares weight4");
+                    if (at4 != std::string::npos) velocityV.replace(at4, attr.size(), "const vec4 weight4 = vec4(0.5, 0.5, 0.0, 0.0);");
+                    const U32 velocityProg = build("#version 400\n#define VERTEX_SHADER 1\n#define MAX_JOINTS_PER_MESH_OBJECT 110\n" + velocityV,
+                                                   "#version 400\n#define FRAGMENT_SHADER 1\n" + velocityF, "fsr2AvatarVelocity program");
+                    auto uloc = [&](const char* n) { S32 l = shaders.getUniformLocation(velocityProg, n);
+                                                     return l >= 0 ? l : shaders.getUniformLocation(velocityProg, (std::string(n) + "[0]").c_str()); };
+                    const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+                    const float palCur[12] = {1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0};
+                    const float palPrev[12] = {1, 0, 0, -0.1f,  0, 1, 0, 0,  0, 0, 1, 0};   // column w = translation x, y, z
+                    auto runVelocity = [&](float sceneDepthPlaneZ) {
+                        check(ctx.beginFrame(clear), "velocity frame acquired");
+                        fb.bind(sceneFb); state.setViewport(0, 0, MW, MH); state.setDepthMask(true);
+                        fb.setClearColor(0, 0, 0, 1); fb.setClearDepth(1.0); fb.clear(0x4000 | 0x100);
+                        state.setDepthTest(true); state.setDepthFunc(0x0207);
+                        shaders.use(planeProg); shaders.uniform1f(planeProg, shaders.getUniformLocation(planeProg, "plane_z"), sceneDepthPlaneZ);
+                        vb.drawArrays(0, 6, 3);
+                        state.setDepthTest(false);
+                        fb.bind(motionFb); fb.setClearColor(9, 9, 0, 0); fb.clear(0x4000);   // an untouched pixel stays 9
+                        shaders.use(velocityProg);
+                        textures.activateUnit(0); textures.bind(glc::TEXTURE_2D, depthTex);
+                        shaders.uniform1i(velocityProg, uloc("depthMap"), 0);
+                        shaders.uniformMatrix4fv(velocityProg, uloc("view_proj_cur"), 1, false, identity);
+                        shaders.uniformMatrix4fv(velocityProg, uloc("view_proj_prev"), 1, false, identity);
+                        shaders.uniformMatrix3x4fv(velocityProg, uloc("matrixPalette"), 1, false, palCur);
+                        shaders.uniformMatrix3x4fv(velocityProg, uloc("matrixPalettePrev"), 1, false, palPrev);
+                        shaders.uniform2f(velocityProg, uloc("depth_params"), 0.5f, 100.f);
+                        shaders.uniform1f(velocityProg, uloc("motion_y_sign"), kFsr2MotionYSign);
+                        vb.drawArrays(0, 6, 3);
+                        fb.readPixels(0, 0, MW, MH, glc::RGBA, glc::FLOAT, motion.data());
+                        fb.bind(0); ctx.endFrame(false);
+                    };
+                    runVelocity(planeZ);
+                    printf("  avatar velocity: centre %.6f %.6f, expected -0.050000 0\n", at(cx, cy)[0], at(cx, cy)[1]);
+                    check(std::fabs(at(cx, cy)[0] + 0.05) < 1e-4 && std::fabs(at(cx, cy)[1]) < 1e-4,
+                          "avatar velocity: the previous palette moved by -0.1 gives UV motion -0.05");
+                    runVelocity(-0.9f);
+                    printf("  avatar velocity behind the scene: centre %g %g\n", at(cx, cy)[0], at(cx, cy)[1]);
+                    check(at(cx, cy)[0] == 9.f && at(cx, cy)[1] == 9.f, "avatar velocity: a surface behind the scene depth writes nothing");
+                    shaders.use(0);
+                    shaders.deleteProgramAndObjects(velocityProg);
+                }
 
                 // 3. sky: no geometry (depth 1.0, the far plane) and a 2 degree turn: finite everywhere, matches the reference
                 const Mat4 vpTurn = mul4(proj, mul4(rotateY4(2.f * kPi / 180.f), viewCur));
@@ -717,6 +795,7 @@ int main(int argc, char** argv)
                     for (const char* n : {"inv_view_proj_cur", "view_proj_cur", "view_proj_prev"})
                         shaders.uniformMatrix4fv(motionProg, shaders.getUniformLocation(motionProg, n), 1, false, ident.m);
                     shaders.uniform1f(motionProg, shaders.getUniformLocation(motionProg, "motion_y_sign"), kFsr2MotionYSign);
+                    shaders.uniform1i(motionProg, shaders.getUniformLocation(motionProg, "avatar_count"), 0);
                     vb.drawArrays(0, 6, 3);
                 };
                 auto drawTonemap = [&](U32 srcTex, U32 dstFb, U32 w, U32 h) {

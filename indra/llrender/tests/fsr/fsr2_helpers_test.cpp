@@ -194,6 +194,16 @@ int main()
               "plain-path frame (or FSR 2 off): the chosen FXAA/SMAA runs");
     }
 
+    // previous bone palette for avatar velocity: usable only when one existed for the same joint count and is not stale
+    {
+        check(!fsr2PrevPaletteUsable(false, 0, 12, 1), "prev palette: none yet is not usable");
+        check(fsr2PrevPaletteUsable(true, 12, 12, 1), "prev palette: same joint count, last frame is usable");
+        check(!fsr2PrevPaletteUsable(true, 12, 13, 1), "prev palette: a different joint count is not usable");
+        check(fsr2PrevPaletteUsable(true, 12, 12, kFsr2PrevPaletteMaxAge), "prev palette: exactly the max age is usable");
+        check(!fsr2PrevPaletteUsable(true, 12, 12, kFsr2PrevPaletteMaxAge + 1), "prev palette: older than the max age is not usable");
+        check(!fsr2PrevPaletteUsable(true, 0, 0, 1), "prev palette: an empty palette is not usable");
+    }
+
     printf("FSR2_HELPERS %s checks=%d\n", failed ? "FAIL" : "PASS", checks);
     return failed ? 1 : 0;
 }

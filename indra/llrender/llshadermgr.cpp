@@ -1450,6 +1450,7 @@ void LLShaderMgr::initAttribsAndUniforms()
     mReservedUniforms.push_back("env_intensity");
 
     mReservedUniforms.push_back("matrixPalette");
+    mReservedUniforms.push_back("matrixPalettePrev");
     mReservedUniforms.push_back("translationPalette");
 
 // <FS:CR> Import Vignette from Exodus

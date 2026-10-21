@@ -219,6 +219,8 @@ LLGLSLShader            gDeferredFSREasuProgram;
 LLGLSLShader            gDeferredFSRRcasProgram;
 LLGLSLShader            gDeferredFSR2MotionProgram;   // FSR 2 camera motion vectors (Vulkan, while FSR 2 is on)
 LLGLSLShader            gDeferredFSR2ReactiveProgram; // FSR 2 reactive mask (Vulkan, while FSR 2 is on)
+LLGLSLShader            gDeferredFSR2AvatarVelocityProgram;     // FSR 2 rigged mesh velocity
+LLGLSLShader            gDeferredFSR2AvatarBodyVelocityProgram; // FSR 2 avatar body velocity
 LLGLSLShader            gDeferredWLSkyProgram;
 LLGLSLShader            gEnvironmentMapProgram;
 LLGLSLShader            gDeferredWLCloudProgram;
@@ -1189,6 +1191,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFSRRcasProgram.unload();
         gDeferredFSR2MotionProgram.unload();
         gDeferredFSR2ReactiveProgram.unload();
+        gDeferredFSR2AvatarVelocityProgram.unload();
+        gDeferredFSR2AvatarBodyVelocityProgram.unload();
         gCASLegacyGammaProgram.unload();
         gEnvironmentMapProgram.unload();
         gDeferredWLSkyProgram.unload();
@@ -2954,6 +2958,31 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (!reactive_ok)
         {
             gDeferredFSR2ReactiveProgram.unload();
+        }
+
+        // avatar velocity is optional: without these programs moving avatars keep the camera motion (no fallback needed)
+        gDeferredFSR2AvatarVelocityProgram.mName = "Deferred FSR 2 Rigged Velocity Shader";
+        gDeferredFSR2AvatarVelocityProgram.mShaderFiles.clear();
+        gDeferredFSR2AvatarVelocityProgram.mShaderFiles.push_back(make_pair("deferred/fsr2AvatarVelocityV.glsl", GL_VERTEX_SHADER));
+        gDeferredFSR2AvatarVelocityProgram.mShaderFiles.push_back(make_pair("deferred/fsr2AvatarVelocityF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFSR2AvatarVelocityProgram.clearPermutations();
+        // only the shared skinning include gets this define from the loader; this program-specific vertex shader needs its own
+        gDeferredFSR2AvatarVelocityProgram.addPermutation("MAX_JOINTS_PER_MESH_OBJECT", std::to_string(LLSkinningUtil::getMaxJointCount()));
+        gDeferredFSR2AvatarVelocityProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gDeferredFSR2AvatarVelocityProgram.createShader())
+        {
+            gDeferredFSR2AvatarVelocityProgram.unload();
+        }
+
+        gDeferredFSR2AvatarBodyVelocityProgram.mName = "Deferred FSR 2 Avatar Body Velocity Shader";
+        gDeferredFSR2AvatarBodyVelocityProgram.mShaderFiles.clear();
+        gDeferredFSR2AvatarBodyVelocityProgram.mShaderFiles.push_back(make_pair("deferred/fsr2AvatarBodyVelocityV.glsl", GL_VERTEX_SHADER));
+        gDeferredFSR2AvatarBodyVelocityProgram.mShaderFiles.push_back(make_pair("deferred/fsr2AvatarVelocityF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredFSR2AvatarBodyVelocityProgram.clearPermutations();
+        gDeferredFSR2AvatarBodyVelocityProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (!gDeferredFSR2AvatarBodyVelocityProgram.createShader())
+        {
+            gDeferredFSR2AvatarBodyVelocityProgram.unload();
         }
 
         // FSR 2 gives way to FSR 1.0 from the idle loop (outside this reload). Once it is off these programs are no longer built,
