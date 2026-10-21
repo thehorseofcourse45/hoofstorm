@@ -1188,6 +1188,7 @@ private:
     bool mFsr2ResetPending = true;
     bool mFsr2PostDisplaySize = false;                  // the FSR 2 targets exist and the post chain targets are display size
     bool mFsr2InputsSingleLevel = false;                // mMainRT.screen and its depth were made for the upscaler (one mip level)
+    bool mFsr2KeepOnResize = false;                     // resizeScreenTexture: the upscaler context outlives the target reallocation
     bool mFsr2Dispatched = false;                       // a dispatch was issued since the last release
     bool mFsr2ReactiveCleared = false;                  // mFSR2ReactiveMap holds the constant 0 mask
     F32 mFsr2LodBias = 0.f;                             // texture LOD bias in effect (0 outside the main-scene bracket)
