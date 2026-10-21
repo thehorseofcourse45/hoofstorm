@@ -16,6 +16,13 @@ uniform mat3x4 matrixPalettePrev[MAX_JOINTS_PER_MESH_OBJECT];
 in vec3 position;
 in vec4 weight4;
 
+#if defined(FSR2_ALPHA_MASK)
+uniform mat4 texture_matrix0;
+in vec2 texcoord0;
+out vec2 vary_texcoord0;
+void passTextureIndex();
+#endif
+
 out vec4 vary_cur_clip;
 out vec4 vary_prev_clip;
 
@@ -47,4 +54,8 @@ void main()
     vary_cur_clip = view_proj_cur * vec4(skin_position(position, false), 1.0);
     vary_prev_clip = view_proj_prev * vec4(skin_position(position, true), 1.0);
     gl_Position = vary_cur_clip;
+#if defined(FSR2_ALPHA_MASK)
+    passTextureIndex();
+    vary_texcoord0 = (texture_matrix0 * vec4(texcoord0, 0, 1)).xy;
+#endif
 }

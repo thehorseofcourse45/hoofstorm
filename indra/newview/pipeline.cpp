@@ -1103,7 +1103,7 @@ void LLPipeline::generateFsr2Motion(LLRenderTarget* depthSource, LLRenderTarget*
 }
 
 // Opaque rigged pass types drawn by the avatar velocity pass: the same list the sun shadow pass uses for geometry that ignores textures.
-// Alpha-masked and alpha-blended rigged mesh keep the camera motion.
+// Alpha-masked rigged mesh has its own program (texture alpha test); alpha-blended rigged mesh keeps the camera motion.
 static const U32 kFsr2VelocityRiggedTypes[] = {
     LLRenderPass::PASS_SIMPLE,
     LLRenderPass::PASS_FULLBRIGHT,
@@ -1125,7 +1125,8 @@ void LLPipeline::renderFsr2AvatarVelocity(LLRenderTarget* depthSource, LLRenderT
     LL_PROFILE_GPU_ZONE("FSR 2 avatar velocity");
     const bool body_ok = gDeferredFSR2AvatarBodyVelocityProgram.isComplete();
     const bool rigged_ok = gDeferredFSR2AvatarVelocityProgram.isComplete();
-    if (mFsr2CameraCut || (!body_ok && !rigged_ok) || !depthSource || !depthSource->getDepth() || !dest || !dest->isComplete())
+    const bool mask_ok = gDeferredFSR2AvatarMaskVelocityProgram.isComplete();
+    if (mFsr2CameraCut || (!body_ok && !rigged_ok && !mask_ok) || !depthSource || !depthSource->getDepth() || !dest || !dest->isComplete())
     {
         return;
     }
@@ -1181,6 +1182,20 @@ void LLPipeline::renderFsr2AvatarVelocity(LLRenderTarget* depthSource, LLRenderT
             }
             mSimplePool->pushRiggedGLTFBatches(LLRenderPass::PASS_GLTF_PBR + 1, false);
             unbind_common(gDeferredFSR2AvatarVelocityProgram);
+        }
+        if (mask_ok)
+        {
+            bind_common(gDeferredFSR2AvatarMaskVelocityProgram);
+            gDeferredFSR2AvatarMaskVelocityProgram.uniformMatrix4fv(sFsr2ViewProjCur, 1, GL_FALSE, glm::value_ptr(mCurViewProjUnjittered));
+            gDeferredFSR2AvatarMaskVelocityProgram.uniformMatrix4fv(sFsr2ViewProjPrev, 1, GL_FALSE, glm::value_ptr(mPrevViewProj));
+            // same pass types and texture batching as the shadow pass's alpha-masked geometry
+            renderMaskedObjects(LLRenderPass::PASS_ALPHA_MASK, true, true, true);
+            renderMaskedObjects(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, true, true, true);
+            renderMaskedObjects(LLRenderPass::PASS_NORMSPEC_MASK, true, false, true);
+            renderMaskedObjects(LLRenderPass::PASS_MATERIAL_ALPHA_MASK, true, false, true);
+            renderMaskedObjects(LLRenderPass::PASS_SPECMAP_MASK, true, false, true);
+            renderMaskedObjects(LLRenderPass::PASS_NORMMAP_MASK, true, false, true);
+            unbind_common(gDeferredFSR2AvatarMaskVelocityProgram);
         }
         LLRenderPass::sFsr2VelocityPass = false;
         gGLLastMatrix = NULL;

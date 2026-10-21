@@ -23,6 +23,12 @@ uniform float motion_y_sign;
 in vec4 vary_cur_clip;
 in vec4 vary_prev_clip;
 
+#if defined(FSR2_ALPHA_MASK)
+// alpha-masked rigged mesh: the cut-out texels are not part of the avatar, same test as the shadow pass
+in vec2 vary_texcoord0;
+uniform float minimum_alpha;
+#endif
+
 float linear_depth(float d)
 {
     float z = d * 2.0 - 1.0;
@@ -31,6 +37,12 @@ float linear_depth(float d)
 
 void main()
 {
+#if defined(FSR2_ALPHA_MASK)
+    if (diffuseLookup(vary_texcoord0).a < minimum_alpha)
+    {
+        discard;
+    }
+#endif
     if (vary_prev_clip.w <= 0.0 || vary_cur_clip.w <= 0.0)
     {
         discard;    // no previous position in front of the camera: keep the camera motion
