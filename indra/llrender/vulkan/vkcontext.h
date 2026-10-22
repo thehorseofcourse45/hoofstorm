@@ -268,6 +268,8 @@ struct VkContext
     double lastFenceWaitMs = 0, lastAcquireWaitMs = 0, lastRecordingMs = 0, lastPresentMs = 0;
     // beginFrame breakdown for the slow-record log: whole call, deferred releases (count), framebuffer and query begin
     double lastBeginMs = 0, lastCollectMs = 0, lastFramebufferBeginMs = 0, lastQueryBeginMs = 0;
+    double lastFsr2ResizeMs = 0, lastFsr2DispatchMs = 0;     // newest FSR 2 dispatch: size handling, then the SDK dispatch
+    int lastFsr2Recreated = 0;                               // 1 when that size handling recreated the SDK context
     size_t lastCollectCount = 0;
     double pipelineCreationMs = 0;
     uint64_t bufferRenames = 0, pipelinesCreated = 0, pipelineCacheHits = 0;

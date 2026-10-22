@@ -104,7 +104,8 @@ struct NativeRenderer
                 out << "; beginFrame ms=" << context.lastBeginMs << " fence=" << context.lastFenceWaitMs
                     << " releases=" << context.lastCollectMs << " (" << context.lastCollectCount << ") acquire="
                     << context.lastAcquireWaitMs << " framebuffers=" << context.lastFramebufferBeginMs
-                    << " queries=" << context.lastQueryBeginMs;
+                    << " queries=" << context.lastQueryBeginMs << "; fsr2 resize=" << context.lastFsr2ResizeMs << " dispatch="
+                    << context.lastFsr2DispatchMs << " recreated=" << context.lastFsr2Recreated;
                 LL_INFOS("VulkanSlowRecord") << out.str() << LL_ENDL;
                 t->slowRecords().clear();
             }
