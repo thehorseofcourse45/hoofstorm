@@ -25,8 +25,11 @@
  */
 
 #include "llrenderbackendselection.h"
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <string>
 
 LLRenderBackendSelection chooseRenderBackend(const char* request, bool vulkanRuntimeBuilt)
 {
@@ -47,8 +50,27 @@ LLRenderBackendSelection chooseRenderBackend(const char* request, bool vulkanRun
         : LLRenderBackendSelection{"vulkan", "opengl", "Vulkan runtime was not built"};
 }
 
+const char* getRenderBackendFailureMarkerPath()
+{
+    static const std::string path = []()
+    {
+        std::string appdata = ".";
+#ifdef _WIN32
+        char* value = nullptr;
+        if (_dupenv_s(&value, nullptr, "APPDATA") == 0 && value) appdata = value;
+        std::free(value);
+#else
+        if (const char* value = std::getenv("APPDATA")) appdata = value;
+#endif
+        return appdata + "/Firestorm_x64/logs/vulkan_failed.flag";
+    }();
+    return path.c_str();
+}
+
 const LLRenderBackendSelection& getRenderBackendSelection()
 {
+    static const std::string markerReason = std::string("The previous Vulkan session failed; using OpenGL. Delete ")
+        + getRenderBackendFailureMarkerPath() + " or set FS_RENDER_BACKEND=vulkan to try Vulkan again";
     static const LLRenderBackendSelection selection = []()
     {
 #ifdef _WIN32
@@ -60,16 +82,26 @@ const LLRenderBackendSelection& getRenderBackendSelection()
 #else
         const char* request = std::getenv("FS_RENDER_BACKEND");
 #endif
-        const auto result = chooseRenderBackend(request,
+        auto result = chooseRenderBackend(request,
 #ifdef LL_VULKAN_RUNTIME_AVAILABLE
             true
 #else
             false
 #endif
         );
+        const bool unset = !request || !*request;
+        const bool wantsVulkan = request && std::strcmp(request, "vulkan") == 0;
 #ifdef _WIN32
         std::free(request);
 #endif
+        if (std::strcmp(result.selected, "vulkan") == 0)
+        {
+            if (std::ifstream(getRenderBackendFailureMarkerPath()).good())
+            {
+                if (wantsVulkan) std::remove(getRenderBackendFailureMarkerPath());     // explicit retry
+                else if (unset) result = {"default", "opengl", markerReason.c_str()};
+            }
+        }
         return result;
     }();
     return selection;

@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <direct.h>
+#include <fstream>
 
 static int checks = 0;
 static void check(bool passed)
@@ -11,8 +13,34 @@ static void check(bool passed)
     if (!passed) { std::fprintf(stderr, "FAILED check %d\n", checks); std::exit(1); }
 }
 
-int main()
+// mode "marker" / "retry": a failure marker from a previous Vulkan session (each mode needs its own process, the selection is cached)
+static int markerMode(bool retry)
 {
+    _putenv_s("APPDATA", "marker_test_appdata");
+    _mkdir("marker_test_appdata"); _mkdir("marker_test_appdata/Firestorm_x64"); _mkdir("marker_test_appdata/Firestorm_x64/logs");
+    { std::ofstream(getRenderBackendFailureMarkerPath()) << "test"; }
+    check(std::ifstream(getRenderBackendFailureMarkerPath()).good());
+    _putenv_s("FS_RENDER_BACKEND", retry ? "vulkan" : "");
+    const auto& sel = getRenderBackendSelection();
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (retry) { check(std::strcmp(sel.selected, "vulkan") == 0); check(!std::ifstream(getRenderBackendFailureMarkerPath()).good()); }
+    else
+    {
+        check(std::strcmp(sel.selected, "opengl") == 0);
+        check(sel.fallbackReason && std::strstr(sel.fallbackReason, "previous Vulkan session failed") != nullptr);
+        check(std::ifstream(getRenderBackendFailureMarkerPath()).good());
+    }
+#else
+    check(std::strcmp(sel.selected, "opengl") == 0);
+#endif
+    std::remove(getRenderBackendFailureMarkerPath());
+    std::printf("PASS: %d marker checks\n", checks);
+    return 0;
+}
+
+int main(int argc, char** argv)
+{
+    if (argc > 1) return markerMode(std::strcmp(argv[1], "retry") == 0);
     for (bool built : {false, true})
     {
         for (const char* request : {static_cast<const char*>(nullptr), "", "opengl", "vulkan", "Vulkan", "typo"})

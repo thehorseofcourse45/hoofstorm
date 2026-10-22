@@ -33,6 +33,9 @@
 constexpr unsigned LL_WINDOW_VULKAN = 1u;
 bool activateVulkanRenderBackend(void* instance, void* window, bool validation, std::string& error);
 bool isVulkanRenderBackendActive();
+// Viewer only (tests must not call it): from now on an abort or uncaught exception writes the failure marker
+// (getRenderBackendFailureMarkerPath) so the next start without FS_RENDER_BACKEND uses OpenGL. No-op without Vulkan.
+void installRenderBackendFailureMarker();
 void setRenderBackendVsync(bool enable); // Vulkan presentation mode: FIFO when on, MAILBOX/IMMEDIATE when off
 bool beginRenderBackendFrame(const float clear[4]);
 bool isRenderBackendFrameActive();

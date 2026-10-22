@@ -1,5 +1,21 @@
 # Vulkan project notes
 
+## Current status: FSR 2 stall fixes and idle() timers, 2026-10-22
+
+- FSR 2 context now survives dynamic-scaling resizes (`mFsr2KeepOnResize` in `pipeline.cpp`/`pipeline.h`). `releaseRenderBackendFsr2` slow calls fell from 57 in 3.5 min to 9 in 10 min. Merged (PR 22 on the fork). `#VulkanSlowRecord#` also logs `fsr2 resize=... dispatch=... recreated=...` (PR 23, merged).
+- `f26923077e` (local only, not pushed): `#FrameSpike#` line starting `slow idle:` lists `idle()` stages of 50 ms or more (`llappviewer.cpp`). `Hoofstorm.exe` was built from it.
+- `MemoryLogFrequency` was set to 0 in the user's `settings.xml` to stop 100-370 ms memory-dump spikes (backup `settings.xml.bak-memlog`). This is a user setting, not a repo change.
+- Findings: the 7.2 s "frame" in a long session was viewer shutdown. A 2.7 s stall right after two region removals sits in `idle()` before the `Main:Display` ping; cause unknown, the new timers should show it if it recurs. Texture memory frees in bursts; FPS stayed flat near 59 over 2.5 h; no leak found. The 3-6 GB peaks follow from the 11.5 GB VRAM budget.
+
+- Crash fallback marker (uncommitted, built, not yet run in a viewer): `installRenderBackendFailureMarker()` (called from `llviewerwindow.cpp` after window creation, viewer only) hooks SIGABRT and `std::terminate`; either writes `%APPDATA%/Firestorm_x64/logs/vulkan_failed.flag`. While that file exists, an unset `FS_RENDER_BACKEND` selects OpenGL (reason logged); `FS_RENDER_BACKEND=vulkan` deletes it and retries Vulkan (`llrenderbackendselection.cpp`). Tests: `selection_test` modes `marker` and `retry`, 6/6 pass. Limits: a Windows SEH crash that skips terminate/abort writes no marker; any abort while Vulkan is active counts, not only Vulkan ones; no mid-session switch to OpenGL. The `factory_*` selection tests fail to compile (std::mutex/U32 in `llrenderbackend.cpp` bodies), unrelated to this change.
+
+Next steps:
+
+1. Push `f26923077e` and open a PR to `thehorseofcourse45/hoofstorm` (needs the user's approval).
+2. User runs the new build in-world and looks for `slow idle:` lines after a teleport or region crossing.
+3. Not yet run: an FSR 2 plus dynamic-scaling session with the new timing fields; a validation-layer run to confirm images are safe to free under the live FSR 2 context.
+4. Parked: alpha-masked GLTF velocity, rigid attachments, FSR 3 frame generation (no spec).
+
 ## Current status: FSR 3.1 temporal upscaler, merged to master, partly checked in-world, 2026-10-21
 
 ### Update 2026-10-21 (merged: PR 16 on the fork, `vulkan-framebuffer` into `master`)
