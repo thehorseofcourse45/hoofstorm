@@ -5897,6 +5897,22 @@ void LLAppViewer::idle()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_APP;
     pingMainloopTimeout("Main:Idle");
+    // Slow idle log: per-stage ms (stages >= 50 ms) when idle() holds the frame, to split the "to Main:Display" gap in #FrameSpike#.
+    struct IdleStages
+    {
+        LLTimer t;
+        std::string out;
+        void mark(const char* name)
+        {
+            const F64 ms = t.getElapsedTimeAndResetF64() * 1000.0;
+            if (ms >= 50.0) out += llformat(" %s=%.0f", name, ms);
+        }
+        ~IdleStages()
+        {
+            mark("tail");
+            if (!out.empty()) LL_INFOS("FrameSpike") << "slow idle:" << out << LL_ENDL;
+        }
+    } idle_stages;
 
     // Update frame timers
     static LLTimer idle_timer;
@@ -6092,6 +6108,7 @@ void LLAppViewer::idle()
 
         //  Update statistics for this frame
         update_statistics();
+        idle_stages.mark("pre+net");
     }
 
     ////////////////////////////////////////
@@ -6112,6 +6129,7 @@ void LLAppViewer::idle()
         gIdleCallbacks.callFunctions();
         gInventory.idleNotifyObservers();
         LLAvatarTracker::instance().idleNotifyObservers();
+        idle_stages.mark("callbacks");
     }
 
     // Metrics logging (LLViewerAssetStats, etc.)
@@ -6139,6 +6157,7 @@ void LLAppViewer::idle()
     // since related notification still needs handling and allows
     // opening chat.
     gViewerWindow->updateUI();
+        idle_stages.mark("ui");
 
     if (gDisconnected)
     {
@@ -6189,6 +6208,7 @@ void LLAppViewer::idle()
         LLGestureMgr::instance().update();
 
         gAgent.updateAgentPosition(gFrameDTClamped, yaw, current_mouse.mX, current_mouse.mY);
+        idle_stages.mark("agent");
     }
 
     {
@@ -6199,6 +6219,7 @@ void LLAppViewer::idle()
             LLPerfStats::tunedAvatars=0; // <FS:Beq> reset the number of avatars that have been tweaked.
             gObjectList.update(gAgent);
             LL::GLTFSceneManager::instance().update();
+        idle_stages.mark("objlist");
         }
     }
 
@@ -6212,6 +6233,7 @@ void LLAppViewer::idle()
         LL_RECORD_BLOCK_TIME(FTM_CLEANUP);
         {
             gObjectList.cleanDeadObjects();
+        idle_stages.mark("cleanup");
         }
         {
             LL_RECORD_BLOCK_TIME(FTM_CLEANUP_DRAWABLES);
@@ -6259,6 +6281,7 @@ void LLAppViewer::idle()
         const F32 max_region_update_time = .001f; // 1ms
         LL_RECORD_BLOCK_TIME(FTM_REGION_UPDATE);
         LLWorld::getInstance()->updateRegions(max_region_update_time);
+        idle_stages.mark("regions");
     }
 
     /////////////////////////
@@ -6296,6 +6319,7 @@ void LLAppViewer::idle()
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_APP("world update"); //LL_RECORD_BLOCK_TIME(FTM_WORLD_UPDATE);
         gPipeline.updateMove();
+        idle_stages.mark("move");
     }
 
     LLWorld::getInstance()->updateParticles();
@@ -6316,6 +6340,7 @@ void LLAppViewer::idle()
         }
 
         gAgentCamera.updateCamera();
+        idle_stages.mark("camera");
     }
 
     // update media focus
@@ -6329,6 +6354,7 @@ void LLAppViewer::idle()
     {
         LL_RECORD_BLOCK_TIME(FTM_LOD_UPDATE);
         gObjectList.updateApparentAngles(gAgent);
+        idle_stages.mark("lod");
     }
 
     // Update AV render info
