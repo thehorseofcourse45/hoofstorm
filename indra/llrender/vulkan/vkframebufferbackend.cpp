@@ -528,11 +528,14 @@ bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
     if (!info[4].storage || isSrgb(info[4].format)) return fsr2Fail("the output has no storage usage or is sRGB");
 
     const uint32_t sizes[4] = {p.displayW, p.displayH, p.renderW, p.renderH};
+    const auto resizeStart = std::chrono::steady_clock::now();
+    mCtx->lastFsr2Recreated = 0;
     if (!mFsr2 || !std::equal(sizes, sizes + 4, mFsr2Sizes))
     {
         if (mFsr2 && !mFsr2->resizesInPlace(p.displayW, p.displayH, p.renderW, p.renderH) && mCtx->cmdSerial == mFsr2Serial)
             mCtx->flushCommands(VkContext::Stall::Explicit);     // see retireFsr2
         const bool keptContext = mFsr2 && mFsr2->resizesInPlace(p.displayW, p.displayH, p.renderW, p.renderH);
+        mCtx->lastFsr2Recreated = keptContext ? 0 : 1;
         if (!mFsr2) mFsr2 = std::make_unique<VulkanFsrUpscaler>();
         if (!mFsr2->resize(*mCtx, p.displayW, p.displayH, p.renderW, p.renderH))
         {
@@ -544,6 +547,8 @@ bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
         if (keptContext) keepFsr2Reset(true);     // the kept history was rendered at another size
     }
 
+    const auto resizeEnd = std::chrono::steady_clock::now();
+    mCtx->lastFsr2ResizeMs = std::chrono::duration<double, std::milli>(resizeEnd - resizeStart).count();
     // compute work cannot be recorded inside dynamic rendering; the next draw begins it again
     endRendering();
     VkCommandBuffer cmd = mCtx->slot().cmd;
@@ -566,6 +571,7 @@ bool VulkanFramebufferBackend::dispatchFsr2(const RenderBackendFsr2Params& p)
     in.cameraFar = p.cameraFar;
     in.fovY = p.fovY;
     const bool ok = mFsr2->dispatch(cmd, in, image(4));
+    mCtx->lastFsr2DispatchMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - resizeEnd).count();
     mFsr2Serial = mCtx->cmdSerial;
     // Every image handed over ends in SHADER_READ_ONLY_OPTIMAL, whatever the SDK answered. The wrapper orders its compute work
     // only before later compute and fragment shading, while this backend's next transitions wait on the vertex and fragment
