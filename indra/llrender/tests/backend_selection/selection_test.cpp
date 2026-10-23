@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <direct.h>
+#include <process.h>
+#include <string>
 #include <fstream>
 
 static int checks = 0;
@@ -16,8 +18,10 @@ static void check(bool passed)
 // mode "marker" / "retry": a failure marker from a previous Vulkan session (each mode needs its own process, the selection is cached)
 static int markerMode(bool retry)
 {
-    _putenv_s("APPDATA", "marker_test_appdata");
-    _mkdir("marker_test_appdata"); _mkdir("marker_test_appdata/Firestorm_x64"); _mkdir("marker_test_appdata/Firestorm_x64/logs");
+    // own directory per process so parallel ctest runs do not share the marker
+    const std::string appdata = "marker_test_appdata_" + std::to_string(_getpid());
+    _putenv_s("APPDATA", appdata.c_str());
+    _mkdir(appdata.c_str()); _mkdir((appdata + "/Firestorm_x64").c_str()); _mkdir((appdata + "/Firestorm_x64/logs").c_str());
     { std::ofstream(getRenderBackendFailureMarkerPath()) << "test"; }
     check(std::ifstream(getRenderBackendFailureMarkerPath()).good());
     _putenv_s("FS_RENDER_BACKEND", retry ? "vulkan" : "");
@@ -34,6 +38,7 @@ static int markerMode(bool retry)
     check(std::strcmp(sel.selected, "opengl") == 0);
 #endif
     std::remove(getRenderBackendFailureMarkerPath());
+    _rmdir((appdata + "/Firestorm_x64/logs").c_str()); _rmdir((appdata + "/Firestorm_x64").c_str()); _rmdir(appdata.c_str());
     std::printf("PASS: %d marker checks\n", checks);
     return 0;
 }
