@@ -27,6 +27,8 @@
 #include "linden_common.h"
 #include "llrenderbackend.h"
 #include "llerrorcontrol.h"
+#include "llrenderbackendselection.h"
+#include <csignal>
 #include <io.h>
 #include <memory>
 #include <exception>
@@ -401,6 +403,46 @@ bool isVulkanRenderBackendActive()
     return sNative != nullptr;
 #else
     return false;
+#endif
+}
+
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+namespace
+{
+char sMarkerPath[MAX_PATH] = {};
+void (*sPrevAbort)(int) = SIG_DFL;
+std::terminate_handler sPrevTerminate = nullptr;
+
+void writeFailureMarker(const char* why)
+{
+    HANDLE file = CreateFileA(sMarkerPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    WriteFile(file, why, (DWORD) strlen(why), &written, nullptr);
+    CloseHandle(file);
+}
+void onAbort(int sig)
+{
+    writeFailureMarker("abort() while the Vulkan renderer was active; see vulkan_fatal.log\n");
+    signal(SIGABRT, sPrevAbort);
+    raise(sig);
+}
+void onTerminate()
+{
+    writeFailureMarker("uncaught exception while the Vulkan renderer was active; see vulkan_fatal.log\n");
+    if (sPrevTerminate) sPrevTerminate();
+    abort();
+}
+}
+#endif
+
+void installRenderBackendFailureMarker()
+{
+#ifdef LL_VULKAN_RUNTIME_AVAILABLE
+    if (!sNative || sMarkerPath[0]) return;
+    strncpy_s(sMarkerPath, getRenderBackendFailureMarkerPath(), _TRUNCATE);
+    sPrevAbort = signal(SIGABRT, onAbort);
+    sPrevTerminate = std::set_terminate(onTerminate);
 #endif
 }
 void deferRenderBackendPresentation(bool defer) { sDeferPresentation = defer; }

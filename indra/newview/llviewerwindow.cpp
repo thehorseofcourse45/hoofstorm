@@ -2076,6 +2076,7 @@ LLViewerWindow::LLViewerWindow(const Params& p)
         // this always happens, so downgrading it to INFO
         LL_INFOS("Window") << " Someone took over my signal/exception handler (post createWindow; normal)" << LL_ENDL;
     }
+    installRenderBackendFailureMarker();
 
     const bool do_not_enforce = false;
     mWindow->setMinSize(p.min_width, p.min_height, do_not_enforce);  // root view not set

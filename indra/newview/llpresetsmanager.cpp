@@ -41,6 +41,7 @@
 #include "llfile.h"
 #include "quickprefs.h"
 #include "llperfstats.h"
+#include "llviewershadermgr.h"
 
 LLPresetsManager::LLPresetsManager()
     // <FS:Ansariel> Graphic preset controls independent from XUI
@@ -529,6 +530,9 @@ void LLPresetsManager::loadPreset(const std::string& subdirectory, std::string n
 
     mIsLoadingPreset = true; // <FS:Ansariel> Graphic preset controls independent from XUI
     mIgnoreChangedSignal = true;
+    // Each shader-affecting setting in the preset would reload every shader; reload once afterwards.
+    const bool reload_shaders_once = (PRESETS_GRAPHIC == subdirectory);
+    if (reload_shaders_once) LLViewerShaderMgr::sSkipReload = true;
     if(gSavedSettings.loadFromFile(full_path, false, true) > 0)
     {
         mIgnoreChangedSignal = false;
@@ -578,6 +582,11 @@ void LLPresetsManager::loadPreset(const std::string& subdirectory, std::string n
     {
         mIgnoreChangedSignal = false;
         LL_WARNS("Presets") << "failed to load preset '"<<name<<"' from '"<<full_path<<"'" << LL_ENDL;
+    }
+    if (reload_shaders_once)
+    {
+        LLViewerShaderMgr::sSkipReload = false;
+        LLViewerShaderMgr::instance()->setShaders();
     }
     mIsLoadingPreset = false; // <FS:Ansariel> Graphic preset controls independent from XUI
 }

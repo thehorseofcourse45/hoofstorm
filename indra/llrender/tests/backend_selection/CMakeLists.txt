@@ -20,6 +20,8 @@ foreach(variant runtime_on runtime_off)
         target_compile_options(${variant} PRIVATE /W4 /WX)
     endif()
     add_test(NAME ${variant} COMMAND ${variant})
+    add_test(NAME ${variant}_marker COMMAND ${variant} marker)
+    add_test(NAME ${variant}_marker_retry COMMAND ${variant} retry)
 endforeach()
 foreach(variant runtime_on runtime_off)
     add_executable(factory_${variant} factory_test.cpp

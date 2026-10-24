@@ -37,5 +37,8 @@ struct LLRenderBackendSelection
 LLRenderBackendSelection chooseRenderBackend(const char* request, bool vulkanRuntimeBuilt);
 // Immutable for the process, including across GL context recreation. No API objects are created here.
 const LLRenderBackendSelection& getRenderBackendSelection();
+// File the viewer writes when the Vulkan renderer dies (abort or uncaught exception). While it exists an unset
+// FS_RENDER_BACKEND selects OpenGL; FS_RENDER_BACKEND=vulkan deletes it and tries Vulkan again.
+const char* getRenderBackendFailureMarkerPath();
 
 #endif
