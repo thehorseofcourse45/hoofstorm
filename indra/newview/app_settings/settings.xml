@@ -257,6 +257,18 @@
     <real>10.0</real>
   </map>
 
+  <key>FSDistantAvatarAnimPixelArea</key>
+  <map>
+    <key>Comment</key>
+    <string>Avatars of other residents covering fewer than this many screen pixels also use FSDistantAvatarAnimPeriod, however close they are. 0 disables.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0.0</real>
+  </map>
+
   <key>FSParallelAvatarMotion</key>
   <map>
     <key>Comment</key>

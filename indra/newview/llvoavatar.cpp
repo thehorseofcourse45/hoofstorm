@@ -5891,9 +5891,10 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     static LLCachedControl<F32> far_skip_distance(gSavedSettings, "FSDistantAvatarAnimDistance", 10.f);
     static LLCachedControl<U32> farther_period(gSavedSettings, "FSFarAvatarAnimPeriod", 6);
     static LLCachedControl<F32> farther_distance(gSavedSettings, "FSFarAvatarAnimDistance", 25.f);
+    static LLCachedControl<F32> far_pixel_area(gSavedSettings, "FSDistantAvatarAnimPixelArea", 0.f);
     bool far_skip = false;
     if (far_period > 1 && !isSelf() && !isControlAvatar() && !mIsDummy && mDrawable.notNull()
-        && mDrawable->mDistanceWRTCamera > far_skip_distance)
+        && (mDrawable->mDistanceWRTCamera > far_skip_distance || (far_pixel_area > 0.f && mPixelArea < far_pixel_area)))
     {
         const F32 dist = mDrawable->mDistanceWRTCamera;
         const U32 period = (farther_period > far_period && dist > farther_distance) ? (U32) farther_period : (U32) far_period;
