@@ -5946,16 +5946,19 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
             }
         }
         // Throttle statistics: how many other-avatar updates ran vs were skipped, and how many were beyond the distance.
-        static U32 sRan = 0, sSkipped = 0, sFar = 0, sNear = 0; static S32 sLogFrame = 0;
+        static U32 sRan = 0, sSkipped = 0, sFar = 0, sNear = 0, sControl = 0, sArea[5] = {}; static S32 sLogFrame = 0;
         if (!isSelf() && mDrawable.notNull())
         {
             (far_skip ? sSkipped : sRan)++;
             (mDrawable->mDistanceWRTCamera > far_distance ? sFar : sNear)++;
+            if (isControlAvatar()) ++sControl;
+            ++sArea[mPixelArea < 1000.f ? 0 : mPixelArea < 4000.f ? 1 : mPixelArea < 15000.f ? 2 : mPixelArea < 60000.f ? 3 : 4];
             if (LLDrawable::getCurrentFrame() >= sLogFrame + 300)
             {
                 LL_INFOS("AvatarThrottle") << "last 300 frames: other-avatar updates ran=" << sRan << " skipped=" << sSkipped
-                    << " (beyond " << far_distance << "m: " << sFar << ", within: " << sNear << "), period=" << far_period << LL_ENDL;
-                sRan = sSkipped = sFar = sNear = 0; sLogFrame = LLDrawable::getCurrentFrame();
+                    << " (beyond " << far_distance << "m: " << sFar << ", within: " << sNear << "), period=" << far_period << " pixel area <1k/<4k/<15k/<60k/more: "
+                    << sArea[0] << "/" << sArea[1] << "/" << sArea[2] << "/" << sArea[3] << "/" << sArea[4] << " control avatars: " << sControl << LL_ENDL;
+                sRan = sSkipped = sFar = sNear = sControl = 0; std::fill(std::begin(sArea), std::end(sArea), 0u); sLogFrame = LLDrawable::getCurrentFrame();
             }
         }
     }
