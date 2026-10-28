@@ -43,10 +43,11 @@
 #include "llglheaders.h"
 #include "llmatrix4a.h"
 #include "glm/mat4x4.hpp"
-#include <boost/align/aligned_allocator.hpp>
 
 #include <array>
+#include <chrono>
 #include <list>
+#include <vector>
 
 class LLVertexBuffer;
 class LLCubeMap;
@@ -235,8 +236,6 @@ protected:
     bool                mHasMipMaps;
 
     void debugTextureUnit(void);
-    GLint getTextureSource(eTextureBlendSrc src);
-    GLint getTextureSourceType(eTextureBlendSrc src, bool isAlpha = false);
 };
 
 class LLLightState
@@ -467,7 +466,7 @@ public:
     LLLightState* getLight(U32 index);
     void setAmbientLightColor(const LLColor4& color);
 
-    void setLineWidth(F32 line_width); // <FS> Line width OGL core profile fix by Rye Mutt
+    void setLineWidth(F32 width);
 
     // Fixed pipeline state. Like the other setters these flush the pending immediate-mode batch first.
     // Face, mode and function values are GL constants (the viewer's state vocabulary for now).
@@ -501,6 +500,7 @@ public:
 public:
     static U32 sUICalls;
     static U32 sUIVerts;
+    static F32 sAnisotropicFilteringLevel;
     static bool sGLCoreProfile;
     static bool sNsightDebugSupport;
     static LLVector2 sUIGLScaleFactor;
@@ -526,12 +526,8 @@ private:
     U32             mCount;
     U32             mMode;
     U32             mCurrTextureUnitIndex;
-    bool                mCurrColorMask[4];
-    F32             mLineWidth; // <FS> Line width OGL core profile fix by Rye Mutt
-    // <FS:Ansariel> Don't ignore OpenGL max line width
-    F32             mMaxLineWidthSmooth;
-    F32             mMaxLineWidthAliased;
-    // </FS:Ansariel>
+    bool            mCurrColorMask[4];
+    F32             mLineWidth = 1.f;
 
     LLPointer<LLVertexBuffer>   mBuffer;
     LLStrider<LLVector4a>       mVerticesp;
@@ -546,8 +542,17 @@ private:
     eBlendFactor mCurrBlendAlphaSFactor;
     eBlendFactor mCurrBlendAlphaDFactor;
 
-    std::vector<LLVector4a, boost::alignment::aligned_allocator<LLVector4a, 16> > mUIOffset;
-    std::vector<LLVector4a, boost::alignment::aligned_allocator<LLVector4a, 16> > mUIScale;
+    std::vector<LLVector4a> mUIOffset;
+    std::vector<LLVector4a> mUIScale;
+
+    struct LLVBCache
+    {
+        LLPointer<LLVertexBuffer> vb;
+        std::chrono::steady_clock::time_point touched;
+    };
+
+    std::unordered_map<U64, LLVBCache> mVBCache;
+    std::list<LLVertexBufferData>* mBufferDataList = nullptr;
 };
 
 extern F32 gGLModelView[16];
