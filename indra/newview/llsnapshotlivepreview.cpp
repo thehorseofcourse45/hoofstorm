@@ -57,7 +57,6 @@
 #include "llviewertexturelist.h"
 #include "llwindow.h"
 #include "llworld.h"
-#include <boost/filesystem.hpp>
 
 constexpr F32 AUTO_SNAPSHOT_TIME_DELAY = 1.f;
 
@@ -249,7 +248,7 @@ void LLSnapshotLivePreview::drawPreviewRect(S32 offset_x, S32 offset_y, LLColor4
     LLColor4 color(0.0f, 0.0f, 0.0f, 1.0f) ;
     gl_rect_2d( mPreviewRect.mLeft + offset_x, mPreviewRect.mTop + offset_y,
         mPreviewRect.mRight + offset_x, mPreviewRect.mBottom + offset_y, color, false ) ;
-    gGL.setLineWidth(line_width) ; // <FS> Line width OGL core profile fix by Rye Mutt
+    gGL.setLineWidth(line_width) ;
 
     //draw four alpha rectangles to cover areas outside of the snapshot image
     if(!mKeepAspectRatio)

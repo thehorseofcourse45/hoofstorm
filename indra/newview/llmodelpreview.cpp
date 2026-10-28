@@ -4734,7 +4734,7 @@ bool LLModelPreview::render()
                         LLPhysicsDecomp* decomp = gMeshRepo.mDecompThread;
                         if (decomp)
                         {
-                            LLMutexLock(decomp->mMutex);
+                            LLMutexLock decomp_lock(decomp->mMutex);
 
                             LLModel::Decomposition& physics = model->mPhysics;
 
@@ -4830,7 +4830,7 @@ bool LLModelPreview::render()
                     if (mHasDegenerate)
                     {
                         // <FS:Beq> restore older functionality lost in lab importer
-                        // gGL.setLineWidth(PREVIEW_DEG_EDGE_WIDTH); // <FS> Line width OGL core profile fix by Rye Mutt
+                        // gGL.setLineWidth(PREVIEW_DEG_EDGE_WIDTH);
                         // glPointSize(PREVIEW_DEG_POINT_SIZE);
                         // gPipeline.enableLightsFullbright();
                         gGL.setLineWidth(deg_edge_width());
@@ -4864,7 +4864,7 @@ bool LLModelPreview::render()
                             LLPhysicsDecomp* decomp = gMeshRepo.mDecompThread;
                             if (decomp)
                             {
-                                LLMutexLock(decomp->mMutex);
+                                LLMutexLock decomp_lock(decomp->mMutex);
 
                                 LLModel::Decomposition& physics = model->mPhysics;
 

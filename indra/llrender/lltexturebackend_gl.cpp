@@ -81,7 +81,7 @@ public:
     {
         if (enabled)
         {
-            glTexParameteri(target, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
+            glTexParameteri(target, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
             glTexParameteri(target, GL_TEXTURE_COMPARE_FUNC, func);
         }
         else
@@ -103,7 +103,8 @@ public:
 
     void setLegacyMipmapGeneration(U32 target, bool enabled) override
     {
-        glTexParameteri(target, GL_GENERATE_MIPMAP, enabled ? GL_TRUE : GL_FALSE);
+        // GL_GENERATE_MIPMAP is gone from the core profile (upstream dropped the call); nothing to do
+        (void)target; (void)enabled;
     }
 
     void generate(S32 count, U32* names) override
@@ -218,9 +219,9 @@ public:
 
     bool isResident(U32 texture) override
     {
-        GLboolean resident = GL_FALSE;
-        glAreTexturesResident(1, &texture, &resident);
-        return resident != GL_FALSE;
+        // glAreTexturesResident is gone from the core profile; upstream treats textures as resident
+        (void)texture;
+        return true;
     }
 
     void shutdown() override
