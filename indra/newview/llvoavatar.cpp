@@ -1033,6 +1033,19 @@ LLVOAvatar::~LLVOAvatar()
 
 void LLVOAvatar::markDead()
 {
+    // Avatar churn diagnostics: where other avatars are when they die. A large angle means behind the camera.
+    if (!isSelf() && !mIsDummy && !isUIAvatar() && LLViewerCamera::instanceExists())
+    {
+        const LLViewerCamera& camera = *LLViewerCamera::getInstance();
+        LLVector3 to_avatar = getPositionAgent() - camera.getOrigin();
+        const F32 dist = to_avatar.normVec();
+        const F32 angle = dist > 0.f ? acosf(llclamp(to_avatar * camera.getAtAxis(), -1.f, 1.f)) * RAD_TO_DEG : 0.f;
+        LL_INFOS("AvatarKill") << "markDead " << mID << (isControlAvatar() ? " animesh" : "") << " loaded=" << mFullyLoaded
+            << " dist=" << dist << " angle=" << angle << " region=" << (getRegion() ? getRegion()->getName() : "none")
+            << " own region=" << (getRegion() == gAgent.getRegion()) << " lifetime=" << mDebugExistenceTimer.getElapsedTimeF32()
+            << LL_ENDL;
+    }
+
     if (mNameText)
     {
         mNameText->markDead();
@@ -3219,6 +3232,13 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     {
         LL_INFOS() << "Warning!  Idle on dead avatar" << LL_ENDL;
         return;
+    }
+
+    if (mFarHeldAppearance && !isBeyondAppearanceRange())
+    {
+        LL_INFOS("Avatar") << "Applying appearance held while " << getID() << " was beyond draw distance" << LL_ENDL;
+        const std::unique_ptr<LLAvatarAppearanceFields> fields = std::move(mFarHeldAppearance);
+        processAvatarAppearance(*fields);
     }
 
     static LLCachedControl<bool> friends_only(gSavedSettings, "RenderAvatarFriendsOnly", false);
@@ -11209,8 +11229,33 @@ void LLVOAvatar::processAvatarAppearance( LLMessageSystem* mesgsys )
     processAvatarAppearance(LLAvatarAppearanceFields(mesgsys));
 }
 
+// Far beyond draw distance an avatar can't be drawn, and the server often removes it again within seconds (seen with
+// skyboxes in neighbouring regions, sent and killed every ~10 s). Its appearance waits until it comes in range, so no
+// bakes are fetched and decoded for avatars that never show.
+bool LLVOAvatar::isBeyondAppearanceRange() const
+{
+    if (isSelf() || isControlAvatar() || mIsDummy || isUIAvatar() || !getRegion())
+    {
+        return false;
+    }
+    const F64 draw_distance = gAgentCamera.mDrawDistance;
+    const F64 range = llmax(draw_distance * 2.0, draw_distance + 64.0);
+    return dist_vec_squared(getPositionGlobal(), gAgentCamera.getCameraPositionGlobal()) > range * range;
+}
+
 void LLVOAvatar::processAvatarAppearance(const LLAvatarAppearanceFields& fields)
 {
+    if (isBeyondAppearanceRange())
+    {
+        if (!mFarHeldAppearance)
+        {
+            LL_INFOS("Avatar") << "Holding appearance for " << getID() << " until it comes within draw distance" << LL_ENDL;
+        }
+        mFarHeldAppearance = std::make_unique<LLAvatarAppearanceFields>(fields);
+        return;
+    }
+    mFarHeldAppearance.reset();     // this message is newer than any held one
+
     static LLCachedControl<bool> enable_verbose_dumps(gSavedSettings, "DebugAvatarAppearanceMessage");
     static LLCachedControl<bool> block_avatar_appearance_messages(gSavedSettings, "BlockAvatarAppearanceMessages");
 

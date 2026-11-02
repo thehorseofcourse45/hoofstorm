@@ -1031,6 +1031,8 @@ public:
     }
 
     LLPointer<LLAppearanceMessageContents>  mLastProcessedAppearance;
+    std::unique_ptr<LLAvatarAppearanceFields> mFarHeldAppearance;  // held while far beyond draw distance, applied in range
+    bool            isBeyondAppearanceRange() const;
 
 public:
     void            parseAppearanceMessage(const LLAvatarAppearanceFields& fields, LLAppearanceMessageContents& msg);
