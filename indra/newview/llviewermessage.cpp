@@ -4715,6 +4715,10 @@ void process_kill_object(LLMessageSystem *mesgsys, void **user_data)
         }
 
         LLViewerObject *objectp = gObjectList.findObject(id);
+        if (objectp && objectp->isAvatar())
+        {
+            LL_INFOS("AvatarKill") << "server KillObject for avatar " << id << LL_ENDL;
+        }
         if (objectp)
         {
             // <FS:Ansariel> FIRE-12004: Attachments getting lost on TP

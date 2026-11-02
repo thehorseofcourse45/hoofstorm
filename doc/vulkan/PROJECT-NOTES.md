@@ -1,5 +1,11 @@
 # Vulkan project notes
 
+## Current status: avatar churn from far skyboxes, 2026-11-02
+
+- CPU spikes (8-10 cores for 1-3 s) came from avatars the server sends and then kills with KillObject within a few seconds, every ~10-16 s. In one session about 20 avatars did this 107-124 times each in 33 minutes; 2055 of 2061 died before loading. A later session showed them in a skybox ~1970 m up in the neighbouring region, far past the 96 m draw distance.
+- `#AvatarKill#` logging: `markDead` per avatar (loaded, distance and angle from the camera, region, lifetime) and `server KillObject for avatar`. All 96 deaths in the test session came from server kills.
+- `LLVOAvatar::isBeyondAppearanceRange`: appearance messages for avatars beyond max(2x draw distance, draw distance + 64 m) are held in `mFarHeldAppearance` and applied in `idleUpdate` once in range, so no bakes are fetched for them. Tested once: 3 far avatars held, all killed before applying. The CPU effect is not measured yet, because that session had little churn.
+
 ## Current status: VRAM overrun crash, animesh throttle, 2026-11-01
 
 - Uncommitted, in the main checkout and copied to `C:\hoofstorm-merge-test`:
