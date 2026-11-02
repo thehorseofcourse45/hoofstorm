@@ -405,7 +405,15 @@ void VulkanFramebufferBackend::readPixels(S32 x, S32 y, S32 width, S32 height, U
     VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     ai.allocationSize = req.size;
     ai.memoryTypeIndex = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    VK_CHECK(vkAllocateMemory(mCtx->device, &ai, nullptr, &memory));
+    // Over the OS memory budget the driver can refuse even this host staging buffer: return zeros, as when minimized,
+    // instead of aborting (the logout snapshot hit this)
+    if (VkResult r = vkAllocateMemory(mCtx->device, &ai, nullptr, &memory); r != VK_SUCCESS)
+    {
+        fprintf(stderr, "WARNING: readPixels %dx%d staging buffer not allocated, VkResult %d\n", width, height, (int) r);
+        vkDestroyBuffer(mCtx->device, buffer, nullptr);
+        memset(data, 0, VulkanTextureBackend::sourceBytes(format, type, width, height, 1, 0));
+        return;
+    }
     VK_CHECK(vkBindBufferMemory(mCtx->device, buffer, memory, 0));
     VkBufferImageCopy copy{};
     copy.imageSubresource = {image.aspect, image.level, image.layer, 1};

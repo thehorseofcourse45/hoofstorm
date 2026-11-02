@@ -5938,15 +5938,15 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // In some cases, calls updateOrientation() for a lot of the
     // work
     // --------------------------------------------------------------------
-    // Far away avatars of other residents animate every Nth frame. The motion controller measures elapsed time since
-    // its last update, so a skipped frame costs pose smoothness, not animation speed.
+    // Far away avatars of other residents and animesh animate every Nth frame. The motion controller measures elapsed
+    // time since its last update, so a skipped frame costs pose smoothness, not animation speed.
     static LLCachedControl<U32> far_period(gSavedSettings, "FSDistantAvatarAnimPeriod", 1);
     static LLCachedControl<F32> far_skip_distance(gSavedSettings, "FSDistantAvatarAnimDistance", 10.f);
     static LLCachedControl<U32> farther_period(gSavedSettings, "FSFarAvatarAnimPeriod", 6);
     static LLCachedControl<F32> farther_distance(gSavedSettings, "FSFarAvatarAnimDistance", 25.f);
     static LLCachedControl<F32> far_pixel_area(gSavedSettings, "FSDistantAvatarAnimPixelArea", 0.f);
     bool far_skip = false;
-    if (far_period > 1 && !isSelf() && !isControlAvatar() && !mIsDummy && mDrawable.notNull()
+    if (far_period > 1 && !isSelf() && !mIsDummy && mDrawable.notNull()
         && (mDrawable->mDistanceWRTCamera > far_skip_distance || (far_pixel_area > 0.f && mPixelArea < far_pixel_area)))
     {
         const F32 dist = mDrawable->mDistanceWRTCamera;

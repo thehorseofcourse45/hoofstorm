@@ -1,5 +1,21 @@
 # Vulkan project notes
 
+## Current status: VRAM overrun crash, animesh throttle, 2026-11-01
+
+- Uncommitted, in the main checkout and copied to `C:\hoofstorm-merge-test`:
+  - `llvoavatar.cpp`: control avatars (animesh) now go through the distant-avatar throttle (`!isControlAvatar()` removed from the far-skip condition). Built and run once in a crowd. Nothing was skipped because the crowd was within 10 m and over 60k px, so the result says nothing yet.
+  - `vkframebufferbackend.cpp`: `readPixels` returns zeros instead of aborting when its host staging buffer can't be allocated.
+  - `llviewertexture.cpp`, `llimagegl.h/.cpp`: a `#TextureMemory#` log line every 10 s with bias, over_pct, estimate and real used/budget, downscale queue size and `LLImageGL::sScaleDownCount`. Not built: the worktree build failed because the running viewer locked `llplugin\media_plugin_libvlc.dll`.
+- Crash: two Vulkan sessions aborted on `VkResult -2` (10-30 at `vkbackends.cpp:325`, a vertex buffer; 11-01 at `vkframebufferbackend.cpp:408`, the logout snapshot readback). Both were host-visible allocations in system RAM (memory type 1 on the RX 6700 XT), refused while the process was over its WDDM budget. During the session the OS budget fell from 11475 to 8854 to about 5200 MB, and usage sat at about 98% of it. Texture memory stayed flat at about 4025 MB for 75+ s even though the real-budget check should have been raising the discard bias. Cause unknown; the new log line should show it.
+- Cause found with the `#TextureMemory#` line: the user's `settings.xml` had `FSOverrideVRAMDetection` = 1 with `FSForcedVideoMemory` unset (0), so `gGLManager.mVRAM` = 0 ("Overriding VRAM to 0 MB"). The texture target fell to the 768 MB floor, over_pct sat near 5.5 and the bias was pinned at 4 for whole sessions (it was already on in the 10-18 backup). With the bias at its maximum, nothing was left to give when the OS budget shrank. Downscaling itself works (`downscaled total` 476 to 2321, queue empty). The override was set to 0 on 11-01; backup `settings.xml.bak-vramoverride`. This is a user setting, not a repo change.
+- `vulkan_failed.flag` came back after the 11-01 crash. Every later launch falls back to OpenGL until the flag is deleted.
+
+Next steps:
+
+1. Done: rebuilt in the worktree (`BUILD_EXIT=0`), `vulkan_failed.flag` deleted. The main tree's `build-vc170-64\newview\Release` now holds the new `Hoofstorm.exe`, runtime folders, DLLs, `featuretable.txt` and `licenses.txt`. The old pre-merge files were moved to `Release-premerge-backup`. The main tree still can't reconfigure (autobuild), so rebuild in the worktree and copy again.
+2. User runs a session on Vulkan. Read the `#TextureMemory#` lines: check whether the bias rises when the real budget passes 90% and whether `downscaled total` grows.
+3. Crowd test with avatars beyond 10 m or under 15k px, to see whether the animesh throttle skips anything.
+
 ## Current status: FSR 2 stall fixes and idle() timers, 2026-10-22
 
 - FSR 2 context now survives dynamic-scaling resizes (`mFsr2KeepOnResize` in `pipeline.cpp`/`pipeline.h`). `releaseRenderBackendFsr2` slow calls fell from 57 in 3.5 min to 9 in 10 min. Merged (PR 22 on the fork). `#VulkanSlowRecord#` also logs `fsr2 resize=... dispatch=... recreated=...` (PR 23, merged).
