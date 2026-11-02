@@ -140,6 +140,7 @@ U64 LLImageGL::getTextureBytesAllocated()
 U32 LLImageGL::sUniqueCount             = 0;
 U32 LLImageGL::sBindCount               = 0;
 S32 LLImageGL::sCount                   = 0;
+U32 LLImageGL::sScaleDownCount          = 0;
 
 F32 LLImageGL::sLastFrameTime           = 0.f;
 LLImageGL* LLImageGL::sDefaultGLTexture = NULL ;
@@ -2629,6 +2630,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
     }
 
     mCurrentDiscardLevel = desired_discard;
+    ++sScaleDownCount;
 
     return true;
 }

@@ -583,6 +583,17 @@ void LLViewerTexture::updateClass()
 
     was_low = is_low;
 
+    // Memory pressure diagnostics: whether the discard bias reacts to the budget and textures actually downscale.
+    static LLFrameTimer memory_log_timer;
+    if (memory_log_timer.getElapsedTimeF32() > 10.f)
+    {
+        memory_log_timer.reset();
+        LL_INFOS("TextureMemory") << "bias=" << sDesiredDiscardBias << " over_pct=" << over_pct << " low=" << is_low
+            << " sys_low=" << is_sys_low << " estimate used/target MB=" << used << "/" << target << " real used/budget MB="
+            << real_used_mb << "/" << real_budget_mb << " downscale queue=" << gTextureList.mDownScaleQueue.size()
+            << " downscaled total=" << LLImageGL::sScaleDownCount << LL_ENDL;
+    }
+
     if (is_low)
     {
         // ramp up discard bias over time to free memory
