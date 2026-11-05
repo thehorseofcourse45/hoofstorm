@@ -339,7 +339,8 @@ bool activateVulkanRenderBackend(void* instance, void* window, bool validation, 
         }
         if (!candidate->context.init((HINSTANCE)instance, (HWND)window, validation))
         {
-            error = "Vulkan context initialization failed";
+            error = candidate->context.windowError.empty() ? "Vulkan context initialization failed"
+                                                          : candidate->context.windowError;
             return false;
         }
         if (validation && !candidate->context.validation)

@@ -466,7 +466,12 @@ bool VkContext::createWindowResources()
     else
     {
     VkSurfaceCapabilitiesKHR caps;
-    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys, surface, &caps));
+    if (VkResult r = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys, surface, &caps))
+    {
+        vkSurfaceFailure("vkGetPhysicalDeviceSurfaceCapabilitiesKHR", r, __FILE__, __LINE__);
+        windowError = "the display session could not provide a swapchain (VK_ERROR_SURFACE_LOST_KHR)";
+        return false;
+    }
     RECT client{};
     if (!GetClientRect(window, &client) || IsIconic(window) || client.right <= client.left || client.bottom <= client.top)
         return false;
@@ -477,10 +482,20 @@ bool VkContext::createWindowResources()
     if (!extent.width || !extent.height) return false;
 
     uint32_t fn = 0;
-    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &fn, nullptr));
+    if (VkResult r = vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &fn, nullptr))
+    {
+        vkSurfaceFailure("vkGetPhysicalDeviceSurfaceFormatsKHR", r, __FILE__, __LINE__);
+        windowError = "the display session could not provide a swapchain";
+        return false;
+    }
     if (!fn) return false;
     std::vector<VkSurfaceFormatKHR> formats(fn);
-    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &fn, formats.data()));
+    if (VkResult r = vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &fn, formats.data()))
+    {
+        vkSurfaceFailure("vkGetPhysicalDeviceSurfaceFormatsKHR", r, __FILE__, __LINE__);
+        windowError = "the display session could not provide a swapchain";
+        return false;
+    }
     VkSurfaceFormatKHR chosen = formats[0];
     for (auto& f : formats)
     {
