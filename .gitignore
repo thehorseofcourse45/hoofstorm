@@ -145,3 +145,6 @@ checks.json
 
 /dist/
 /doc/vulkan/tools/reconfigure.cmd
+
+# Measured parity runs (large log snapshots, regenerable)
+/doc/vulkan/parity/

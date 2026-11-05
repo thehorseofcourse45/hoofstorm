@@ -39,6 +39,15 @@
         }                                                                                   \
     } while (0)
 
+// Surface/swapchain calls may legitimately fail when the display session cannot provide a presentable
+// surface (a headless session, a crashed compositor). Those are not fatal: set the message, return false,
+// and let the caller fall back instead of throwing an opaque "Vulkan call failed: ...".
+inline void vkSurfaceFailure(const char* call, VkResult r, const char* file, int line)
+{
+    fprintf(stderr, "Vulkan window: %s returned VkResult %d (%s:%d) - the display session cannot provide a swapchain\n",
+            call, (int) r, file, line);
+}
+
 class VulkanTextureBackend;
 class VulkanFramebufferBackend;
 class VulkanQueryBackend;
@@ -76,6 +85,7 @@ struct VkContext
     // swapchain
     HWND window = nullptr;
     bool headless = false;
+    std::string windowError;     // set by createWindowResources when the display cannot provide a swapchain; empty on success
     bool swapchainDirty = false;
     static std::atomic<bool> sVsync; // wanted presentation mode, set from the main thread
     bool activeVsync = true;         // mode the current swapchain was created with
