@@ -79,6 +79,12 @@ private:
         std::array<Attachment, 4> color{};
         Attachment depth;
         U32 drawCount = 1, readBuffer = 0x8CE0;
+        uint64_t cachedGen = 0;
+        U32 cachedDrawCount = 0;
+        bool cachedDrawable = true;
+        VkExtent2D cachedExtent{};
+        std::array<VkFormat, 4> cachedColorFormats{};
+        VkFormat cachedDepthFormat = VK_FORMAT_UNDEFINED;
     };
     struct Image
     {
@@ -89,6 +95,7 @@ private:
         VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
         U32 texture = 0, level = 0, layer = 0;
     };
+    void ensureDrawCache(Framebuffer& f);
     bool hasStorage(const Attachment& a) const;
     Image imageOf(const Attachment& a);
     Image colorImage(U32 framebuffer, U32 attachment);
@@ -101,6 +108,7 @@ private:
     VulkanRenderStateBackend* mState;
     std::map<U32, Framebuffer> mObjects;
     U32 mNext = 1, mDraw = 0, mRead = 0;
+    Framebuffer* mDrawPtr = nullptr;
     U32 mDefaultDrawCount = 1, mDefaultRead = 0x0405;
     bool mRendering = false, mDefaultClear = false, mSampledDepth = false;
     VkImageLayout mRenderingDepthLayout = VK_IMAGE_LAYOUT_UNDEFINED;

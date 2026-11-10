@@ -80,6 +80,10 @@ struct VkContext
     bool memoryBudget = false;      // VK_EXT_memory_budget enabled
     // Process usage and OS budget of the device-local heaps, in bytes; false without the extension. Safe from any thread.
     bool deviceLocalBudget(uint64_t& usage, uint64_t& budget) const;
+    mutable std::mutex budgetMutex;
+    mutable std::chrono::steady_clock::time_point lastBudgetQuery{};
+    mutable uint64_t cachedBudgetUsage = 0, cachedBudgetTotal = 0;
+    mutable bool cachedBudgetValid = false;
     bool validation = false;
 
     // swapchain

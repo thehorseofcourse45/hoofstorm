@@ -64,9 +64,15 @@ void VulkanFramebufferBackend::destroyFramebuffer(U32 framebuffer)
 }
 void VulkanFramebufferBackend::bind(U32 framebuffer)
 {
-    if (framebuffer) object(framebuffer);
-    endRendering();
+    if (framebuffer == mDraw && framebuffer == mRead) return;
+    Framebuffer* ptr = framebuffer ? &object(framebuffer) : nullptr;
+    if (framebuffer != mDraw)
+    {
+        endRendering();
+        if (mCtx->textures) ++mCtx->textures->stateGeneration;
+    }
     mDraw = mRead = framebuffer;
+    mDrawPtr = ptr;
 }
 void VulkanFramebufferBackend::bindRead(U32 framebuffer)
 {
@@ -76,14 +82,58 @@ void VulkanFramebufferBackend::bindRead(U32 framebuffer)
 void VulkanFramebufferBackend::attach(U32 framebuffer, U32 attachment, U32 target, U32 texture, S32 level)
 {
     if (!framebuffer || framebuffer != mDraw || level < 0) fail("invalid attachment binding or level");
-    endRendering();
+    auto& f = mDrawPtr ? *mDrawPtr : object(framebuffer);
     Attachment a{texture, target, level};
-    if (texture && hasStorage(a)) imageOf(a);     // a render target that ran out of memory attaches anyway; drawing to it is skipped
-    if (attachment == DEPTH) object(framebuffer).depth = a;
-    else if (attachment >= COLOR0 && attachment < COLOR0 + 4) object(framebuffer).color[attachment - COLOR0] = a;
+    Attachment* slot = nullptr;
+    if (attachment == DEPTH) slot = &f.depth;
+    else if (attachment >= COLOR0 && attachment < COLOR0 + 4) slot = &f.color[attachment - COLOR0];
     else fail("unsupported attachment");
+    if (slot->texture == a.texture && slot->target == a.target && slot->level == a.level)
+    {
+        if (texture && hasStorage(a)) imageOf(a);
+        return;
+    }
+    endRendering();
+    if (mCtx->textures) ++mCtx->textures->stateGeneration;
+    f.cachedGen = 0;
+    if (texture && hasStorage(a)) imageOf(a);     // a render target that ran out of memory attaches anyway; drawing to it is skipped
+    *slot = a;
 }
 
+void VulkanFramebufferBackend::ensureDrawCache(Framebuffer& f)
+{
+    const uint64_t gen = mCtx->textures ? mCtx->textures->stateGeneration : 1;
+    if (f.cachedGen == gen && f.cachedDrawCount == f.drawCount) return;
+    f.cachedDrawable = true;
+    for (U32 i = 0; i < f.drawCount; ++i)
+        if (!hasStorage(f.color[i])) { f.cachedDrawable = false; break; }
+    if (f.cachedDrawable && !hasStorage(f.depth)) f.cachedDrawable = false;
+    f.cachedColorFormats = {};
+    f.cachedDepthFormat = VK_FORMAT_UNDEFINED;
+    f.cachedExtent = {};
+    if (f.cachedDrawable)
+    {
+        bool gotExtent = false;
+        for (U32 i = 0; i < 4; ++i)
+        {
+            if (!f.color[i].texture) continue;
+            if (i < f.drawCount || !gotExtent)
+            {
+                Image img = imageOf(f.color[i]);
+                if (i < f.drawCount) f.cachedColorFormats[i] = img.format;
+                if (!gotExtent) { f.cachedExtent = img.extent; gotExtent = true; }
+            }
+        }
+        if (f.depth.texture)
+        {
+            Image img = imageOf(f.depth);
+            f.cachedDepthFormat = img.format;
+            if (!gotExtent) { f.cachedExtent = img.extent; gotExtent = true; }
+        }
+    }
+    f.cachedGen = mCtx->textures ? mCtx->textures->stateGeneration : 1;
+    f.cachedDrawCount = f.drawCount;
+}
 bool VulkanFramebufferBackend::hasStorage(const Attachment& a) const
 {
     if (!a.texture) return true;
@@ -93,9 +143,9 @@ bool VulkanFramebufferBackend::hasStorage(const Attachment& a) const
 bool VulkanFramebufferBackend::drawable()
 {
     if (!mDraw) return true;
-    const auto& f = object(mDraw);
-    for (U32 i = 0; i < f.drawCount; ++i) if (!hasStorage(f.color[i])) return false;
-    return hasStorage(f.depth);
+    auto& f = mDrawPtr ? *mDrawPtr : object(mDraw);
+    ensureDrawCache(f);
+    return f.cachedDrawable;
 }
 VulkanFramebufferBackend::Image VulkanFramebufferBackend::imageOf(const Attachment& a)
 {
@@ -148,23 +198,26 @@ VulkanFramebufferBackend::Image VulkanFramebufferBackend::colorImage(U32 framebu
         return {mCtx->images[mCtx->imageIndex], mCtx->views[mCtx->imageIndex], mCtx->swapFormat, mCtx->extent, VkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT)};
     }
     if (attachment < COLOR0 || attachment >= COLOR0 + 4) fail("invalid color read buffer");
-    return imageOf(object(framebuffer).color[attachment - COLOR0]);
+    const auto& f = (framebuffer == mDraw && mDrawPtr) ? *mDrawPtr : object(framebuffer);
+    return imageOf(f.color[attachment - COLOR0]);
 }
 VulkanFramebufferBackend::Image VulkanFramebufferBackend::depthImage(U32 framebuffer)
 {
     if (!framebuffer) return {mCtx->depthImage, mCtx->depthView, mCtx->depthFormat, mCtx->extent, VK_IMAGE_ASPECT_DEPTH_BIT};
-    return imageOf(object(framebuffer).depth);
+    const auto& f = (framebuffer == mDraw && mDrawPtr) ? *mDrawPtr : object(framebuffer);
+    return imageOf(f.depth);
 }
 VulkanFramebufferBackend::Image VulkanFramebufferBackend::readImage(bool depth)
 {
-    Image image = depth ? depthImage(mRead) : colorImage(mRead, mRead ? object(mRead).readBuffer : mDefaultRead);
+    const auto* f = (mRead && mRead == mDraw && mDrawPtr) ? mDrawPtr : (mRead ? &object(mRead) : nullptr);
+    Image image = depth ? depthImage(mRead) : colorImage(mRead, f ? f->readBuffer : mDefaultRead);
     if (!image.image) fail("read buffer has no attachment");
     return image;
 }
 U32 VulkanFramebufferBackend::checkStatus()
 {
     if (!mDraw || !drawable()) return COMPLETE;
-    const auto& f = object(mDraw);
+    const auto& f = mDrawPtr ? *mDrawPtr : object(mDraw);
     VkExtent2D size{};
     bool any = false;
     for (U32 i = 0; i <= 4; ++i)
@@ -183,9 +236,19 @@ U32 VulkanFramebufferBackend::checkStatus()
 void VulkanFramebufferBackend::setDrawBuffers(U32 count)
 {
     if (count > 4 || (!mDraw && count > 1)) fail("invalid draw buffer count");
-    endRendering();
-    if (mDraw) object(mDraw).drawCount = count;
-    else mDefaultDrawCount = count;
+    if (mDraw)
+    {
+        auto& f = mDrawPtr ? *mDrawPtr : object(mDraw);
+        if (f.drawCount == count) return;
+        endRendering();
+        f.drawCount = count;
+    }
+    else
+    {
+        if (mDefaultDrawCount == count) return;
+        endRendering();
+        mDefaultDrawCount = count;
+    }
 }
 void VulkanFramebufferBackend::setDrawBufferBack()
 {
@@ -203,18 +266,36 @@ void VulkanFramebufferBackend::setReadBuffer(U32 buffer)
     else mDefaultRead = buffer;
 }
 void VulkanFramebufferBackend::setClearDepth(F64 depth) { mClearDepth = (float) std::clamp(depth, 0.0, 1.0); }
-U32 VulkanFramebufferBackend::colorCount() const { return mDraw ? mObjects.at(mDraw).drawCount : mDefaultDrawCount; }
+U32 VulkanFramebufferBackend::colorCount() const
+{
+    if (!mDraw) return mDefaultDrawCount;
+    return mDrawPtr ? mDrawPtr->drawCount : mObjects.at(mDraw).drawCount;
+}
 std::array<VkFormat, 4> VulkanFramebufferBackend::colorFormats()
 {
-    std::array<VkFormat, 4> formats{};
-    for (U32 i = 0; i < colorCount(); ++i) formats[i] = colorImage(mDraw, COLOR0 + i).format;
-    return formats;
+    if (!mDraw)
+    {
+        std::array<VkFormat, 4> formats{};
+        if (mDefaultDrawCount) formats[0] = mCtx->swapFormat;
+        return formats;
+    }
+    auto& f = mDrawPtr ? *mDrawPtr : object(mDraw);
+    ensureDrawCache(f);
+    return f.cachedColorFormats;
 }
-VkFormat VulkanFramebufferBackend::depthFormat() { return depthImage(mDraw).format; }
+VkFormat VulkanFramebufferBackend::depthFormat()
+{
+    if (!mDraw) return mCtx->depthFormat;
+    auto& f = mDrawPtr ? *mDrawPtr : object(mDraw);
+    ensureDrawCache(f);
+    return f.cachedDepthFormat;
+}
 VkExtent2D VulkanFramebufferBackend::extent()
 {
     if (!mDraw) return mCtx->extent;
-    auto& f = object(mDraw);
+    auto& f = mDrawPtr ? *mDrawPtr : object(mDraw);
+    ensureDrawCache(f);
+    if (f.cachedExtent.width) return f.cachedExtent;
     for (const auto& a : f.color) if (a.texture) return imageOf(a).extent;
     if (f.depth.texture) return imageOf(f.depth).extent;
     fail("framebuffer has no attachments");
@@ -230,6 +311,7 @@ void VulkanFramebufferBackend::beginFrame(const float clear[4])
 {
     mRendering = false;
     mDraw = mRead = 0;
+    mDrawPtr = nullptr;
     mDefaultDrawCount = 1;
     mDefaultRead = BACK;
     mDefaultClear = true;
@@ -245,7 +327,9 @@ void VulkanFramebufferBackend::endRendering()
 }
 void VulkanFramebufferBackend::beginRendering(U32 clearMask)
 {
-    const VkImageLayout depthLayout = mSampledDepth && !(clearMask & DEPTH_BIT) ?
+    const bool keepReadOnlyDepth = mRendering && mRenderingDepthLayout == VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL &&
+        !(clearMask & DEPTH_BIT) && !(mState->s.depthTest && mState->s.depthWrite);
+    const VkImageLayout depthLayout = ((mSampledDepth && !(clearMask & DEPTH_BIT)) || keepReadOnlyDepth) ?
         VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
     if (mRendering && depthLayout != mRenderingDepthLayout) endRendering();
     if (mRendering) return;
@@ -298,9 +382,10 @@ bool VulkanFramebufferBackend::ensureFrame()
 {
     if (mCtx->recording) return true;
     const U32 draw = mDraw, read = mRead;      // beginFrame resets the bindings to the window
+    Framebuffer* const drawPtr = mDrawPtr;
     const float black[4] = {0, 0, 0, 1};
     if (!mCtx->beginFrame(black)) return false;
-    mDraw = draw; mRead = read;
+    mDraw = draw; mRead = read; mDrawPtr = drawPtr;
     return true;
 }
 
@@ -348,10 +433,17 @@ void VulkanFramebufferBackend::clear(U32 mask)
 }
 bool VulkanFramebufferBackend::prepareSample(U32 texture)
 {
-    auto& t = mCtx->textures->mTextures.at(texture);
+    auto* tp = (mCtx->textures->mUnitTex[mCtx->textures->mActive] == texture && mCtx->textures->mUnitPtr[mCtx->textures->mActive]) ?
+        mCtx->textures->mUnitPtr[mCtx->textures->mActive] : nullptr;
+    if (!tp)
+    {
+        for (size_t u = 0; u < VulkanTextureBackend::kUnits; ++u)
+            if (mCtx->textures->mUnitTex[u] == texture && mCtx->textures->mUnitPtr[u]) { tp = mCtx->textures->mUnitPtr[u]; break; }
+    }
+    auto& t = tp ? *tp : mCtx->textures->mTextures.at(texture);
     if (mDraw)
     {
-        const auto& f = object(mDraw);
+        const auto& f = mDrawPtr ? *mDrawPtr : object(mDraw);
         for (const auto& a : f.color) if (a.texture == texture)
         {
             if (mCtx->tolerateFeedback) return false;

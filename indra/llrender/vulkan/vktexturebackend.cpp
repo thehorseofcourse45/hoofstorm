@@ -196,9 +196,19 @@ VulkanTextureBackend::VulkanTextureBackend(VkContext* ctx) : mCtx(ctx)
     ctx->textures = this;
 }
 
+VulkanTextureBackend::ImageSlabs::~ImageSlabs()
+{
+    for (const auto& b : blocks)
+    {
+        if (b.memory == VK_NULL_HANDLE) continue;
+        vkFreeMemory(device, b.memory, nullptr);
+    }
+}
+
 VulkanTextureBackend::~VulkanTextureBackend()
 {
     vkDeviceWaitIdle(mCtx->device);
+    mCtx->collectReleasedResources();
     for (auto& kv : mTextures)
     {
         destroyImage(kv.second);
@@ -207,6 +217,13 @@ VulkanTextureBackend::~VulkanTextureBackend()
     {
         destroyImage(kv.second);
     }
+    mCtx->collectReleasedResources();
+    for (auto& kv : mImagePool)
+    {
+        freePooledImage(mCtx->device, *mImageSlabs, &mCtx->textureMemBytes, kv.second);
+    }
+    mImagePool.clear();
+    mImagePoolBytes = 0;
     for (auto& kv : mSamplers)
     {
         vkDestroySampler(mCtx->device, kv.second, nullptr);
@@ -371,27 +388,81 @@ static void barrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspec
 // ----------------------------------------------------------------------------------------------------------------
 // images
 
+VkFormatProperties VulkanTextureBackend::formatProperties(VkFormat format)
+{
+    auto it = mFormatPropsCache.find((uint32_t) format);
+    if (it != mFormatPropsCache.end()) return it->second;
+    VkFormatProperties props{};
+    vkGetPhysicalDeviceFormatProperties(mCtx->phys, format, &props);
+    mFormatPropsCache.emplace((uint32_t) format, props);
+    return props;
+}
+
+void VulkanTextureBackend::freePooledImage(VkDevice device, ImageSlabs& slabs, std::atomic<int64_t>* counter, const PooledImage& img)
+{
+    vkDestroyImage(device, img.image, nullptr);
+    if (counter) *counter -= (int64_t) img.memBytes;
+    if (img.block >= 0)
+    {
+        std::lock_guard<std::mutex> lock(slabs.mutex);
+        auto& blocks = slabs.blocks;
+        auto& block = blocks[img.block];
+        block.free.push_back(img.slot);
+        if (block.free.size() == ImageSlabs::kBlock / block.slotSize)
+        {
+            const bool otherSpare = std::any_of(blocks.begin(), blocks.end(), [&](const ImageSlabs::Block& o)
+                { return &o != &block && o.slotSize == block.slotSize && o.memoryType == block.memoryType && !o.free.empty(); });
+            if (otherSpare)
+            {
+                vkFreeMemory(device, block.memory, nullptr);
+                block = ImageSlabs::Block();
+            }
+        }
+        return;
+    }
+    vkFreeMemory(device, img.memory, nullptr);
+}
+
+void VulkanTextureBackend::recycleImage(const ImagePoolKey& key, const PooledImage& img)
+{
+    if (img.memBytes <= (16u << 20) && img.memBytes <= kImagePoolCap - std::min<VkDeviceSize>(mImagePoolBytes, kImagePoolCap))
+    {
+        mImagePool.emplace(key, img);
+        mImagePoolBytes += img.memBytes;
+        return;
+    }
+    auto* counter = &mCtx->textureMemBytes;
+    const auto device = mCtx->device;
+    mCtx->reap([device, slabs = mImageSlabs, counter, img] { freePooledImage(device, *slabs, counter, img); });
+}
+
 void VulkanTextureBackend::destroyImage(Tex& t)
 {
     if (!t.image)
     {
         return;
     }
+    ++stateGeneration;
     const auto device = mCtx->device;
-    const auto image = t.image;
-    const auto memory = t.memory;
-    auto& counter = t.asTarget ? mCtx->targetMemBytes : mCtx->textureMemBytes;
-    const int64_t bytes = (int64_t) t.memBytes;
+    const ImagePoolKey key{t.width, t.height, t.layers, t.levels, t.info.format, t.imageFlags, t.imageUsage};
+    const PooledImage pooled{t.image, t.memory, t.memBytes, t.block, t.slot, t.attachmentCapable, t.storage};
+    const bool wasTarget = t.asTarget;
+    if (wasTarget)
+    {
+        mCtx->targetMemBytes -= (int64_t) t.memBytes;
+        mCtx->textureMemBytes += (int64_t) t.memBytes;
+    }
     t.memBytes = 0;
+    t.asTarget = false;
+    t.block = -1;
+    t.slot = 0;
     auto views = std::move(t.views);
     t.views.clear();
     t.cView = VK_NULL_HANDLE;
     t.aView = VK_NULL_HANDLE;
-    mCtx->deferFree([device, image, memory, views, &counter, bytes] {
+    mCtx->deferRelease([this, device, key, pooled, views = std::move(views)] {
         for (const auto& view : views) vkDestroyImageView(device, view.second, nullptr);
-        vkDestroyImage(device, image, nullptr);
-        vkFreeMemory(device, memory, nullptr);
-        counter -= bytes;
+        recycleImage(key, pooled);
     });
     t.layout = VK_IMAGE_LAYOUT_UNDEFINED;
     t.image = VK_NULL_HANDLE;
@@ -408,6 +479,7 @@ void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t 
         return;
     }
     destroyImage(t);
+    ++stateGeneration;
 
     const FormatInfo fi = formatOf(glInternal);
     t.info = fi;
@@ -429,8 +501,7 @@ void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t 
     ici.samples = VK_SAMPLE_COUNT_1_BIT;
     ici.tiling = VK_IMAGE_TILING_OPTIMAL;
     ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    VkFormatProperties props;
-    vkGetPhysicalDeviceFormatProperties(mCtx->phys, fi.format, &props);
+    const VkFormatProperties props = formatProperties(fi.format);
     const auto feature = fi.kind == Kind::D32 ? VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
     t.attachmentCapable = !fi.compressed && (props.optimalTilingFeatures & feature);
     if (t.attachmentCapable)
@@ -439,37 +510,109 @@ void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t 
     if (t.storage)
         ici.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    VK_CHECK(vkCreateImage(mCtx->device, &ici, nullptr, &t.image));
-    VkMemoryRequirements req;
-    vkGetImageMemoryRequirements(mCtx->device, t.image, &req);
-    VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VkResult r = vkAllocateMemory(mCtx->device, &mai, nullptr, &t.memory);
-    // VRAM full: spill to any other allowed memory type, as GL drivers do, before giving up
-    for (uint32_t i = 0; r != VK_SUCCESS && i < mCtx->memProps.memoryTypeCount; ++i)
+    t.imageFlags = ici.flags;
+    t.imageUsage = ici.usage;
+
+    const ImagePoolKey poolKey{w, h, layers, t.levels, fi.format, ici.flags, ici.usage};
+    auto pooledIt = mImagePool.find(poolKey);
+    if (pooledIt != mImagePool.end())
     {
-        if ((req.memoryTypeBits & (1u << i)) && i != mai.memoryTypeIndex)
+        const PooledImage pooled = pooledIt->second;
+        mImagePoolBytes -= pooled.memBytes;
+        mImagePool.erase(pooledIt);
+        t.image = pooled.image;
+        t.memory = pooled.memory;
+        t.memBytes = pooled.memBytes;
+        t.block = pooled.block;
+        t.slot = pooled.slot;
+        t.attachmentCapable = pooled.attachmentCapable;
+        t.storage = pooled.storage;
+        t.asTarget = false;
+        ++imagesCreated;
+    }
+    else
+    {
+        VK_CHECK(vkCreateImage(mCtx->device, &ici, nullptr, &t.image));
+        VkMemoryRequirements req;
+        vkGetImageMemoryRequirements(mCtx->device, t.image, &req);
+        const uint32_t memoryType = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        bool boundFromSlab = false;
+        if (req.size <= ImageSlabs::kMaxSlot && req.alignment <= ImageSlabs::kMaxSlot)
         {
-            VkMemoryAllocateInfo spill = mai;
-            spill.memoryTypeIndex = i;
-            r = vkAllocateMemory(mCtx->device, &spill, nullptr, &t.memory);
+            VkDeviceSize slotSize = ImageSlabs::kMinSlot;
+            while (slotSize < req.size || slotSize < req.alignment) slotSize *= 2;
+            std::lock_guard<std::mutex> lock(mImageSlabs->mutex);
+            mImageSlabs->device = mCtx->device;
+            auto& blocks = mImageSlabs->blocks;
+            size_t index = 0;
+            while (index < blocks.size() && (blocks[index].slotSize != slotSize || !(req.memoryTypeBits & (1u << blocks[index].memoryType)) || blocks[index].free.empty()))
+                ++index;
+            if (index == blocks.size())
+            {
+                size_t released = 0;
+                while (released < blocks.size() && blocks[released].memory != VK_NULL_HANDLE) ++released;
+                ImageSlabs::Block block;
+                block.slotSize = slotSize;
+                block.memoryType = memoryType;
+                VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+                mai.allocationSize = ImageSlabs::kBlock;
+                mai.memoryTypeIndex = memoryType;
+                if (vkAllocateMemory(mCtx->device, &mai, nullptr, &block.memory) == VK_SUCCESS)
+                {
+                    for (uint32_t slot = (uint32_t) (ImageSlabs::kBlock / slotSize); slot-- > 0;) block.free.push_back(slot);
+                    if (released < blocks.size()) { blocks[released] = std::move(block); index = released; }
+                    else blocks.push_back(std::move(block));
+                }
+            }
+            if (index < blocks.size())
+            {
+                auto& block = blocks[index];
+                t.block = (int32_t) index;
+                t.slot = block.free.back();
+                block.free.pop_back();
+                t.memory = block.memory;
+                t.memBytes = slotSize;
+                t.asTarget = false;
+                VK_CHECK(vkBindImageMemory(mCtx->device, t.image, t.memory, t.slot * slotSize));
+                mCtx->textureMemBytes += (int64_t) slotSize;
+                ++imagesCreated;
+                boundFromSlab = true;
+            }
+        }
+        if (!boundFromSlab)
+        {
+            VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            mai.allocationSize = req.size;
+            mai.memoryTypeIndex = memoryType;
+            VkResult r = vkAllocateMemory(mCtx->device, &mai, nullptr, &t.memory);
+            // VRAM full: spill to any other allowed memory type, as GL drivers do, before giving up
+            for (uint32_t i = 0; r != VK_SUCCESS && i < mCtx->memProps.memoryTypeCount; ++i)
+            {
+                if ((req.memoryTypeBits & (1u << i)) && i != mai.memoryTypeIndex)
+                {
+                    VkMemoryAllocateInfo spill = mai;
+                    spill.memoryTypeIndex = i;
+                    r = vkAllocateMemory(mCtx->device, &spill, nullptr, &t.memory);
+                }
+            }
+            if (r != VK_SUCCESS)
+            {
+                // out of memory: leave the texture without an image; binds use the fallback and uploads are skipped
+                fprintf(stderr, "WARNING: texture %ux%u (%llu bytes) not allocated, VkResult %d\n", w, h, (unsigned long long) req.size, (int) r);
+                vkDestroyImage(mCtx->device, t.image, nullptr);
+                t.image = VK_NULL_HANDLE;
+                t.memory = VK_NULL_HANDLE;
+                return;
+            }
+            VK_CHECK(vkBindImageMemory(mCtx->device, t.image, t.memory, 0));
+            t.block = -1;
+            t.slot = 0;
+            t.memBytes = req.size;
+            t.asTarget = false;
+            mCtx->textureMemBytes += (int64_t) req.size;
+            ++imagesCreated;
         }
     }
-    if (r != VK_SUCCESS)
-    {
-        // out of memory: leave the texture without an image; binds use the fallback and uploads are skipped
-        fprintf(stderr, "WARNING: texture %ux%u (%llu bytes) not allocated, VkResult %d\n", w, h, (unsigned long long) req.size, (int) r);
-        vkDestroyImage(mCtx->device, t.image, nullptr);
-        t.image = VK_NULL_HANDLE;
-        t.memory = VK_NULL_HANDLE;
-        return;
-    }
-    VK_CHECK(vkBindImageMemory(mCtx->device, t.image, t.memory, 0));
-    t.memBytes = req.size;
-    t.asTarget = false;
-    mCtx->textureMemBytes += (int64_t) req.size;
-    ++imagesCreated;
 
     // GL starts a level out as zeros, Vulkan as garbage: clear the image, then leave it ready for sampling
     const VkImageAspectFlags aspect = aspectOf(fi.format);
@@ -497,9 +640,9 @@ void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t 
 }
 
 void VulkanTextureBackend::upload(Tex& t, uint32_t level, uint32_t layer, uint32_t layerCount, int32_t x, int32_t y, uint32_t w,
-                                  uint32_t h, const std::vector<uint8_t>& texels)
+                                  uint32_t h, const void* texels, size_t byteCount)
 {
-    if (!t.image || level >= t.levels || texels.empty())
+    if (!t.image || level >= t.levels || !texels || !byteCount)
     {
         return;
     }
@@ -507,22 +650,22 @@ void VulkanTextureBackend::upload(Tex& t, uint32_t level, uint32_t layer, uint32
     VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
     VkDeviceSize stagingOffset = 0;
     // A ring that is too full to take the texels would end the frame and wait for the GPU: use separate staging instead.
-    const bool useRing = mCtx->recording && mCtx->ringFits(texels.size(), 16);
+    const bool useRing = mCtx->recording && mCtx->ringFits(byteCount, 16);
     const bool useBatch = !mCtx->recording;
     if (useBatch)
     {
-        memcpy(mCtx->batchStage(texels.size(), staging, stagingOffset), texels.data(), texels.size());
+        memcpy(mCtx->batchStage(byteCount, staging, stagingOffset), texels, byteCount);
     }
     else if (useRing)
     {
         // 16-byte alignment covers all supported texel and compressed-block copy offsets.
-        stagingOffset = mCtx->uploadRingAlloc(texels.data(), (uint32_t)texels.size(), VkContext::Stall::Upload, 16);
+        stagingOffset = mCtx->uploadRingAlloc(texels, (uint32_t)byteCount, VkContext::Stall::Upload, 16);
         ++mCtx->textureRingUploads;
     }
     else
     {
         VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-        bci.size = texels.size();
+        bci.size = byteCount;
         bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
         VK_CHECK(vkCreateBuffer(mCtx->device, &bci, nullptr, &staging));
         ++mCtx->textureUploadAllocations;
@@ -535,7 +678,7 @@ void VulkanTextureBackend::upload(Tex& t, uint32_t level, uint32_t layer, uint32
         VK_CHECK(vkBindBufferMemory(mCtx->device, staging, stagingMemory, 0));
         void* mapped = nullptr;
         VK_CHECK(vkMapMemory(mCtx->device, stagingMemory, 0, VK_WHOLE_SIZE, 0, &mapped));
-        memcpy(mapped, texels.data(), texels.size());
+        memcpy(mapped, texels, byteCount);
         vkUnmapMemory(mCtx->device, stagingMemory);
     }
 
@@ -579,8 +722,8 @@ size_t VulkanTextureBackend::sourceBytes(U32 format, U32 type, uint32_t w, uint3
     return (count - 1) * rowBytes * h + (h - 1) * rowBytes + (size_t) w * comps * tb;     // what convertForUpload reads, no more
 }
 
-std::vector<uint8_t> VulkanTextureBackend::convertForUpload(const Tex& t, U32 format, U32 type, uint32_t w, uint32_t h, uint32_t count,
-                                                            const void* src)
+const void* VulkanTextureBackend::convertForUpload(const Tex& t, U32 format, U32 type, uint32_t w, uint32_t h, uint32_t count,
+                                                   const void* src, size_t& outBytes)
 {
     bool bgr = false;
     const int comps = formatComps(format, bgr);
@@ -590,13 +733,31 @@ std::vector<uint8_t> VulkanTextureBackend::convertForUpload(const Tex& t, U32 fo
         fatal("pixel format/type", format);
     }
     const uint32_t texel = t.info.texelBytes;
-    std::vector<uint8_t> out((size_t) w * h * count * texel);
+    outBytes = (size_t) w * h * count * texel;
     const uint32_t rowPixels = mRowLength > 0 ? (uint32_t) mRowLength : w;
     const size_t srcRowBytes = (size_t) rowPixels * comps * tb;
     const size_t srcLayerBytes = srcRowBytes * h;
     const uint8_t* base = (const uint8_t*) src;
 
-    // fast path: RGBA bytes into an RGBA8 image
+    // zero-copy fast path: contiguous source texels already matching destination format/type
+    if (rowPixels == w && !bgr && !mSwapBytes)
+    {
+        if (type == glc::UNSIGNED_BYTE &&
+            ((t.info.kind == Kind::RGBA8 && comps == 4) || (t.info.kind == Kind::RG8 && comps == 2) || (t.info.kind == Kind::R8 && comps == 1)))
+        {
+            return src;
+        }
+        if (type == glc::FLOAT &&
+            ((t.info.kind == Kind::RGBA32F && comps == 4) || (t.info.kind == Kind::RG32F && comps == 2) || (t.info.kind == Kind::R32F && comps == 1)))
+        {
+            return src;
+        }
+    }
+
+    auto& out = mConvertScratch;
+    out.resize(outBytes);
+
+    // fast path: RGBA bytes into an RGBA8 image (with custom rowLength)
     if (t.info.kind == Kind::RGBA8 && comps == 4 && type == glc::UNSIGNED_BYTE && !bgr && !mSwapBytes)
     {
         for (uint32_t l = 0; l < count; ++l)
@@ -606,7 +767,7 @@ std::vector<uint8_t> VulkanTextureBackend::convertForUpload(const Tex& t, U32 fo
                 memcpy(out.data() + ((size_t) l * h + y) * w * 4, base + l * srcLayerBytes + y * srcRowBytes, (size_t) w * 4);
             }
         }
-        return out;
+        return out.data();
     }
 
     // fast path: 8-bit components into RGBA8/RG8/R8 (missing components 0, alpha 255, as the generic path yields)
@@ -628,7 +789,7 @@ std::vector<uint8_t> VulkanTextureBackend::convertForUpload(const Tex& t, U32 fo
                 }
             }
         }
-        return out;
+        return out.data();
     }
 
     for (uint32_t l = 0; l < count; ++l)
@@ -681,7 +842,7 @@ std::vector<uint8_t> VulkanTextureBackend::convertForUpload(const Tex& t, U32 fo
             }
         }
     }
-    return out;
+    return out.data();
 }
 
 void VulkanTextureBackend::convertForReadback(const Tex& t, const uint8_t* texels, U32 format, U32 type, uint32_t w, uint32_t h,
@@ -788,6 +949,7 @@ void VulkanTextureBackend::destroy(S32 count, const U32* names)
             {
                 mUnitTex[u] = 0;
                 mUnitPtr[u] = nullptr;
+                ++stateGeneration;
             }
         }
     }
@@ -799,6 +961,7 @@ void VulkanTextureBackend::bind(U32 target, U32 texture)
     {
         return;     // already bound, and glTarget was set by the bind that put it there
     }
+    ++stateGeneration;
     mUnitTex[mActive] = texture;
     mUnitPtr[mActive] = nullptr;
     if (texture)
@@ -822,6 +985,7 @@ void VulkanTextureBackend::setWrap(U32 target, S32 wrapS, S32 wrapT, S32 wrapR)
 {
     if (Tex* t = bound(target))
     {
+        ++stateGeneration;
         t->ss.wrapS = wrapS;
         t->ss.wrapT = wrapT;
         if (wrapR >= 0)
@@ -835,6 +999,7 @@ void VulkanTextureBackend::setFilter(U32 target, S32 magFilter, S32 minFilter)
 {
     if (Tex* t = bound(target))
     {
+        ++stateGeneration;
         t->ss.mag = magFilter;
         t->ss.min = minFilter;
     }
@@ -844,6 +1009,7 @@ void VulkanTextureBackend::setMagFilter(U32 target, S32 magFilter)
 {
     if (Tex* t = bound(target))
     {
+        ++stateGeneration;
         t->ss.mag = magFilter;
     }
 }
@@ -852,6 +1018,7 @@ void VulkanTextureBackend::setMaxAnisotropy(U32 target, F32 maxAnisotropy)
 {
     if (Tex* t = bound(target))
     {
+        ++stateGeneration;
         t->ss.anisotropy = maxAnisotropy;
     }
 }
@@ -860,6 +1027,7 @@ void VulkanTextureBackend::setCompare(U32 target, bool enabled, U32 func)
 {
     if (Tex* t = bound(target))
     {
+        ++stateGeneration;
         t->ss.compare = enabled;
         if (enabled)
         {
@@ -872,6 +1040,7 @@ void VulkanTextureBackend::setLevelRange(U32 target, S32 baseLevel, S32 maxLevel
 {
     if (Tex* t = bound(target))
     {
+        ++stateGeneration;
         t->baseLevel = baseLevel;
         t->maxLevel = maxLevel;
     }
@@ -881,6 +1050,7 @@ void VulkanTextureBackend::setSwizzle(U32 target, const S32* rgba)
 {
     if (Tex* t = bound(target))
     {
+        ++stateGeneration;
         memcpy(t->swizzle, rgba, sizeof(t->swizzle));
     }
 }
@@ -930,8 +1100,9 @@ void VulkanTextureBackend::image2D(U32 target, S32 level, S32 internalFormat, S3
         return;
     }
     const uint32_t layer = face ? (uint32_t) (target - glc::TEXTURE_CUBE_MAP_POSITIVE_X) : 0;
-    upload(t, (uint32_t) level, layer, 1, 0, 0, (uint32_t) width, (uint32_t) height,
-           convertForUpload(t, format, type, (uint32_t) width, (uint32_t) height, 1, pixels));
+    size_t texelBytes = 0;
+    const void* texels = convertForUpload(t, format, type, (uint32_t) width, (uint32_t) height, 1, pixels, texelBytes);
+    upload(t, (uint32_t) level, layer, 1, 0, 0, (uint32_t) width, (uint32_t) height, texels, texelBytes);
     if (level == 0 && t.autoMips)
     {
         generateMipmaps(target);
@@ -955,13 +1126,12 @@ void VulkanTextureBackend::compressedImage2D(U32 target, S32 level, U32 internal
         ensureImage(t, (uint32_t) width << level, (uint32_t) height << level, object == glc::TEXTURE_CUBE_MAP ? 6 : 1, internalFormat,
                     object == glc::TEXTURE_CUBE_MAP, false, false);
     }
-    if (!data)
+    if (!data || imageSize <= 0)
     {
         return;
     }
     const uint32_t layer = face ? (uint32_t) (target - glc::TEXTURE_CUBE_MAP_POSITIVE_X) : 0;
-    upload(t, (uint32_t) level, layer, 1, 0, 0, (uint32_t) width, (uint32_t) height,
-           std::vector<uint8_t>((const uint8_t*) data, (const uint8_t*) data + imageSize));
+    upload(t, (uint32_t) level, layer, 1, 0, 0, (uint32_t) width, (uint32_t) height, data, (size_t) imageSize);
 }
 
 void VulkanTextureBackend::subImage2D(U32 target, S32 level, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, const void* pixels)
@@ -974,9 +1144,10 @@ void VulkanTextureBackend::subImage2D(U32 target, S32 level, S32 x, S32 y, S32 w
     const uint32_t layer = isCubeFace(target) ? (uint32_t) (target - glc::TEXTURE_CUBE_MAP_POSITIVE_X) : 0;
     // diagnostic: slow sub-image uploads go to stderr (vulkan_fatal.log in the viewer), at most 200 lines
     const auto start = std::chrono::steady_clock::now();
-    auto texels = convertForUpload(*tp, format, type, (uint32_t) width, (uint32_t) height, 1, pixels);
+    size_t texelBytes = 0;
+    const void* texels = convertForUpload(*tp, format, type, (uint32_t) width, (uint32_t) height, 1, pixels, texelBytes);
     const auto converted = std::chrono::steady_clock::now();
-    upload(*tp, (uint32_t) level, layer, 1, x, y, (uint32_t) width, (uint32_t) height, texels);
+    upload(*tp, (uint32_t) level, layer, 1, x, y, (uint32_t) width, (uint32_t) height, texels, texelBytes);
     const auto end = std::chrono::steady_clock::now();
     static int reported = 0;
     const double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
@@ -1011,8 +1182,9 @@ void VulkanTextureBackend::image3D(U32 target, S32 level, S32 internalFormat, S3
     }
     if (pixels)
     {
-        upload(t, (uint32_t) level, 0, (uint32_t) depth, 0, 0, (uint32_t) width, (uint32_t) height,
-               convertForUpload(t, format, type, (uint32_t) width, (uint32_t) height, (uint32_t) depth, pixels));
+        size_t texelBytes = 0;
+        const void* texels = convertForUpload(t, format, type, (uint32_t) width, (uint32_t) height, (uint32_t) depth, pixels, texelBytes);
+        upload(t, (uint32_t) level, 0, (uint32_t) depth, 0, 0, (uint32_t) width, (uint32_t) height, texels, texelBytes);
     }
 }
 
@@ -1024,8 +1196,9 @@ void VulkanTextureBackend::subImage3D(U32 target, S32 level, S32 x, S32 y, S32 z
     {
         return;
     }
-    upload(*tp, (uint32_t) level, (uint32_t) z, (uint32_t) depth, x, y, (uint32_t) width, (uint32_t) height,
-           convertForUpload(*tp, format, type, (uint32_t) width, (uint32_t) height, (uint32_t) depth, pixels));
+    size_t texelBytes = 0;
+    const void* texels = convertForUpload(*tp, format, type, (uint32_t) width, (uint32_t) height, (uint32_t) depth, pixels, texelBytes);
+    upload(*tp, (uint32_t) level, (uint32_t) z, (uint32_t) depth, x, y, (uint32_t) width, (uint32_t) height, texels, texelBytes);
 }
 
 void VulkanTextureBackend::generateMipmaps(U32 target)
@@ -1036,8 +1209,7 @@ void VulkanTextureBackend::generateMipmaps(U32 target)
         return;
     }
     Tex& t = *tp;
-    VkFormatProperties props;
-    vkGetPhysicalDeviceFormatProperties(mCtx->phys, t.info.format, &props);
+    const VkFormatProperties props = formatProperties(t.info.format);
     if (t.info.compressed || !(props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) ||
         !(props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
     {
@@ -1264,7 +1436,8 @@ void VulkanTextureBackend::setLodBias(F32 bias)
 {
     const F32 limit = mCtx->maxSamplerLodBias;     // set per frame by the upscaler's bracket: no device query here
     // a fixed step keeps the sampler cache small when dynamic scaling moves the bias
-    mLodBias = std::round(std::min(std::max(bias, -limit), limit) * 8.f) / 8.f;
+    const F32 rounded = std::round(std::min(std::max(bias, -limit), limit) * 8.f) / 8.f;
+    if (mLodBias != rounded) { mLodBias = rounded; ++stateGeneration; }
 }
 
 VkSampler VulkanTextureBackend::samplerOf(const Tex& t, F32 bias)
@@ -1322,7 +1495,7 @@ VulkanTextureBackend::Tex& VulkanTextureBackend::fallback(const std::string& sam
         Tex& t = mFallbacks[samplerType];
         ensureImage(t, 1, 1, cube ? 6 : 1, glc::RGBA8, cube && !arr, arr, false);
         const std::vector<uint8_t> white((size_t) t.layers * 4, 255);
-        upload(t, 0, 0, t.layers, 0, 0, 1, 1, white);
+        upload(t, 0, 0, t.layers, 0, 0, 1, 1, white.data(), white.size());
         return t;
     }
     return it->second;
@@ -1406,6 +1579,7 @@ void VulkanTextureBackend::transition(Tex& t, VkCommandBuffer cmd, VkImageLayout
     }
     else vkCmdPipelineBarrier(cmd, stagesOf(t.layout), stagesOf(layout), 0, 0, nullptr, 0, nullptr, 1, &b);
     t.layout = layout;
+    ++stateGeneration;
 }
 
 void VulkanTextureBackend::flushBarriers(VkCommandBuffer cmd)
@@ -1436,7 +1610,7 @@ bool VulkanTextureBackend::imageInfo(U32 name, ImageInfo& out) const
 void VulkanTextureBackend::setTrackedLayout(U32 name, VkImageLayout layout)
 {
     auto it = mTextures.find(name);
-    if (it != mTextures.end() && it->second.image) it->second.layout = layout;
+    if (it != mTextures.end() && it->second.image) { it->second.layout = layout; ++stateGeneration; }
 }
 
 void VulkanTextureBackend::setStorageImage(U32 name)
