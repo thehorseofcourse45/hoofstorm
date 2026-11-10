@@ -277,6 +277,9 @@ struct NativeRenderer
     {
         thread.reset();     // runs everything still queued, then joins
         if (context.device) vkDeviceWaitIdle(context.device);
+        // A pending upload batch's release callbacks capture `this` of the backends reset below and run in context.shutdown():
+        // earlier, discardBatch() finds nothing and those callbacks would recycle storage through freed pointers.
+        context.discardBatch();
         vertices.reset();
         queries.reset();
         framebuffers.reset();

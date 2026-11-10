@@ -436,6 +436,16 @@ void VulkanTextureBackend::recycleImage(const ImagePoolKey& key, const PooledIma
     mCtx->reap([device, slabs = mImageSlabs, counter, img] { freePooledImage(device, *slabs, counter, img); });
 }
 
+void VulkanTextureBackend::flushImagePool()
+{
+    for (auto& kv : mImagePool)
+    {
+        freePooledImage(mCtx->device, *mImageSlabs, &mCtx->textureMemBytes, kv.second);
+    }
+    mImagePool.clear();
+    mImagePoolBytes = 0;
+}
+
 void VulkanTextureBackend::destroyImage(Tex& t)
 {
     if (!t.image)
@@ -584,16 +594,26 @@ void VulkanTextureBackend::ensureImage(Tex& t, uint32_t w, uint32_t h, uint32_t 
             VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             mai.allocationSize = req.size;
             mai.memoryTypeIndex = memoryType;
-            VkResult r = vkAllocateMemory(mCtx->device, &mai, nullptr, &t.memory);
             // VRAM full: spill to any other allowed memory type, as GL drivers do, before giving up
-            for (uint32_t i = 0; r != VK_SUCCESS && i < mCtx->memProps.memoryTypeCount; ++i)
-            {
-                if ((req.memoryTypeBits & (1u << i)) && i != mai.memoryTypeIndex)
+            auto attempt = [&]() {
+                VkResult result = vkAllocateMemory(mCtx->device, &mai, nullptr, &t.memory);
+                for (uint32_t i = 0; result != VK_SUCCESS && i < mCtx->memProps.memoryTypeCount; ++i)
                 {
-                    VkMemoryAllocateInfo spill = mai;
-                    spill.memoryTypeIndex = i;
-                    r = vkAllocateMemory(mCtx->device, &spill, nullptr, &t.memory);
+                    if ((req.memoryTypeBits & (1u << i)) && i != mai.memoryTypeIndex)
+                    {
+                        VkMemoryAllocateInfo spill = mai;
+                        spill.memoryTypeIndex = i;
+                        result = vkAllocateMemory(mCtx->device, &spill, nullptr, &t.memory);
+                    }
                 }
+                return result;
+            };
+            VkResult r = attempt();
+            if (r != VK_SUCCESS && !mImagePool.empty())
+            {
+                // the pool only holds idle images for other keys, so it cannot serve this request: hand it back and retry once
+                flushImagePool();
+                r = attempt();
             }
             if (r != VK_SUCCESS)
             {

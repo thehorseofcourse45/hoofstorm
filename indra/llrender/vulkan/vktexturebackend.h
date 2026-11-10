@@ -184,6 +184,7 @@ private:
     static constexpr VkDeviceSize kImagePoolCap = 256u << 20;
     VkDeviceSize mImagePoolBytes = 0;
     std::multimap<ImagePoolKey, PooledImage> mImagePool;
+    void flushImagePool();   // free every pooled image, used when the device is out of memory
     std::unordered_map<uint32_t, VkFormatProperties> mFormatPropsCache;
     VkFormatProperties formatProperties(VkFormat format);
     void recycleImage(const ImagePoolKey& key, const PooledImage& img);
