@@ -18,6 +18,8 @@
 #include <array>
 #include <functional>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -65,6 +67,7 @@ public:
     // picked when a draw resolves its textures), so setting it around a group of draws biases only those draws.
     void setLodBias(F32 bias);
     F32 lodBias() const { return mLodBias; }
+    uint64_t stateGeneration = 1;   // incremented when any unit binding, sampler parameter, image, or layout changes
 
     // statistics for the tests
     uint32_t imagesCreated = 0;
@@ -133,12 +136,70 @@ private:
         bool compressed = false;
     };
 
+    struct ImageSlabs
+    {
+        static constexpr VkDeviceSize kBlock = 32u << 20, kMinSlot = 4096, kMaxSlot = 4u << 20;
+        struct Block
+        {
+            VkDeviceMemory memory = VK_NULL_HANDLE;
+            VkDeviceSize slotSize = 0;
+            uint32_t memoryType = 0;
+            std::vector<uint32_t> free;
+        };
+        ~ImageSlabs();
+        VkDevice device = VK_NULL_HANDLE;
+        std::atomic<int64_t>* liveBytes = nullptr;
+        std::mutex mutex;
+        std::vector<Block> blocks;
+    };
+    std::shared_ptr<ImageSlabs> mImageSlabs = std::make_shared<ImageSlabs>();
+
+    struct ImagePoolKey
+    {
+        uint32_t width = 0, height = 0, layers = 0, levels = 0;
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        VkImageCreateFlags flags = 0;
+        VkImageUsageFlags usage = 0;
+        bool operator<(const ImagePoolKey& o) const
+        {
+            if (width != o.width) return width < o.width;
+            if (height != o.height) return height < o.height;
+            if (layers != o.layers) return layers < o.layers;
+            if (levels != o.levels) return levels < o.levels;
+            if (format != o.format) return format < o.format;
+            if (flags != o.flags) return flags < o.flags;
+            return usage < o.usage;
+        }
+    };
+    struct PooledImage
+    {
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkDeviceSize memBytes = 0;
+        int32_t block = -1;
+        uint32_t slot = 0;
+        bool attachmentCapable = false;
+        bool storage = false;
+    };
+    static constexpr VkDeviceSize kImagePoolCap = 256u << 20;
+    VkDeviceSize mImagePoolBytes = 0;
+    std::multimap<ImagePoolKey, PooledImage> mImagePool;
+    void flushImagePool();   // free every pooled image, used when the device is out of memory
+    std::unordered_map<uint32_t, VkFormatProperties> mFormatPropsCache;
+    VkFormatProperties formatProperties(VkFormat format);
+    void recycleImage(const ImagePoolKey& key, const PooledImage& img);
+    static void freePooledImage(VkDevice device, ImageSlabs& slabs, std::atomic<int64_t>* counter, const PooledImage& img);
+
     struct Tex
     {
         U32 glTarget = 0;               // object target: GL_TEXTURE_2D, _CUBE_MAP, _CUBE_MAP_ARRAY ...
         VkImage image = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
+        int32_t block = -1;
+        uint32_t slot = 0;
         VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageCreateFlags imageFlags = 0;
+        VkImageUsageFlags imageUsage = 0;
         bool attachmentCapable = false;
         bool storageImage = false;      // setStorageImage: images get one level and storage usage where the format allows
         bool storage = false;           // the current image has VK_IMAGE_USAGE_STORAGE_BIT
@@ -176,8 +237,10 @@ private:
     int mBatchDepth = 0;
     void submitNow(const std::function<void(VkCommandBuffer)>& record, bool waitForReadback = false);
     void upload(Tex& t, uint32_t level, uint32_t layer, uint32_t layerCount, int32_t x, int32_t y, uint32_t w, uint32_t h,
-                const std::vector<uint8_t>& texels);
-    std::vector<uint8_t> convertForUpload(const Tex& t, U32 format, U32 type, uint32_t w, uint32_t h, uint32_t count, const void* src);
+                const void* texels, size_t byteCount);
+    const void* convertForUpload(const Tex& t, U32 format, U32 type, uint32_t w, uint32_t h, uint32_t count, const void* src,
+                                 size_t& outBytes);
+    std::vector<uint8_t> mConvertScratch;
     void convertForReadback(const Tex& t, const uint8_t* texels, U32 format, U32 type, uint32_t w, uint32_t h, uint32_t count, void* out);
     void image2DFace(U32 target, S32 level, S32 internalFormat, S32 width, S32 height, S32 layers, U32 format, U32 type,
                      const void* pixels, bool cubeArray3D);

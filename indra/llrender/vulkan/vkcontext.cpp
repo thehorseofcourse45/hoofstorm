@@ -95,6 +95,14 @@ VkShaderModule VkContext::loadShader(const char* path) const
 bool VkContext::deviceLocalBudget(uint64_t& usage, uint64_t& budget) const
 {
     if (!memoryBudget) return false;
+    std::lock_guard<std::mutex> lock(budgetMutex);
+    const auto now = std::chrono::steady_clock::now();
+    if (cachedBudgetValid && std::chrono::duration<double, std::milli>(now - lastBudgetQuery).count() < 250.0)
+    {
+        usage = cachedBudgetUsage;
+        budget = cachedBudgetTotal;
+        return budget != 0;
+    }
     VkPhysicalDeviceMemoryBudgetPropertiesEXT mb{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     VkPhysicalDeviceMemoryProperties2 mp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
     mp.pNext = &mb;
@@ -106,6 +114,10 @@ bool VkContext::deviceLocalBudget(uint64_t& usage, uint64_t& budget) const
             usage += mb.heapUsage[i];
             budget += mb.heapBudget[i];
         }
+    cachedBudgetUsage = usage;
+    cachedBudgetTotal = budget;
+    lastBudgetQuery = now;
+    cachedBudgetValid = true;
     return budget != 0;
 }
 
@@ -996,11 +1008,14 @@ void VkContext::deferRelease(std::function<void()> release)
             last = [first = std::move(last), then = std::move(release)]() mutable { first(); then(); };
             return;
         }
+        refreshCompleted();
+        if (completedFrame >= submittedFrame)
+        {
+            release();
+            return;
+        }
     }
-    refreshCompleted();
-    if (!recording && completedFrame >= submittedFrame)
-        release();
-    else slot().release.push_back(std::move(release));
+    slot().release.push_back(std::move(release));
 }
 
 void VkContext::reap(std::function<void()> free)

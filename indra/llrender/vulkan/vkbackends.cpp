@@ -6,6 +6,7 @@
 #include <GL/gl.h> // GL constants only: the viewer's state vocabulary is GL values, so a backend has to know them
 #include <cstring>
 #include <algorithm>
+#include <intrin.h>
 
 // Mirrors LLVertexBuffer (llvertexbuffer.h / llvertexbuffer.cpp). The attribute vocabulary lives inside the
 // LLVertexBuffer class today, so a backend that does not link the viewer has to repeat it. See the report.
@@ -159,12 +160,12 @@ VulkanVertexBufferBackend::~VulkanVertexBufferBackend()
     }
     if (mCtx->exiting) return;      // buffer memory goes with the process (see VkContext::exiting)
     for (const auto& entry : mStoragePool) destroyStorage(mCtx->device, *mSlabs, entry.second);
+    for (const auto& entry : mDeviceStoragePool) destroyStorage(mCtx->device, *mDeviceSlabs, entry.second);
     for (auto& kv : mBuffers)
     {
         destroyStorage(mCtx->device, *mSlabs, kv.second);
         for (const auto& retired : kv.second.retired) destroyStorage(mCtx->device, *mSlabs, retired);
-        vkDestroyBuffer(mCtx->device, kv.second.device, nullptr);
-        vkFreeMemory(mCtx->device, kv.second.deviceMemory, nullptr);
+        if (kv.second.deviceCopy.buffer) destroyStorage(mCtx->device, *mDeviceSlabs, kv.second.deviceCopy);
     }
 }
 
@@ -173,7 +174,7 @@ VulkanVertexBufferBackend::StorageSlabs::~StorageSlabs()
     for (const auto& b : blocks)
     {
         if (b.memory == VK_NULL_HANDLE) continue;
-        vkUnmapMemory(device, b.memory);
+        if (b.mapped) vkUnmapMemory(device, b.memory);
         vkFreeMemory(device, b.memory, nullptr);
     }
 }
@@ -195,7 +196,7 @@ void VulkanVertexBufferBackend::destroyStorage(VkDevice device, StorageSlabs& sl
                 { return &o != &block && o.slotSize == block.slotSize && o.memoryType == block.memoryType && !o.free.empty(); });
             if (otherSpare)
             {
-                vkUnmapMemory(device, block.memory);
+                if (block.mapped) vkUnmapMemory(device, block.memory);
                 vkFreeMemory(device, block.memory, nullptr);
                 if (slabs.liveBytes) *slabs.liveBytes -= (int64_t) StorageSlabs::kBlock;
                 block = StorageSlabs::Block();
@@ -203,7 +204,7 @@ void VulkanVertexBufferBackend::destroyStorage(VkDevice device, StorageSlabs& sl
         }
         return;
     }
-    vkUnmapMemory(device, storage.memory);
+    if (storage.mapped) vkUnmapMemory(device, storage.memory);
     vkFreeMemory(device, storage.memory, nullptr);
     if (slabs.liveBytes) *slabs.liveBytes -= (int64_t) storage.allocationBytes;
 }
@@ -334,7 +335,6 @@ VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createStorag
 void VulkanVertexBufferBackend::allocateWithId(BufferKind kind, U32 size, U64 id)
 {
     Buf b;
-    b.shadow.assign(size, 0);
     static_cast<BufferStorage&>(b) = createStorage(kind, size);
     b.size = size;
     b.kind = kind;
@@ -377,10 +377,19 @@ void VulkanVertexBufferBackend::free(BufferKind, U32 size, BufferHandle handle, 
         mBytes -= version.allocationBytes;
     }
     const auto kind = it->second.kind;
-    mCtx->deferRelease([this, kind, storage, retired=std::move(retired)] {
+    if (!mCtx->batch.cmd && mCtx->fencedBatches.empty() && (!storage.usedFrame || storage.usedFrame <= mCtx->completedFrame) &&
+        std::all_of(retired.begin(), retired.end(), [&](const BufferStorage& v) { return !v.usedFrame || v.usedFrame <= mCtx->completedFrame; }))
+    {
         recycleStorage(kind, storage);
         for (const auto& version : retired) recycleStorage(kind, version);
-    });
+    }
+    else
+    {
+        mCtx->deferRelease([this, kind, storage, retired=std::move(retired)] {
+            recycleStorage(kind, storage);
+            for (const auto& version : retired) recycleStorage(kind, version);
+        });
+    }
     if (mCurVBp == &it->second) mCurVBp = nullptr;
     if (mCurIBp == &it->second) mCurIBp = nullptr;
     mById[handle.id] = nullptr;
@@ -421,8 +430,9 @@ void VulkanVertexBufferBackend::upload(BufferKind kind, BufferHandle handle, U32
     auto& buffer = it->second;
     dropDeviceCopy(buffer);
     buffer.uploadFrame = mCtx->frameCounter;
-    memcpy(buffer.shadow.data() + start, data, (size_t)end - start + 1);
-    mCtx->refreshCompleted();
+    const size_t len = (size_t) end - start + 1;
+    if (buffer.shadow.size() != buffer.size) buffer.shadow.assign(buffer.size, 0);
+    if (buffer.usedFrame > mCtx->completedFrame) mCtx->refreshCompleted();
     auto safe = [&](const BufferStorage& storage) {
         return !storage.usedFrame || storage.usedFrame <= mCtx->completedFrame;
     };
@@ -460,14 +470,16 @@ void VulkanVertexBufferBackend::upload(BufferKind kind, BufferHandle handle, U32
                 mRetiredBytes += replacement.allocationBytes;
             }
             // Partial uploads must preserve every byte not included in this update.
-            memcpy(replacement.mapped, buffer.shadow.data(), buffer.size);
+            if (start > 0) memcpy(replacement.mapped, buffer.shadow.data(), start);
+            if (end + 1 < buffer.size) memcpy(replacement.mapped + end + 1, buffer.shadow.data() + end + 1, buffer.size - (end + 1));
             buffer.retired.push_back(buffer);
             static_cast<BufferStorage&>(buffer) = replacement;
             ++mCtx->bufferRenames;
         }
     }
+    memcpy(buffer.shadow.data() + start, data, len);
     buffer.usedFrame = 0;
-    memcpy(buffer.mapped + start, buffer.shadow.data() + start, (size_t) end - start + 1);
+    memcpy(buffer.mapped + start, data, len);
 }
 
 // ----------------------------------------------------------------------------------------------------------------
@@ -621,23 +633,23 @@ VkPipeline VulkanVertexBufferBackend::getPipeline(U32 mode, bool vertexInput)
     {
         return mLastPipeline;
     }
-    std::string k((const char*) &key, sizeof(key));
+    mScratchKey.assign((const char*) &key, sizeof(key));
     drainCompiledPipelines();
     const bool async = mCtx->asyncPipelines && mCtx->syncPipelineScopes == 0;
-    auto it = mPipelines.find(k);
-    if (it == mPipelines.end() && !async && mPending.count(k))
+    auto it = mPipelines.find(mScratchKey);
+    if (it == mPipelines.end() && !async && mPending.count(mScratchKey))
     {
         waitForPipelineJobs();   // a synchronous caller needs the pipeline a worker is building
         drainCompiledPipelines();
-        it = mPipelines.find(k);
+        it = mPipelines.find(mScratchKey);
     }
     if (it != mPipelines.end())
     {
-        mLastKey = k;
+        mLastKey.assign((const char*) &key, sizeof(key));
         mLastPipeline = it->second;
         return it->second;
     }
-    if (mPending.count(k))
+    if (mPending.count(mScratchKey))
     {
         return VK_NULL_HANDLE;
     }
@@ -650,7 +662,7 @@ VkPipeline VulkanVertexBufferBackend::getPipeline(U32 mode, bool vertexInput)
 
     PipelineJob* jobPtr = new PipelineJob;
     PipelineJob& j = *jobPtr;
-    j.key = k;
+    j.key = mScratchKey;
     j.keyData = key;
     j.refs = mCtx->program->compileRefs;
     VkProgram& program = *mCtx->program;
@@ -767,7 +779,7 @@ VkPipeline VulkanVertexBufferBackend::getPipeline(U32 mode, bool vertexInput)
     {
         startPipelineWorkers();
         j.refs->fetch_add(1);
-        mPending.insert(k);
+        mPending.insert(j.key);
         {
             std::lock_guard<std::mutex> lock(mJobMutex);
             mJobQueue.push_back(jobPtr);
@@ -782,8 +794,8 @@ VkPipeline VulkanVertexBufferBackend::getPipeline(U32 mode, bool vertexInput)
     ++mCtx->pipelinesCreated;
     if (j.cacheHit) ++mCtx->pipelineCacheHits;
     const VkPipeline pipeline = j.pipeline;
-    mPipelines[k] = pipeline;
-    mLastKey = k;
+    mPipelines[j.key] = pipeline;
+    mLastKey.assign((const char*) &key, sizeof(key));
     mLastPipeline = pipeline;
     delete jobPtr;
     return pipeline;
@@ -801,8 +813,9 @@ VulkanVertexBufferBackend::Buf& VulkanVertexBufferBackend::resolve(BufferHandle 
         }
     }
     cache->usedFrame = mCtx->frameCounter;
-    // Only buffers left alone for about a second: earlier, most copies were dropped again by the next upload.
-    if (!cache->device && cache->size && cache->uploadFrame + 60 < mCtx->frameCounter && mDeviceBytes + cache->size <= kDeviceCap)
+    // Only buffers left alone for about two seconds: earlier, periodic buffers were dropped again by the next upload.
+    if (!cache->deviceCopy.buffer && cache->size && cache->demotions < 2 &&
+        cache->uploadFrame + (120ull << cache->demotions) < mCtx->frameCounter && mDeviceBytes + cache->size <= kDeviceCap)
     {
         if (mPromotionFrame != mCtx->frameCounter) { mPromotionFrame = mCtx->frameCounter; mPromotionsThisFrame = 0; }
         if (mPromotionsThisFrame < kPromotionsPerFrame) { ++mPromotionsThisFrame; promote(*cache); }
@@ -810,51 +823,144 @@ VulkanVertexBufferBackend::Buf& VulkanVertexBufferBackend::resolve(BufferHandle 
     return *cache;
 }
 
-void VulkanVertexBufferBackend::promote(Buf& b)
+VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createDeviceStorage(BufferKind kind, U32 size)
 {
+    const VkDeviceSize capacity = (VkDeviceSize(size) + 4095) & ~VkDeviceSize(4095);
+    auto available = mDeviceStoragePool.lower_bound(std::make_pair(kind, capacity));
+    if (available != mDeviceStoragePool.end() && available->first.first == kind && available->first.second <= capacity * 2)
+    {
+        BufferStorage b = available->second;
+        mDevicePooledBytes -= b.allocationBytes;
+        mDeviceStoragePool.erase(available);
+        b.usedFrame = 0;
+        return b;
+    }
+    BufferStorage b;
+    b.capacity = capacity;
     VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-    bci.size = b.size;
-    bci.usage = (b.kind == BufferKind::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT) | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    VK_CHECK(vkCreateBuffer(mCtx->device, &bci, nullptr, &b.device));
+    bci.size = capacity;
+    bci.usage = (kind == BufferKind::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT) | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VK_CHECK(vkCreateBuffer(mCtx->device, &bci, nullptr, &b.buffer));
     VkMemoryRequirements req;
-    vkGetBufferMemoryRequirements(mCtx->device, b.device, &req);
+    vkGetBufferMemoryRequirements(mCtx->device, b.buffer, &req);
+    const uint32_t memoryType = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    mDeviceSlabs->device = mCtx->device;
+    if (req.size <= StorageSlabs::kMaxSlot && req.alignment <= StorageSlabs::kMaxSlot)
+    {
+        VkDeviceSize slotSize = StorageSlabs::kMinSlot;
+        while (slotSize < req.size || slotSize < req.alignment) slotSize *= 2;
+        std::lock_guard<std::mutex> lock(mDeviceSlabs->mutex);
+        auto& blocks = mDeviceSlabs->blocks;
+        size_t index = 0;
+        while (index < blocks.size() && (blocks[index].slotSize != slotSize || blocks[index].memoryType != memoryType || blocks[index].free.empty())) ++index;
+        if (index == blocks.size())
+        {
+            size_t released = 0;
+            while (released < blocks.size() && blocks[released].memory != VK_NULL_HANDLE) ++released;
+            StorageSlabs::Block block;
+            block.slotSize = slotSize;
+            block.memoryType = memoryType;
+            VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            mai.allocationSize = StorageSlabs::kBlock;
+            mai.memoryTypeIndex = memoryType;
+            if (vkAllocateMemory(mCtx->device, &mai, nullptr, &block.memory) != VK_SUCCESS)
+            {
+                vkDestroyBuffer(mCtx->device, b.buffer, nullptr);
+                b.buffer = VK_NULL_HANDLE;
+                return b;
+            }
+            for (uint32_t slot = (uint32_t) (StorageSlabs::kBlock / slotSize); slot-- > 0;) block.free.push_back(slot);
+            if (released < blocks.size()) { blocks[released] = std::move(block); index = released; }
+            else blocks.push_back(std::move(block));
+        }
+        auto& block = blocks[index];
+        b.block = (int32_t) index;
+        b.slot = block.free.back();
+        block.free.pop_back();
+        b.memory = block.memory;
+        b.allocationBytes = slotSize;
+        VK_CHECK(vkBindBufferMemory(mCtx->device, b.buffer, b.memory, b.slot * slotSize));
+        return b;
+    }
     VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     mai.allocationSize = req.size;
-    mai.memoryTypeIndex = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (vkAllocateMemory(mCtx->device, &mai, nullptr, &b.deviceMemory) != VK_SUCCESS)
+    b.allocationBytes = req.size;
+    mai.memoryTypeIndex = memoryType;
+    if (vkAllocateMemory(mCtx->device, &mai, nullptr, &b.memory) != VK_SUCCESS)
     {
-        vkDestroyBuffer(mCtx->device, b.device, nullptr);     // VRAM full: keep drawing from host memory
-        b.device = VK_NULL_HANDLE;
-        b.uploadFrame = mCtx->frameCounter;                 // and do not retry every draw
+        vkDestroyBuffer(mCtx->device, b.buffer, nullptr);
+        b.buffer = VK_NULL_HANDLE;
+        return b;
+    }
+    VK_CHECK(vkBindBufferMemory(mCtx->device, b.buffer, b.memory, 0));
+    return b;
+}
+
+void VulkanVertexBufferBackend::recycleDeviceStorage(BufferKind kind, const BufferStorage& storage)
+{
+    if (mCtx->frameCounter >= mLastDevicePoolTrim + 300)
+    {
+        mLastDevicePoolTrim = mCtx->frameCounter;
+        for (auto it = mDeviceStoragePool.begin(); it != mDeviceStoragePool.end();)
+        {
+            if (it->second.usedFrame + kPoolIdleFrames < mCtx->frameCounter)
+            {
+                mDevicePooledBytes -= it->second.allocationBytes;
+                mCtx->reap([device = mCtx->device, slabs = mDeviceSlabs, storage = it->second] { destroyStorage(device, *slabs, storage); });
+                it = mDeviceStoragePool.erase(it);
+            }
+            else ++it;
+        }
+    }
+    if (storage.allocationBytes <= kDevicePoolCap - std::min<U64>(mDevicePooledBytes, kDevicePoolCap))
+    {
+        BufferStorage pooled = storage;
+        pooled.usedFrame = mCtx->frameCounter;
+        mDeviceStoragePool.emplace(std::make_pair(kind, storage.capacity), pooled);
+        mDevicePooledBytes += storage.allocationBytes;
+    }
+    else
+    {
+        mCtx->reap([device = mCtx->device, slabs = mDeviceSlabs, storage] { destroyStorage(device, *slabs, storage); });
+    }
+}
+
+void VulkanVertexBufferBackend::promote(Buf& b)
+{
+    BufferStorage dev = createDeviceStorage(b.kind, b.size);
+    if (!dev.buffer)
+    {
+        b.uploadFrame = mCtx->frameCounter;                 // VRAM full: keep drawing from host memory and do not retry every draw
         return;
     }
-    VK_CHECK(vkBindBufferMemory(mCtx->device, b.device, b.deviceMemory, 0));
+    b.deviceCopy = dev;
     mDeviceBytes += b.size;
     ++mCtx->bufferPromotions;
     mCtx->bufferVramBytes = mDeviceBytes;
     // The batch is submitted ahead of the frame commands that hold this draw, and the barrier orders the copy before their reads.
     VkCommandBuffer cmd = mCtx->batchCommands();
     const VkBufferCopy region{0, 0, b.size};
-    vkCmdCopyBuffer(cmd, b.buffer, b.device, 1, &region);
+    vkCmdCopyBuffer(cmd, b.buffer, b.deviceCopy.buffer, 1, &region);
     VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.dstAccessMask = b.kind == BufferKind::Vertex ? VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT : VK_ACCESS_INDEX_READ_BIT;
     barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.buffer = b.device;
+    barrier.buffer = b.deviceCopy.buffer;
     barrier.size = VK_WHOLE_SIZE;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
 }
 
 void VulkanVertexBufferBackend::dropDeviceCopy(Buf& b)
 {
-    if (!b.device) return;
-    auto device = mCtx->device; auto buffer = b.device; auto memory = b.deviceMemory;
-    mCtx->deferFree([device, buffer, memory] { vkDestroyBuffer(device, buffer, nullptr); vkFreeMemory(device, memory, nullptr); });
+    if (!b.deviceCopy.buffer) return;
+    ++b.demotions;
+    const auto kind = b.kind;
+    const BufferStorage dev = b.deviceCopy;
+    b.deviceCopy = BufferStorage{};
+    mCtx->deferRelease([this, kind, dev] { recycleDeviceStorage(kind, dev); });
     mDeviceBytes -= b.size;
     ++mCtx->bufferDemotions;
     mCtx->bufferVramBytes = mDeviceBytes;
-    b.device = VK_NULL_HANDLE;
-    b.deviceMemory = VK_NULL_HANDLE;
 }
 
 bool VulkanVertexBufferBackend::recordCommon(U32 mode, bool indexed, bool vertexInput)
@@ -920,18 +1026,33 @@ bool VulkanVertexBufferBackend::recordCommon(U32 mode, bool indexed, bool vertex
     ++mCtx->statPassDraws[{mCtx->framebuffers->getBound(), renderExtent.width, renderExtent.height, mCtx->framebuffers->colorCount()}].first;
     if (!vertexInput) { ++drawCalls; return true; }
     VkBuffer vb = resolve(mCurVB, mCurVBp).drawBuffer();
-    for (int t = 0; t < TYPE_MAX; ++t)
+    U32 mask = mAttribMask & ((1u << TYPE_MAX) - 1u);
+    while (mask)
     {
-        if (mAttribMask & (1u << t))
+        unsigned long bit = 0;
+        _BitScanForward(&bit, mask);
+        mask &= mask - 1;
+        const uint32_t t = (uint32_t) bit;
+        const VkDeviceSize offset = mOffsets[t == TYPE_TEXTURE_INDEX ? TYPE_VERTEX : t];
+        if (dc.vertexBuffer[t] == vb && dc.vertexOffset[t] == offset) continue;
+        VkBuffer vbs[TYPE_MAX] = {vb};
+        VkDeviceSize offs[TYPE_MAX] = {offset};
+        dc.vertexBuffer[t] = vb;
+        dc.vertexOffset[t] = offset;
+        uint32_t count = 1;
+        while (mask & (1u << (t + count)))
         {
-            VkDeviceSize offset = mOffsets[t == TYPE_TEXTURE_INDEX ? TYPE_VERTEX : t];
-            if (dc.vertexBuffer[t] != vb || dc.vertexOffset[t] != offset)
-            {
-                vkCmdBindVertexBuffers(cmd, (uint32_t) t, 1, &vb, &offset);
-                dc.vertexBuffer[t] = vb;
-                dc.vertexOffset[t] = offset;
-            }
+            const uint32_t nt = t + count;
+            const VkDeviceSize noff = mOffsets[nt == TYPE_TEXTURE_INDEX ? TYPE_VERTEX : nt];
+            if (dc.vertexBuffer[nt] == vb && dc.vertexOffset[nt] == noff) break;
+            mask &= ~(1u << nt);
+            vbs[count] = vb;
+            offs[count] = noff;
+            dc.vertexBuffer[nt] = vb;
+            dc.vertexOffset[nt] = noff;
+            ++count;
         }
+        vkCmdBindVertexBuffers(cmd, t, count, vbs, offs);
     }
     (void) indexed;
     ++drawCalls;

@@ -40,13 +40,13 @@ struct Shared
 class StateProxy final : public LLRenderStateBackend
 {
 public:
-    StateProxy(Thread& thread, VulkanRenderStateBackend* real) : T(thread), R(real)
-    {
-        R->queryDepthState(mDepthTest, mDepthFunc, mDepthMask);
-    }
+    StateProxy(Thread& thread, VulkanRenderStateBackend* real) : T(thread), R(real), mState(real->s) {}
     void setCapability(U32 cap, bool enabled) override
     {
+        auto it = mCaps.find(cap);
+        if (it != mCaps.end() && it->second == enabled) return;
         mCaps[cap] = enabled;
+        if (cap == 0x0B71) mState.depthTest = enabled;
         T.post([r = R, cap, enabled] { r->setCapability(cap, enabled); });
     }
     bool isCapabilityEnabled(U32 cap) const override
@@ -60,34 +60,84 @@ public:
     }
     void setDepthTest(bool enabled) override
     {
-        mDepthTest = enabled;
+        if (mState.depthTest == enabled) return;
+        mState.depthTest = enabled;
+        mCaps[0x0B71] = enabled;
         T.post([r = R, enabled] { r->setDepthTest(enabled); });
     }
     void setDepthFunc(U32 func) override
     {
-        mDepthFunc = func;
+        if (mState.depthFunc == func) return;
+        mState.depthFunc = func;
         T.post([r = R, func] { r->setDepthFunc(func); });
     }
     void setDepthMask(bool write) override
     {
-        mDepthMask = write;
+        if (mState.depthWrite == write) return;
+        mState.depthWrite = write;
         T.post([r = R, write] { r->setDepthMask(write); });
     }
     void queryDepthState(bool& testEnabled, U32& func, bool& writeEnabled) const override
     {
-        testEnabled = mDepthTest;
-        func = mDepthFunc;
-        writeEnabled = mDepthMask;
+        testEnabled = mState.depthTest;
+        func = mState.depthFunc;
+        writeEnabled = mState.depthWrite;
     }
-    void setBlendFunc(U32 cs, U32 cd, U32 as, U32 ad) override { T.post([r = R, cs, cd, as, ad] { r->setBlendFunc(cs, cd, as, ad); }); }
-    void setColorMask(bool rr, bool g, bool b, bool a) override { T.post([r = R, rr, g, b, a] { r->setColorMask(rr, g, b, a); }); }
-    void setLineWidth(F32 width) override { T.post([r = R, width] { r->setLineWidth(width); }); }
-    void setViewport(S32 x, S32 y, S32 w, S32 h) override { T.post([r = R, x, y, w, h] { r->setViewport(x, y, w, h); }); }
-    void setScissor(S32 x, S32 y, S32 w, S32 h) override { T.post([r = R, x, y, w, h] { r->setScissor(x, y, w, h); }); }
-    void setCullFace(U32 face) override { T.post([r = R, face] { r->setCullFace(face); }); }
-    void setPolygonMode(U32 face, U32 mode) override { T.post([r = R, face, mode] { r->setPolygonMode(face, mode); }); }
-    void setPolygonOffset(F32 factor, F32 units) override { T.post([r = R, factor, units] { r->setPolygonOffset(factor, units); }); }
-    void setPointSize(F32 size) override { T.post([r = R, size] { r->setPointSize(size); }); }
+    void setBlendFunc(U32 cs, U32 cd, U32 as, U32 ad) override
+    {
+        const U8 f[4] = {(U8) cs, (U8) cd, (U8) as, (U8) ad};
+        if (memcmp(mState.blendFactors, f, 4) == 0) return;
+        memcpy(mState.blendFactors, f, 4);
+        T.post([r = R, cs, cd, as, ad] { r->setBlendFunc(cs, cd, as, ad); });
+    }
+    void setColorMask(bool rr, bool g, bool b, bool a) override
+    {
+        if (mState.colorMask[0] == rr && mState.colorMask[1] == g && mState.colorMask[2] == b && mState.colorMask[3] == a) return;
+        mState.colorMask[0] = rr; mState.colorMask[1] = g; mState.colorMask[2] = b; mState.colorMask[3] = a;
+        T.post([r = R, rr, g, b, a] { r->setColorMask(rr, g, b, a); });
+    }
+    void setLineWidth(F32 width) override
+    {
+        if (mState.lineWidth == width) return;
+        mState.lineWidth = width;
+        T.post([r = R, width] { r->setLineWidth(width); });
+    }
+    void setViewport(S32 x, S32 y, S32 w, S32 h) override
+    {
+        if (mState.viewport[0] == x && mState.viewport[1] == y && mState.viewport[2] == w && mState.viewport[3] == h) return;
+        mState.viewport[0] = x; mState.viewport[1] = y; mState.viewport[2] = w; mState.viewport[3] = h;
+        T.post([r = R, x, y, w, h] { r->setViewport(x, y, w, h); });
+    }
+    void setScissor(S32 x, S32 y, S32 w, S32 h) override
+    {
+        if (mState.scissor[0] == x && mState.scissor[1] == y && mState.scissor[2] == w && mState.scissor[3] == h) return;
+        mState.scissor[0] = x; mState.scissor[1] = y; mState.scissor[2] = w; mState.scissor[3] = h;
+        T.post([r = R, x, y, w, h] { r->setScissor(x, y, w, h); });
+    }
+    void setCullFace(U32 face) override
+    {
+        if (mState.cullFace == face) return;
+        mState.cullFace = face;
+        T.post([r = R, face] { r->setCullFace(face); });
+    }
+    void setPolygonMode(U32 face, U32 mode) override
+    {
+        if (mState.polygonMode == mode) return;
+        mState.polygonMode = mode;
+        T.post([r = R, face, mode] { r->setPolygonMode(face, mode); });
+    }
+    void setPolygonOffset(F32 factor, F32 units) override
+    {
+        if (mState.offsetFactor == factor && mState.offsetUnits == units) return;
+        mState.offsetFactor = factor; mState.offsetUnits = units;
+        T.post([r = R, factor, units] { r->setPolygonOffset(factor, units); });
+    }
+    void setPointSize(F32 size) override
+    {
+        if (mState.pointSize == size) return;
+        mState.pointSize = size;
+        T.post([r = R, size] { r->setPointSize(size); });
+    }
     void setStencilFunc(U32 func, S32 ref, U32 mask) override { T.post([r = R, func, ref, mask] { r->setStencilFunc(func, ref, mask); }); }
     void setStencilOp(U32 sf, U32 df, U32 dp) override { T.post([r = R, sf, df, dp] { r->setStencilOp(sf, df, dp); }); }
     void setStencilMask(U32 mask) override { T.post([r = R, mask] { r->setStencilMask(mask); }); }
@@ -96,8 +146,7 @@ private:
     Thread& T;
     VulkanRenderStateBackend* R;
     mutable std::unordered_map<U32, bool> mCaps;
-    bool mDepthTest = false, mDepthMask = false;
-    U32 mDepthFunc = 0;
+    RecordedState mState;
 };
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -162,19 +211,30 @@ class TextureProxy final : public LLTextureBackend
 public:
     TextureProxy(Thread& thread, VulkanTextureBackend* real) : T(thread), R(real) {}
     void initContextState() override { T.post([r = R] { r->initContextState(); }); }
-    void activateUnit(U32 unit) override { T.post([r = R, unit] { r->activateUnit(unit); }); }
-    void bind(U32 target, U32 texture) override { T.post([r = R, target, texture] { r->bind(target, texture); }); }
-    void setWrap(U32 target, S32 s, S32 t, S32 rr) override { T.post([r = R, target, s, t, rr] { r->setWrap(target, s, t, rr); }); }
-    void setFilter(U32 target, S32 mag, S32 min) override { T.post([r = R, target, mag, min] { r->setFilter(target, mag, min); }); }
-    void setMaxAnisotropy(U32 target, F32 a) override { T.post([r = R, target, a] { r->setMaxAnisotropy(target, a); }); }
-    void setLevelRange(U32 target, S32 base, S32 max) override { T.post([r = R, target, base, max] { r->setLevelRange(target, base, max); }); }
-    void setMagFilter(U32 target, S32 mag) override { T.post([r = R, target, mag] { r->setMagFilter(target, mag); }); }
-    void setCompare(U32 target, bool enabled, U32 func) override { T.post([r = R, target, enabled, func] { r->setCompare(target, enabled, func); }); }
+    void activateUnit(U32 unit) override
+    {
+        mActive = unit < kUnits ? unit : 0;
+    }
+    void bind(U32 target, U32 texture) override
+    {
+        if (mUnitTex[mActive] == texture && mUnitTarget[mActive] == target) return;
+        mUnitTex[mActive] = texture;
+        mUnitTarget[mActive] = target;
+        flushActive();
+        T.post([r = R, target, texture] { r->bind(target, texture); });
+    }
+    void setWrap(U32 target, S32 s, S32 t, S32 rr) override { flushActive(); T.post([r = R, target, s, t, rr] { r->setWrap(target, s, t, rr); }); }
+    void setFilter(U32 target, S32 mag, S32 min) override { flushActive(); T.post([r = R, target, mag, min] { r->setFilter(target, mag, min); }); }
+    void setMaxAnisotropy(U32 target, F32 a) override { flushActive(); T.post([r = R, target, a] { r->setMaxAnisotropy(target, a); }); }
+    void setLevelRange(U32 target, S32 base, S32 max) override { flushActive(); T.post([r = R, target, base, max] { r->setLevelRange(target, base, max); }); }
+    void setMagFilter(U32 target, S32 mag) override { flushActive(); T.post([r = R, target, mag] { r->setMagFilter(target, mag); }); }
+    void setCompare(U32 target, bool enabled, U32 func) override { flushActive(); T.post([r = R, target, enabled, func] { r->setCompare(target, enabled, func); }); }
     void setSwizzle(U32 target, const S32* rgba) override
     {
+        flushActive();
         T.postData(rgba, 4 * sizeof(S32), [r = R, target](const void* p) { r->setSwizzle(target, static_cast<const S32*>(p)); });
     }
-    void setLegacyMipmapGeneration(U32 target, bool enabled) override { T.post([r = R, target, enabled] { r->setLegacyMipmapGeneration(target, enabled); }); }
+    void setLegacyMipmapGeneration(U32 target, bool enabled) override { flushActive(); T.post([r = R, target, enabled] { r->setLegacyMipmapGeneration(target, enabled); }); }
 
     void generate(S32 count, U32* names) override
     {
@@ -192,18 +252,36 @@ public:
     void destroy(S32 count, const U32* names) override
     {
         if (count <= 0 || !names) return;
+        for (S32 i = 0; i < count; ++i)
+        {
+            for (size_t u = 0; u < kUnits; ++u)
+            {
+                if (mUnitTex[u] == names[i])
+                {
+                    mUnitTex[u] = 0;
+                    mUnitTarget[u] = 0;
+                }
+            }
+        }
         T.postData(names, size_t(count) * sizeof(U32), [r = R, count](const void* p) { r->destroy(count, static_cast<const U32*>(p)); });
     }
 
     void setUnpackRowLength(S32 pixels) override
     {
+        if (mRowLength == pixels) return;
         mRowLength = pixels;
         T.post([r = R, pixels] { r->setUnpackRowLength(pixels); });
     }
-    void setUnpackSwapBytes(bool swap) override { T.post([r = R, swap] { r->setUnpackSwapBytes(swap); }); }
+    void setUnpackSwapBytes(bool swap) override
+    {
+        if (mSwapBytes == swap) return;
+        mSwapBytes = swap;
+        T.post([r = R, swap] { r->setUnpackSwapBytes(swap); });
+    }
 
     void image2D(U32 target, S32 level, S32 internalFormat, S32 width, S32 height, U32 format, U32 type, const void* pixels) override
     {
+        flushActive();
         const size_t n = pixels ? VulkanTextureBackend::sourceBytes(format, type, width, height, 1, mRowLength) : 0;
         if (pixels && !n)
         {
@@ -224,6 +302,7 @@ public:
     }
     void compressedImage2D(U32 target, S32 level, U32 internalFormat, S32 width, S32 height, S32 imageSize, const void* data) override
     {
+        flushActive();
         if (!data || imageSize <= 0)
         {
             T.post([r = R, target, level, internalFormat, width, height, imageSize] {
@@ -237,6 +316,7 @@ public:
     }
     void subImage2D(U32 target, S32 level, S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, const void* pixels) override
     {
+        flushActive();
         const size_t n = pixels ? VulkanTextureBackend::sourceBytes(format, type, width, height, 1, mRowLength) : 0;
         if (!n)
         {
@@ -250,6 +330,7 @@ public:
     }
     void image3D(U32 target, S32 level, S32 internalFormat, S32 width, S32 height, S32 depth, U32 format, U32 type, const void* pixels) override
     {
+        flushActive();
         const size_t n = pixels ? VulkanTextureBackend::sourceBytes(format, type, width, height, depth, mRowLength) : 0;
         if (pixels && !n)
         {
@@ -271,6 +352,7 @@ public:
     void subImage3D(U32 target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, U32 format, U32 type,
                     const void* pixels) override
     {
+        flushActive();
         const size_t n = pixels ? VulkanTextureBackend::sourceBytes(format, type, width, height, depth, mRowLength) : 0;
         if (!n)
         {
@@ -282,21 +364,25 @@ public:
             r->subImage3D(target, level, x, y, z, width, height, depth, format, type, p);
         });
     }
-    void generateMipmaps(U32 target) override { T.post([r = R, target] { r->generateMipmaps(target); }); }
+    void generateMipmaps(U32 target) override { flushActive(); T.post([r = R, target] { r->generateMipmaps(target); }); }
     void copyFromFramebuffer2D(U32 target, S32 level, S32 xo, S32 yo, S32 x, S32 y, S32 w, S32 h) override
     {
+        flushActive();
         T.post([r = R, target, level, xo, yo, x, y, w, h] { r->copyFromFramebuffer2D(target, level, xo, yo, x, y, w, h); });
     }
     void copyFromFramebuffer3D(U32 target, S32 level, S32 xo, S32 yo, S32 zo, S32 x, S32 y, S32 w, S32 h) override
     {
+        flushActive();
         T.post([r = R, target, level, xo, yo, zo, x, y, w, h] { r->copyFromFramebuffer3D(target, level, xo, yo, zo, x, y, w, h); });
     }
     void copyImageFromFramebuffer2D(U32 target, S32 level, S32 internalFormat, S32 x, S32 y, S32 w, S32 h) override
     {
+        flushActive();
         T.post([r = R, target, level, internalFormat, x, y, w, h] { r->copyImageFromFramebuffer2D(target, level, internalFormat, x, y, w, h); });
     }
     void replaceWithMipLevel(U32 target, S32 mip, S32 internalFormat, S32 width, S32 height, U32 format, U32 type, U64 bytes) override
     {
+        flushActive();
         T.post([r = R, target, mip, internalFormat, width, height, format, type, bytes] {
             r->replaceWithMipLevel(target, mip, internalFormat, width, height, format, type, bytes);
         });
@@ -304,16 +390,19 @@ public:
 
     S32 getLevelParameter(U32 target, S32 level, U32 pname) override
     {
+        flushActive();
         T.sync();
         return R->getLevelParameter(target, level, pname);
     }
     void readImage(U32 target, S32 level, U32 format, U32 type, void* out) override
     {
+        flushActive();
         T.sync();
         R->readImage(target, level, format, type, out);
     }
     void readCompressedImage(U32 target, S32 level, void* out) override
     {
+        flushActive();
         T.sync();
         R->readCompressedImage(target, level, out);
     }
@@ -329,10 +418,24 @@ public:
     }
 
 private:
+    static constexpr size_t kUnits = 32;
+    void flushActive()
+    {
+        if (mPostedActive != mActive)
+        {
+            const U32 u = mActive;
+            mPostedActive = u;
+            T.post([r = R, u] { r->activateUnit(u); });
+        }
+    }
     Thread& T;
     VulkanTextureBackend* R;
     U32 mNext = 1;
+    U32 mActive = 0, mPostedActive = 0;
+    std::array<U32, kUnits> mUnitTex{};
+    std::array<U32, kUnits> mUnitTarget{};
     S32 mRowLength = 0;
+    bool mSwapBytes = false;
 };
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -501,18 +604,22 @@ public:
     }
     void bind(BufferKind kind, BufferHandle handle) override
     {
-        (kind == BufferKind::Vertex ? mBoundVB : mBoundIB) = handle;
+        BufferHandle& cur = (kind == BufferKind::Vertex ? mBoundVB : mBoundIB);
+        if (cur == handle) return;
+        cur = handle;
         T.post([r = R, kind, handle] { r->bind(kind, handle); });
     }
     bool isBound(BufferKind kind, BufferHandle handle) const override { return (kind == BufferKind::Vertex ? mBoundVB : mBoundIB) == handle; }
     void unbind() override
     {
+        if (!mBoundVB.id && !mBoundIB.id) return;
         mBoundVB = {};
         mBoundIB = {};
         T.post([r = R] { r->unbind(); });
     }
     void invalidateBufferBinding() override
     {
+        if (!mBoundVB.id) return;
         mBoundVB = {};
         T.post([r = R] { r->invalidateBufferBinding(); });
     }
@@ -528,7 +635,7 @@ public:
             r->setBuffers(vb, ib, attribMask, static_cast<const U32*>(p));
         });
     }
-    void setEnabledAttributes(U32 mask) override { T.post([r = R, mask] { r->setEnabledAttributes(mask); }); }
+    void setEnabledAttributes(U32 mask) override { (void) mask; }
     void drawIndexed(U32 mode, U32 start, U32 end, U32 count, IndexType type, U32 indexByteOffset) override
     {
         T.post([r = R, s = S, mode, start, end, count, type, indexByteOffset] {
@@ -541,7 +648,7 @@ public:
             if (!s->frameFailed) r->drawArrays(mode, first, count);
         });
     }
-    void initContextState() override { T.post([r = R] { r->initContextState(); }); }
+    void initContextState() override {}
     void drawArraysNoInput(U32 mode, U32 first, U32 count) override
     {
         T.post([r = R, s = S, mode, first, count] {

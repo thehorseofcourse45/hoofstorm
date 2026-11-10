@@ -167,7 +167,11 @@ bool VkProgram::setUniform(const char* name, const void* data, uint32_t bytes)
     {
         return false;
     }
-    memcpy(shadow.data() + m->offset, data, bytes);
+    if (memcmp(shadow.data() + m->offset, data, bytes) != 0)
+    {
+        memcpy(shadow.data() + m->offset, data, bytes);
+        shadowDirty = true;
+    }
     return true;
 }
 
@@ -269,14 +273,14 @@ void VkProgram::prepareDraw()
     if (layout.size)
     {
         uint32_t offset;
-        if (uploadedFrame == ctx->frameCounter && uploadedGeneration == ctx->uniformGeneration && uploadedShadow == shadow)
+        if (!shadowDirty && uploadedFrame == ctx->frameCounter && uploadedGeneration == ctx->uniformGeneration)
         {
             offset = uploadedOffset;
         }
         else
         {
             offset = ctx->uploadRingAlloc(shadow.data(), (uint32_t) shadow.size());
-            uploadedShadow = shadow;
+            shadowDirty = false;
             uploadedOffset = offset;
             uploadedFrame = ctx->frameCounter;
             uploadedGeneration = ctx->uniformGeneration;
@@ -307,26 +311,28 @@ void VkProgram::prepareDraw()
     }
     if (pushSamplers)
     {
-        // a push set lives in this command buffer until another layout is bound, so push only when the textures changed
-        bool differs = pushedSerial != ctx->cmdSerial || pushedEpoch != ctx->layoutEpoch;
-        for (size_t i = 0; i < infoScratch.size() && !differs; ++i)
-            differs = infoScratch[i].imageView != lastInfos[i].imageView || infoScratch[i].sampler != lastInfos[i].sampler ||
-                      infoScratch[i].imageLayout != lastInfos[i].imageLayout;
-        if (differs)
+        // a push set lives in this command buffer until another layout is bound, so push only the bindings that changed
+        const bool fullPush = pushedSerial != ctx->cmdSerial || pushedEpoch != ctx->layoutEpoch;
+        auto& writes = writeScratch;
+        writes.clear();
+        for (size_t i = 0; i < samplerNames.size(); ++i)
         {
-            auto& writes = writeScratch;
-            writes.resize(samplerNames.size());
-            for (size_t i = 0; i < samplerNames.size(); ++i)
+            if (fullPush || infoScratch[i].imageView != lastInfos[i].imageView || infoScratch[i].sampler != lastInfos[i].sampler ||
+                infoScratch[i].imageLayout != lastInfos[i].imageLayout)
             {
-                writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-                writes[i].dstBinding = samplerBindings[i];
-                writes[i].descriptorCount = 1;
-                writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                writes[i].pImageInfo = &infoScratch[i];
+                VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                w.dstBinding = samplerBindings[i];
+                w.descriptorCount = 1;
+                w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                w.pImageInfo = &infoScratch[i];
+                writes.push_back(w);
+                lastInfos[i] = infoScratch[i];
             }
+        }
+        if (!writes.empty())
+        {
             ctx->cmdPushDescriptorSet(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, (uint32_t) writes.size(), writes.data());
             ++ctx->statSamplerSets;
-            lastInfos = infoScratch;
             pushedSerial = ctx->cmdSerial;
             pushedEpoch = ctx->layoutEpoch;
         }
@@ -336,5 +342,4 @@ void VkProgram::prepareDraw()
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &samplerSet, 0, nullptr);
         dc.sets[1] = samplerSet;
     }
-
 }

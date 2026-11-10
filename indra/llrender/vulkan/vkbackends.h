@@ -79,7 +79,7 @@ class VulkanVertexBufferBackend final : public LLVertexBufferBackend
 {
 public:
     VulkanVertexBufferBackend(VkContext* ctx, VulkanRenderStateBackend* state)
-        : mCtx(ctx), mState(state), mSlabs(std::make_shared<StorageSlabs>()) {}
+        : mCtx(ctx), mState(state), mSlabs(std::make_shared<StorageSlabs>()), mDeviceSlabs(std::make_shared<StorageSlabs>()) {}
     ~VulkanVertexBufferBackend() override;
 
     bool usesDeferredUpload() const override { return false; }
@@ -144,17 +144,21 @@ private:
         std::vector<U8> shadow; // last uploaded bytes; avoids reading uncached GPU-visible memory when renaming
         // Host-visible storage on a discrete GPU is system RAM, read over PCIe on every vertex fetch. Buffers that stop
         // changing get a VRAM copy for drawing; an upload drops it again.
-        VkBuffer device = VK_NULL_HANDLE;
-        VkDeviceMemory deviceMemory = VK_NULL_HANDLE;
+        BufferStorage deviceCopy;
         uint64_t uploadFrame = 0;
-        VkBuffer drawBuffer() const { return device ? device : buffer; }
+        U32 demotions = 0;
+        VkBuffer drawBuffer() const { return deviceCopy.buffer ? deviceCopy.buffer : buffer; }
     };
     void promote(Buf& b);
     void dropDeviceCopy(Buf& b);
-    U64 mDeviceBytes = 0;
+    BufferStorage createDeviceStorage(BufferKind kind, U32 size);
+    void recycleDeviceStorage(BufferKind kind, const BufferStorage& storage);
+    U64 mDeviceBytes = 0, mDevicePooledBytes = 0;
     static constexpr U64 kDeviceCap = 2048ull << 20;     // ponytail: fixed VRAM budget for vertex data, size it from the heap if it binds
-    // Each promotion is its own vkAllocateMemory; crowds promoted thousands at once and stalled the render thread for 100+ ms.
-    // ponytail: per-frame cap, suballocate device copies from large blocks if the remaining allocations still show in a profile
+    static constexpr U64 kDevicePoolCap = 128u << 20;
+    U64 mLastDevicePoolTrim = 0;
+    std::multimap<std::pair<BufferKind, VkDeviceSize>, BufferStorage> mDeviceStoragePool;
+    // Each promotion is suballocated from StorageSlabs or pooled; keep a per-frame cap so a burst of promotions does not bloat batchCommands.
     static constexpr U32 kPromotionsPerFrame = 16;
     U64 mPromotionFrame = 0;
     U32 mPromotionsThisFrame = 0;
@@ -174,7 +178,8 @@ private:
 
     VkContext* mCtx;
     VulkanRenderStateBackend* mState;
-    std::shared_ptr<StorageSlabs> mSlabs;     // shared with reaper jobs, which can outlive this backend
+    std::shared_ptr<StorageSlabs> mSlabs;           // shared with reaper jobs, which can outlive this backend
+    std::shared_ptr<StorageSlabs> mDeviceSlabs;     // DEVICE_LOCAL slabs for promoted vertex/index copies
     std::unordered_map<U64, Buf> mBuffers;
     std::vector<Buf*> mById;    // mBuffers entries indexed by id (ids are sequential), null once freed; ponytail: grows 8 bytes per buffer ever made
     U64 mNextId = 1;
@@ -193,8 +198,8 @@ private:
     U32 mAttribMask = 0;
     U32 mOffsets[14] = {};
 
-    std::map<std::string, VkPipeline> mPipelines;
-    std::string mLastKey;                    // consecutive draws mostly repeat one pipeline: skip the map lookup
+    std::unordered_map<std::string, VkPipeline> mPipelines;
+    std::string mLastKey, mScratchKey;       // consecutive draws mostly repeat one pipeline: skip the map lookup
     VkPipeline mLastPipeline = VK_NULL_HANDLE;
 
     // Pipelines compile on worker threads when VkContext::asyncPipelines is set. mPipelines and mPending belong to the render thread.

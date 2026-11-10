@@ -153,8 +153,8 @@ private:
     };
     static_assert(sizeof(Header) == 16, "header size");
     static constexpr size_t align16(size_t n) { return (n + 15) & ~size_t(15); }
-    static constexpr size_t kBatchLimit = 1 << 20;
-    static constexpr size_t kMaxPending = 16;
+    static constexpr size_t kBatchLimit = 128 << 10;
+    static constexpr size_t kMaxPending = 64;
 
     void* append(size_t fixed, size_t extra, Thunk run)
     {

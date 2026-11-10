@@ -566,7 +566,7 @@ void VulkanShaderBackend::writeVectors(U32 program, S32 loc, int srcComps, int c
     if (it != mPrograms.end() && it->second.vk && loc >= 0 && loc < (S32) it->second.uniforms.size())
     {
         Program& p = it->second;
-        std140pack::writeVectors(p.vk->shadow.data(), p.layout.members[loc], p.uniforms[loc].type, srcComps, count, src);
+        std140pack::writeVectors(p.vk->shadow.data(), p.layout.members[loc], p.uniforms[loc].type, srcComps, count, src); p.vk->shadowDirty = true;
     }
 }
 
@@ -576,7 +576,7 @@ void VulkanShaderBackend::writeMatrices(U32 program, S32 loc, int cols, int rows
     if (it != mPrograms.end() && it->second.vk && loc >= 0 && loc < (S32) it->second.uniforms.size())
     {
         Program& p = it->second;
-        std140pack::writeMatrices(p.vk->shadow.data(), p.layout.members[loc], p.uniforms[loc].type, cols, rows, count, transpose, src);
+        std140pack::writeMatrices(p.vk->shadow.data(), p.layout.members[loc], p.uniforms[loc].type, cols, rows, count, transpose, src); p.vk->shadowDirty = true;
     }
 }
 

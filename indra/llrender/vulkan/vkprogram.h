@@ -40,6 +40,7 @@ struct VkProgram
     bool pushSamplers = false;                          // sampler set is a push descriptor set
     uint64_t pushedSerial = ~0ull, pushedEpoch = ~0ull; // command buffer and layout epoch lastInfos was pushed in
     uint64_t samplerSetFrame = 0;
+    bool shadowDirty = true;                            // set whenever shadow is modified; avoids per-draw memcmp/memcpy
     std::vector<uint8_t> uploadedShadow;                // what the ring holds from this frame, to skip a copy when the next draw is identical
     uint64_t uploadedFrame = ~0ull, uploadedGeneration = 0;
     uint32_t uploadedOffset = 0;
