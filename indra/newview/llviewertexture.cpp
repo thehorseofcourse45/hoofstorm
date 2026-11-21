@@ -550,6 +550,21 @@ void LLViewerTexture::updateClass()
     U32 real_used_mb = 0, real_budget_mb = 0;
     if (getRenderBackendVRAMBudget(real_used_mb, real_budget_mb) && real_budget_mb > 0)
     {
+        // The OS budget jumps up while the viewer is foreground even when another GPU app still holds VRAM; trusting the
+        // jump drops the bias, both apps get paged and the GPU stalls for seconds. Hold the lowest budget seen recently.
+        // shortcut: 10 minutes without a low reading releases the hold, upgrade to per-process adapter memory if that misfires.
+        static U32 held_budget_mb = 0;
+        static LLFrameTimer held_budget_timer;
+        if (held_budget_mb == 0 || real_budget_mb < held_budget_mb || held_budget_timer.getElapsedTimeF32() > 600.f)
+        {
+            held_budget_mb = real_budget_mb;
+            held_budget_timer.reset();
+        }
+        else if (real_budget_mb <= held_budget_mb + held_budget_mb / 20)
+        {
+            held_budget_timer.reset();
+        }
+        real_budget_mb = held_budget_mb;
         over_pct = llmax(over_pct, ((F32)real_used_mb / (F32)real_budget_mb - 0.9f) / 0.9f);
     }
 

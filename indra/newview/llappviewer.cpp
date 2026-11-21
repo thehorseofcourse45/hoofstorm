@@ -6187,6 +6187,9 @@ void LLAppViewer::idle()
     LL_PROFILE_ZONE_SCOPED_CATEGORY_APP;
     pingMainloopTimeout("Main:Idle");
     // Slow idle log: per-stage ms (stages >= 50 ms) when idle() holds the frame, to split the "to Main:Display" gap in #FrameSpike#.
+    // Also the average per stage over every 300 frames, which shows where idle() goes in ordinary frames.
+    static std::vector<std::pair<const char*, F64>> stage_sums;
+    static U32 stage_frames = 0;
     struct IdleStages
     {
         LLTimer t;
@@ -6195,11 +6198,20 @@ void LLAppViewer::idle()
         {
             const F64 ms = t.getElapsedTimeAndResetF64() * 1000.0;
             if (ms >= 50.0) out += llformat(" %s=%.0f", name, ms);
+            auto it = std::find_if(stage_sums.begin(), stage_sums.end(), [&](const auto& e) { return strcmp(e.first, name) == 0; });
+            if (it == stage_sums.end()) stage_sums.emplace_back(name, ms);
+            else it->second += ms;
         }
         ~IdleStages()
         {
             mark("tail");
             if (!out.empty()) LL_INFOS("FrameSpike") << "slow idle:" << out << LL_ENDL;
+            if (++stage_frames < 300) return;
+            std::string avg;
+            for (const auto& e : stage_sums) avg += llformat(" %s=%.2f", e.first, e.second / stage_frames);
+            if (LLStartUp::getStartupState() == STATE_STARTED) LL_INFOS("FrameSpike") << "idle avg ms over 300 frames:" << avg << LL_ENDL;
+            stage_sums.clear();
+            stage_frames = 0;
         }
     } idle_stages;
 
@@ -7476,6 +7488,30 @@ void LLAppViewer::pingMainloopTimeout(std::string_view state)
                 }
             }
             LL_INFOS("FrameSpike") << out.str() << LL_ENDL;
+        }
+        // Average per phase over every 300 frames, all frames not just slow ones.
+        static std::vector<std::pair<std::string, F64>> sums;
+        static U32 frames = 0;
+        for (const auto& phase : phases)
+        {
+            auto it = std::find_if(sums.begin(), sums.end(), [&](const auto& e) { return e.first == phase.first; });
+            if (it == sums.end()) sums.push_back(phase);
+            else it->second += phase.second;
+        }
+        if (++frames == 300)
+        {
+            if (LLStartUp::getStartupState() == STATE_STARTED)
+            {
+                std::ostringstream out;
+                out << "frame avg ms over 300 frames:";
+                for (const auto& e : sums)
+                {
+                    if (e.second / frames >= 0.1) out << " " << e.first << "=" << e.second / frames;
+                }
+                LL_INFOS("FrameSpike") << out.str() << LL_ENDL;
+            }
+            sums.clear();
+            frames = 0;
         }
         phases.clear();
     }
