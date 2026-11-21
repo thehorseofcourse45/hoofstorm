@@ -446,6 +446,32 @@ void VulkanTextureBackend::flushImagePool()
     mImagePoolBytes = 0;
 }
 
+VkResult VulkanTextureBackend::allocateStagingMemory(const VkMemoryRequirements& req, VkDeviceMemory& outMem)
+{
+    const VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    auto tryAlloc = [&]() {
+        VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        mai.allocationSize = req.size;
+        VkResult r = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        for (uint32_t i = 0; i < mCtx->memProps.memoryTypeCount; ++i)
+        {
+            if (!(req.memoryTypeBits & (1u << i))) continue;
+            if ((mCtx->memProps.memoryTypes[i].propertyFlags & want) != want) continue;
+            mai.memoryTypeIndex = i;
+            r = vkAllocateMemory(mCtx->device, &mai, nullptr, &outMem);
+            if (r == VK_SUCCESS) return r;
+        }
+        return r;
+    };
+    VkResult r = tryAlloc();
+    if (r != VK_SUCCESS && !mImagePool.empty())
+    {
+        flushImagePool();
+        r = tryAlloc();
+    }
+    return r;
+}
+
 void VulkanTextureBackend::destroyImage(Tex& t)
 {
     if (!t.image)
@@ -691,10 +717,12 @@ void VulkanTextureBackend::upload(Tex& t, uint32_t level, uint32_t layer, uint32
         ++mCtx->textureUploadAllocations;
         VkMemoryRequirements req;
         vkGetBufferMemoryRequirements(mCtx->device, staging, &req);
-        VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        mai.allocationSize = req.size;
-        mai.memoryTypeIndex = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        VK_CHECK(vkAllocateMemory(mCtx->device, &mai, nullptr, &stagingMemory));
+        if (VkResult r = allocateStagingMemory(req, stagingMemory); r != VK_SUCCESS)
+        {
+            fprintf(stderr, "WARNING: texture upload staging (%llu bytes) not allocated, VkResult %d\n", (unsigned long long) req.size, (int) r);
+            vkDestroyBuffer(mCtx->device, staging, nullptr);
+            return;
+        }
         VK_CHECK(vkBindBufferMemory(mCtx->device, staging, stagingMemory, 0));
         void* mapped = nullptr;
         VK_CHECK(vkMapMemory(mCtx->device, stagingMemory, 0, VK_WHOLE_SIZE, 0, &mapped));
@@ -1346,10 +1374,13 @@ void VulkanTextureBackend::readImage(U32 target, S32 level, U32 format, U32 type
     VK_CHECK(vkCreateBuffer(mCtx->device, &bci, nullptr, &staging));
     VkMemoryRequirements req;
     vkGetBufferMemoryRequirements(mCtx->device, staging, &req);
-    VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    VK_CHECK(vkAllocateMemory(mCtx->device, &mai, nullptr, &stagingMemory));
+    if (VkResult r = allocateStagingMemory(req, stagingMemory); r != VK_SUCCESS)
+    {
+        fprintf(stderr, "WARNING: texture readback staging (%llu bytes) not allocated, VkResult %d\n", (unsigned long long) req.size, (int) r);
+        vkDestroyBuffer(mCtx->device, staging, nullptr);
+        convertForReadback(t, raw.data(), format, type, w, h, count, out);   // zeros, not the caller's uninitialised memory
+        return;
+    }
     VK_CHECK(vkBindBufferMemory(mCtx->device, staging, stagingMemory, 0));
 
     const VkImageAspectFlags aspect = aspectOf(t.info.format);
@@ -1392,10 +1423,13 @@ void VulkanTextureBackend::readCompressedImage(U32 target, S32 level, void* out)
     VK_CHECK(vkCreateBuffer(mCtx->device, &bci, nullptr, &staging));
     VkMemoryRequirements req;
     vkGetBufferMemoryRequirements(mCtx->device, staging, &req);
-    VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = mCtx->findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    VK_CHECK(vkAllocateMemory(mCtx->device, &mai, nullptr, &stagingMemory));
+    if (VkResult r = allocateStagingMemory(req, stagingMemory); r != VK_SUCCESS)
+    {
+        fprintf(stderr, "WARNING: texture readback staging (%llu bytes) not allocated, VkResult %d\n", (unsigned long long) req.size, (int) r);
+        vkDestroyBuffer(mCtx->device, staging, nullptr);
+        memset(out, 0, bytes);
+        return;
+    }
     VK_CHECK(vkBindBufferMemory(mCtx->device, staging, stagingMemory, 0));
     submitNow([&](VkCommandBuffer cmd) {
         transition(t, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);

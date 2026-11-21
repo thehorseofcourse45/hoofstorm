@@ -189,6 +189,8 @@ private:
     static constexpr U64 kPoolIdleFrames = 900;
     U64 mLastPoolTrim = 0;
     std::multimap<std::pair<BufferKind, VkDeviceSize>, BufferStorage> mStoragePool;
+    void flushStoragePools();
+    VkResult allocateHostMemory(const VkMemoryRequirements& req, uint32_t preferredType, VkDeviceMemory& outMem, uint32_t& outType);
     BufferHandle mBoundVB, mBoundIB;
 
     // pending vertex input, set by setBuffers()
