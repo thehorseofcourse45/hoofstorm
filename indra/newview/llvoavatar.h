@@ -611,6 +611,7 @@ private:
     S32         mUpdatePeriod;
     bool        mFarAnimSkipped = false; // this frame's motion update was skipped by the distant-avatar throttle
     bool        mMotionDeferred = false; // motion and skeleton update queued for flushDeferredMotions() this frame
+    bool        mDeferredRefreshAttachments = false; // refresh_attachments argument deferred with mMotionDeferred
     S32         mNumInitFaces; //number of faces generated when creating the avatar drawable, does not inculde splitted faces due to long vertex buffer.
 
     // profile handle

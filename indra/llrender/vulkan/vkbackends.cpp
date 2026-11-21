@@ -242,6 +242,69 @@ void VulkanVertexBufferBackend::recycleStorage(BufferKind kind, const BufferStor
     }
 }
 
+void VulkanVertexBufferBackend::flushStoragePools()
+{
+    for (const auto& entry : mStoragePool) destroyStorage(mCtx->device, *mSlabs, entry.second);
+    mStoragePool.clear();
+    mPooledBytes = 0;
+    for (const auto& entry : mDeviceStoragePool) destroyStorage(mCtx->device, *mDeviceSlabs, entry.second);
+    mDeviceStoragePool.clear();
+    mDevicePooledBytes = 0;
+}
+
+VkResult VulkanVertexBufferBackend::allocateHostMemory(const VkMemoryRequirements& req, uint32_t preferredType, VkDeviceMemory& outMem, uint32_t& outType)
+{
+    const VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    auto tryAlloc = [&]() {
+        VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        mai.allocationSize = req.size;
+        mai.memoryTypeIndex = preferredType;
+        outType = preferredType;
+        VkResult allocated = (mCtx->failMemoryTypes >> preferredType) & 1 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : vkAllocateMemory(mCtx->device, &mai, nullptr, &outMem);
+        if (allocated == VK_SUCCESS) return allocated;
+        // VRAM peak (e.g. teleport overlap): spill to another host-visible type (system RAM) before giving up
+        for (uint32_t i = 0; allocated != VK_SUCCESS && i < mCtx->memProps.memoryTypeCount; ++i)
+        {
+            if (i == preferredType || !(req.memoryTypeBits & (1u << i))) continue;
+            if ((mCtx->memProps.memoryTypes[i].propertyFlags & want) != want || ((mCtx->failMemoryTypes >> i) & 1)) continue;
+            mai.memoryTypeIndex = i;
+            allocated = vkAllocateMemory(mCtx->device, &mai, nullptr, &outMem);
+            if (allocated == VK_SUCCESS) outType = i;
+        }
+        return allocated;
+    };
+    VkResult allocated = tryAlloc();
+    if (allocated != VK_SUCCESS && (!mStoragePool.empty() || !mDeviceStoragePool.empty()))
+    {
+        flushStoragePools();
+        allocated = tryAlloc();
+    }
+    if (allocated != VK_SUCCESS && mCtx->failMemoryTypes == 0)
+    {
+        // Last-resort OOM recovery: wait for GPU idle, drain retired releases, and drop optional VRAM deviceCopy mirrors (~400+ MB).
+        vkDeviceWaitIdle(mCtx->device);
+        // Not collectReleasedResources(): the recording slot's releases belong to the unsubmitted command buffer, which still uses them.
+        mCtx->collectFencedBatches(true);
+        for (size_t i = 0; i < mCtx->slotCount; ++i)
+            if (!mCtx->recording || i != mCtx->currentSlot) mCtx->collectSlot(i);
+        for (auto& kv : mBuffers)
+        {
+            if (kv.second.deviceCopy.buffer && (!mCtx->recording || kv.second.usedFrame != mCtx->frameCounter))
+            {
+                destroyStorage(mCtx->device, *mDeviceSlabs, kv.second.deviceCopy);
+                kv.second.deviceCopy = BufferStorage{};
+                ++kv.second.demotions;
+                mDeviceBytes -= kv.second.size;
+                ++mCtx->bufferDemotions;
+            }
+        }
+        mCtx->bufferVramBytes = mDeviceBytes;
+        flushStoragePools();
+        allocated = tryAlloc();
+    }
+    return allocated;
+}
+
 VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createStorage(BufferKind kind, U32 size)
 {
     const VkDeviceSize capacity = (VkDeviceSize(size) + 4095) & ~VkDeviceSize(4095);
@@ -271,34 +334,18 @@ VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createStorag
     {
         VkDeviceSize slotSize = StorageSlabs::kMinSlot;
         while (slotSize < req.size || slotSize < req.alignment) slotSize *= 2;
-        std::lock_guard<std::mutex> lock(mSlabs->mutex);
+        std::unique_lock<std::mutex> lock(mSlabs->mutex);
         auto& blocks = mSlabs->blocks;
         size_t index = 0;
         while (index < blocks.size() && (blocks[index].slotSize != slotSize || !(req.memoryTypeBits & (1u << blocks[index].memoryType)) || (mCtx->memProps.memoryTypes[blocks[index].memoryType].propertyFlags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) != (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) || blocks[index].free.empty())) ++index;
         if (index == blocks.size())
         {
-            size_t released = 0;
-            while (released < blocks.size() && blocks[released].memory != VK_NULL_HANDLE) ++released;
+            lock.unlock();
             StorageSlabs::Block block;
             block.slotSize = slotSize;
-            block.memoryType = memoryType;
-            VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-            mai.allocationSize = StorageSlabs::kBlock;
-            mai.memoryTypeIndex = memoryType;
-            VkResult allocated = (mCtx->failMemoryTypes >> memoryType) & 1 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : vkAllocateMemory(mCtx->device, &mai, nullptr, &block.memory);
-            if (allocated != VK_SUCCESS)
-            {
-                // VRAM peak (e.g. teleport overlap): spill to another host-visible type (system RAM) before giving up
-                const VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-                for (uint32_t i = 0; allocated != VK_SUCCESS && i < mCtx->memProps.memoryTypeCount; ++i)
-                {
-                    if (i == memoryType || !(req.memoryTypeBits & (1u << i))) continue;
-                    if ((mCtx->memProps.memoryTypes[i].propertyFlags & want) != want || ((mCtx->failMemoryTypes >> i) & 1)) continue;
-                    mai.memoryTypeIndex = i;
-                    allocated = vkAllocateMemory(mCtx->device, &mai, nullptr, &block.memory);
-                    if (allocated == VK_SUCCESS) block.memoryType = i;
-                }
-            }
+            VkMemoryRequirements slabReq = req;
+            slabReq.size = StorageSlabs::kBlock;
+            VkResult allocated = allocateHostMemory(slabReq, memoryType, block.memory, block.memoryType);
             if (allocated != VK_SUCCESS) vkDestroyBuffer(mCtx->device, b.buffer, nullptr);
             VK_CHECK(allocated);
             mSlabs->device = mCtx->device;
@@ -306,8 +353,11 @@ VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createStorag
             mCtx->hostBufferMemBytes += (int64_t) StorageSlabs::kBlock;
             VK_CHECK(vkMapMemory(mCtx->device, block.memory, 0, VK_WHOLE_SIZE, 0, (void**) &block.mapped));
             for (uint32_t slot = (uint32_t) (StorageSlabs::kBlock / slotSize); slot-- > 0;) block.free.push_back(slot);
+            lock.lock();
+            size_t released = 0;
+            while (released < blocks.size() && blocks[released].memory != VK_NULL_HANDLE) ++released;
             if (released < blocks.size()) { blocks[released] = std::move(block); index = released; }
-            else blocks.push_back(std::move(block));
+            else { index = blocks.size(); blocks.push_back(std::move(block)); }
         }
         auto& block = blocks[index];
         b.block = (int32_t) index;
@@ -319,11 +369,11 @@ VulkanVertexBufferBackend::BufferStorage VulkanVertexBufferBackend::createStorag
         VK_CHECK(vkBindBufferMemory(mCtx->device, b.buffer, b.memory, b.slot * slotSize));
         return b;
     }
-    VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    mai.allocationSize = req.size;
     b.allocationBytes = req.size;
-    mai.memoryTypeIndex = memoryType;
-    VK_CHECK(vkAllocateMemory(mCtx->device, &mai, nullptr, &b.memory));
+    uint32_t actualType = memoryType;
+    VkResult allocated = allocateHostMemory(req, memoryType, b.memory, actualType);
+    if (allocated != VK_SUCCESS) vkDestroyBuffer(mCtx->device, b.buffer, nullptr);
+    VK_CHECK(allocated);
     ++mCtx->bufferMemoryAllocations;
     mCtx->hostBufferMemBytes += (int64_t) req.size;
     VK_CHECK(vkBindBufferMemory(mCtx->device, b.buffer, b.memory, 0));

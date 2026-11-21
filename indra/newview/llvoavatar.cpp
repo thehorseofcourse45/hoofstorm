@@ -3411,7 +3411,14 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     LLVector3 hud_name_pos = idleCalcNameTagPosition(mLastRootPos);
 
     idleUpdateVoiceVisualizer(voice_enabled, hud_name_pos);
-    idleUpdateMisc( refresh_attachments );
+    if (mMotionDeferred)
+    {
+        mDeferredRefreshAttachments = refresh_attachments;
+    }
+    else
+    {
+        idleUpdateMisc( refresh_attachments );
+    }
     idleUpdateAppearanceAnimation();
     if (detailed_update)
     {
@@ -6093,6 +6100,8 @@ void LLVOAvatar::flushDeferredMotions()
     for (auto& avatar : sDeferredMotion)
     {
         avatar->mMotionDeferred = false;
+        // Run after mRoot->updateWorldMatrixChildren() so attachment bridges see this frame's joint transforms.
+        avatar->idleUpdateMisc(avatar->mDeferredRefreshAttachments);
     }
     sDeferredMotion.clear();
 }

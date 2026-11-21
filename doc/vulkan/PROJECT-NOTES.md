@@ -1,5 +1,17 @@
 # Vulkan project notes
 
+## Current status: review fixes on vulkan-texture-memory-pooling, 2026-11-21
+
+- Reviewed the two pooling commits (`fc81bf879c`, `815625d807`) and the uncommitted OOM/avatar changes. Fixed (uncommitted):
+  - `vkbackends.cpp` `allocateHostMemory` last-resort path ran `collectReleasedResources()` mid-frame, which also runs the recording slot's release callbacks. Those resources are still referenced by the unsubmitted command buffer, so they could be recycled or freed under it. It now collects fenced batches and every slot except the recording one.
+  - `vktexturebackend.cpp` `readImage` / `readCompressedImage`: when staging memory can't be allocated the caller's buffer is now zero-filled instead of left uninitialised.
+- Tests (Release): pool 73, frames 171, upload ring 54, all PASS with zero validation messages. The viewer (`firestorm-bin`) was not rebuilt.
+
+Next steps:
+
+1. Rebuild the viewer (worktree, see below) and run a session; commit the OOM-path, deferred-attachment and review fixes.
+2. Still open, not changed: readback of a texture with no image (left unallocated after OOM) returns without writing the caller's buffer.
+
 ## Current status: viewer_vulkan_activation_test made skip-safe for a headless session, 2026-11-02
 
 - `viewer_vulkan_activation_test` (expected 48 checks, render thread on and off; `FS_VK_RENDER_THREAD=0` for off) no longer aborts the suite on a display session that cannot provide a swapchain. It dies at `vkcontext.cpp:469` (`vkGetPhysicalDeviceSurfaceCapabilitiesKHR`) with `VK_ERROR_SURFACE_LOST_KHR` (VkResult -13) in both thread modes, before any FSR code; last green run was 48 at `ae86b31e29`. The handoff says not to debug the display, so the fix is to make the failure diagnosable and the test skip cleanly instead of failing all 48 checks as a code bug:
