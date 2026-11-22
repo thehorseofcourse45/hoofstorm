@@ -6012,10 +6012,10 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         if (!far_skip)
         {
             // Other residents' avatars update their motion and skeleton on worker threads after the idle loop. Not for: yourself
-            // (turn-around and animation triggers rely on running in order), animesh, previews, motions still loading (asset
-            // fetch) and paused controllers.
+            // (turn-around and animation triggers rely on running in order), previews, motions still loading (asset fetch) and
+            // paused controllers. Animesh qualify: matchVolumeTransform() runs in the serial part (updateCharacter, updateXform).
             static LLCachedControl<bool> parallel_motion(gSavedSettings, "FSParallelAvatarMotion", true);
-            if (parallel_motion && !isSelf() && !isControlAvatar() && !mIsDummy && mSpecialRenderMode != 1
+            if (parallel_motion && !isSelf() && !mIsDummy && mSpecialRenderMode != 1
                 && !mMotionController.hasLoadingMotions() && !mMotionController.isPaused())
             {
                 mMotionDeferred = true;

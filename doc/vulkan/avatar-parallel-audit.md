@@ -20,7 +20,7 @@ Latest threaded profile (main thread, 300 samples, about 11 ms per frame): `LLVO
 | 4 | `LLRefCount` is not atomic | motions and shared data touched from two threads | check which refcounted objects are shared between avatars (the `JointMotionList` cache is a raw pointer, looks fine) |
 | 5 | Physics and emote motions read viewer statics and settings (`LLVOAvatar::sPhysicsLODFactor`, `AvatarPhysics`) | `llphysicsmotion.cpp`, `llemote.cpp` | read-only while the main thread waits, safe in fork-join |
 | 6 | Animation data pointers (`LookAtPoint`, `PointAtPoint`) written by HUD effects on the main thread | `getAnimationData` | safe only if the main thread is parked during the parallel phase |
-| 7 | Control avatars (animesh) follow a linked object | `LLControlAvatar::updateCharacter` | exclude |
+| 7 | Control avatars (animesh) follow a linked object | `LLControlAvatar::matchVolumeTransform` | runs in the serial part (`updateCharacter`, `LLDrawable::updateXform`); included in the parallel step since 2026-11-21 |
 | 8 | Static counters and profiling zones | `LLJoint` stats, `LL_PROFILE_*` | benign |
 
 `LLKeyframeMotion::onUpdate`, the blender and the matrix update showed no shared writes.
